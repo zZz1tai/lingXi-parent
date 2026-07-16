@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="SqlDialectMappings">
+    <file url="file://$PROJECT_DIR$/dkd-parent/sql/ai_vedio_menu.sql" dialect="MySQL" />
+    <file url="file://$PROJECT_DIR$/dkd-parent/sql/ai_video_chapter_soft_delete_migration.sql" dialect="MySQL" />
+    <file url="file://$PROJECT_DIR$/dkd-parent/sql/ai_video_workflow.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/dkd-parent/sql/dkd_complete.sql" dialect="MySQL" />
   </component>
 </project>
