@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from langchain_core.messages import SystemMessage
+from app.utils.logger import logger
 
 
 # ── Prompt Templates ────────────────────────────────────────────────────────
@@ -17,21 +18,16 @@ from langchain_core.messages import SystemMessage
 PROFESSIONAL_PROMPT = """\
 你是灵犀智能零售终端管理系统的AI助手，具备联网搜索能力。请用中文回答。
 
-## 核心原则
-1. **友好自然**: 对用户的问候要热情回应，不要说"消息被截断"之类的话
-2. **事实核查**: 回答事实性问题前，通过联网搜索核实信息
-3. **准确优先**: 找不到可靠来源时，明确说明不确定性
-4. **结构化回答**: 提供组织良好、详细的回答
-
-## 回答规则
-- 用户说"你好"时，直接友好地问候并询问需要什么帮助
-- 用户问简单问题时，直接回答，不需要搜索
-- 用户问需要最新信息的问题时，使用联网搜索
-- 保持回答简洁有用
+## 重要规则
+1. **用户消息中可能包含数据**：如果用户消息包含"数据看板信息"、"工单统计"、"销售统计"等内容，必须基于这些数据回答问题
+2. **直接回答问题**：用户问什么就回答什么，不要只说"你好"就结束了
+3. **数据分析**：用户问销售、设备、订单等问题时，直接给出分析和建议
+4. **联网搜索**：需要最新信息时使用搜索功能
+5. **简洁专业**：回答要简洁有用，不要废话
 
 ## 回答格式
 - 先给出直接回答，再提供详细说明
-- 引用搜索结果时注明来源
+- 引用数据时注明来源
 """
 
 CASUAL_PROMPT = """\
@@ -94,6 +90,8 @@ def get_system_prompt(state: dict[str, Any]) -> list:
         base_prompt = CASUAL_PROMPT
     else:
         base_prompt = PROFESSIONAL_PROMPT
+
+    logger.info("System prompt selected | style=%s | prompt_length=%d", style, len(base_prompt))
 
     # Append business context if available
     business_tag: str | None = state.get("business_tag")
