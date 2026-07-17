@@ -7,13 +7,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.lingXi.ai.client.VideoClient;
+import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.ai.config.DashScopeConfig;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
-import com.lingXi.aiVedio.provider.WanxVideoClient;
-import com.lingXi.aiVedio.provider.WanxVideoClient.WanxSubmissionUncertainException;
 import com.lingXi.aiVedio.storage.AiVideoPublicAssetUrlResolver;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 import com.lingXi.common.exception.ServiceException;
@@ -27,11 +27,13 @@ public class AiVideoWanxVideoService
     @Autowired
     private AiVideoGenerationTaskMapper taskMapper;
     @Autowired
-    private WanxVideoClient wanxVideoClient;
+    private VideoClient videoClient;
     @Autowired
     private AiVideoPublicAssetUrlResolver publicAssetUrlResolver;
     @Autowired
     private DashScopeConfig dashScopeConfig;
+    @Autowired
+    private AgentConfig agentConfig;
     @Autowired
     private ObjectMapper objectMapper;
     @Autowired
@@ -43,23 +45,19 @@ public class AiVideoWanxVideoService
      */
     public Long submit(final AiVideoAsset video, final AiVideoAsset keyframe, final String username)
     {
-        wanxVideoClient.validateSubmissionConfiguration();
+        // Validate duration
         if (video.getDurationMs() == null || video.getDurationMs().intValue() <= 0
-                || video.getDurationMs().intValue() > WanxVideoClient.MAX_VIDEO_DURATION_MS)
+                || video.getDurationMs().intValue() > MAX_VIDEO_DURATION_MS)
         {
-            throw new ServiceException("单条视频时长必须在 1 到 "
-                    + WanxVideoClient.MAX_VIDEO_DURATION_MS + " 毫秒之间");
+            throw new ServiceException("单条视频时长必须在 1 到 " + MAX_VIDEO_DURATION_MS + " 毫秒之间");
         }
-        final Integer normalizedDurationMs = wanxVideoClient.normalizeDurationMs(video.getDurationMs());
+        final Integer normalizedDurationMs = normalizeDurationMs(video.getDurationMs());
         if (!normalizedDurationMs.equals(video.getDurationMs()))
         {
             throw new ServiceException("当前 Wanx 模型不支持该视频时长，请先保存模型支持的时长后再生成");
         }
         final String referenceUrl = publicAssetUrlResolver.resolve(keyframe.getObjectKey());
-        final String providerRequestJson = wanxVideoClient.buildRequestJson(video.getPromptText(),
-                video.getNegativePromptText(), referenceUrl, normalizedDurationMs);
-        final String taskRequestJson = buildTaskRequestJson(video, keyframe, username,
-                referenceUrl, providerRequestJson);
+        final String taskRequestJson = buildTaskRequestJson(video, keyframe, username, referenceUrl);
 
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
         AiVideoGenerationTask task = transaction.execute(status -> prepareTask(video, username, taskRequestJson));
@@ -69,23 +67,35 @@ public class AiVideoWanxVideoService
         }
         video.setStatus("GENERATING");
 
-        final String providerTaskId;
-        try
+        // Call Python Agent API for video submission
+        VideoClient.VideoSubmitResult result = videoClient.submitVideo(
+                agentConfig.getLlmApiKey(),
+                dashScopeConfig.getVideoModel(),
+                video.getPromptText(),
+                video.getNegativePromptText(),
+                referenceUrl,
+                dashScopeConfig.getVideoResolution(),
+                normalizedDurationMs,
+                false);
+        
+        if (!result.success())
         {
-            providerTaskId = wanxVideoClient.submit(providerRequestJson);
+            // Check if error indicates uncertainty (ambiguous submission)
+            String error = result.error();
+            if (error != null && (error.contains("uncertain") || error.contains("UNCERTAIN")
+                    || (result.statusCode() != null && result.statusCode() >= 500)))
+            {
+                taskMapper.updateAiVideoGenerationTaskStatus(task.getTaskId(), "NEEDS_REVIEW", 20,
+                        "WANX_VIDEO_SUBMISSION_UNCERTAIN", error);
+                throw new ServiceException("Wanx 提交结果不确定，请勿重复生成，等待人工核对")
+                        .setDetailMessage(error);
+            }
+            
+            markDefinitiveSubmissionFailure(video, task, username, error);
+            throw new ServiceException("Wanx 图生视频提交失败").setDetailMessage(error);
         }
-        catch (WanxSubmissionUncertainException ex)
-        {
-            taskMapper.updateAiVideoGenerationTaskStatus(task.getTaskId(), "NEEDS_REVIEW", 20,
-                    "WANX_VIDEO_SUBMISSION_UNCERTAIN", ex.getMessage());
-            throw new ServiceException("Wanx 提交结果不确定，请勿重复生成，等待人工核对")
-                    .setDetailMessage(ex.getMessage());
-        }
-        catch (Exception ex)
-        {
-            markDefinitiveSubmissionFailure(video, task, username, ex.getMessage());
-            throw new ServiceException("Wanx 图生视频提交失败").setDetailMessage(ex.getMessage());
-        }
+        
+        String providerTaskId = result.taskId();
         if (taskMapper.markWanxVideoTaskWaiting(task.getTaskId(), providerTaskId) != 1)
         {
             taskMapper.markWanxVideoTaskNeedsReviewWithProviderId(task.getTaskId(), providerTaskId,
@@ -94,6 +104,37 @@ public class AiVideoWanxVideoService
             throw new ServiceException("Wanx 已接收任务，但本地状态待核对，请勿重复生成");
         }
         return task.getTaskId();
+    }
+    
+    // ── Constants and Helpers ────────────────────────────────────────────────
+    
+    private static final int MAX_VIDEO_DURATION_MS = 10000;
+    
+    /**
+     * Model-specific duration normalization.
+     */
+    private Integer normalizeDurationMs(Integer durationMs) {
+        String model = dashScopeConfig.getVideoModel();
+        if (model == null) {
+            return Math.min(durationMs, MAX_VIDEO_DURATION_MS);
+        }
+        
+        String modelLower = model.toLowerCase();
+        int durationS = durationMs / 1000;
+        
+        if (modelLower.contains("2.1") && modelLower.contains("turbo")) {
+            durationS = Math.max(3, Math.min(5, durationS));
+        } else if (modelLower.contains("2.1") || modelLower.contains("2.2")) {
+            durationS = 5; // Fixed duration
+        } else if (modelLower.contains("2.5")) {
+            durationS = durationS <= 7 ? 5 : 10;
+        } else if (modelLower.contains("2.6")) {
+            durationS = Math.max(2, Math.min(10, durationS));
+        } else {
+            durationS = Math.min(10, durationS);
+        }
+        
+        return durationS * 1000;
     }
 
     private void markDefinitiveSubmissionFailure(final AiVideoAsset video,
@@ -149,7 +190,7 @@ public class AiVideoWanxVideoService
     }
 
     private String buildTaskRequestJson(AiVideoAsset video, AiVideoAsset keyframe, String username,
-            String referenceUrl, String providerRequestJson)
+            String referenceUrl)
     {
         ObjectNode request = objectMapper.createObjectNode();
         request.put("trigger", "USER_CONFIRMED");
@@ -172,15 +213,6 @@ public class AiVideoWanxVideoService
             request.put("durationMs", video.getDurationMs().intValue());
         }
         request.put("referenceImageUrl", referenceUrl);
-        try
-        {
-            JsonNode providerRequest = objectMapper.readTree(providerRequestJson);
-            request.set("providerRequest", providerRequest);
-        }
-        catch (Exception ex)
-        {
-            throw new ServiceException("Wanx 请求参数序列化失败").setDetailMessage(ex.getMessage());
-        }
         return request.toString();
     }
 

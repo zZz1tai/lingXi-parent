@@ -6,12 +6,13 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.lingXi.ai.client.VideoClient;
+import com.lingXi.ai.client.VideoClient.VideoQueryResult;
+import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
-import com.lingXi.aiVedio.provider.WanxVideoClient;
-import com.lingXi.aiVedio.provider.WanxVideoClient.WanxVideoTaskStatus;
 import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 
@@ -24,7 +25,9 @@ public class AiVideoWanxVideoTaskPoller
     @Autowired
     private AiVideoAssetMapper assetMapper;
     @Autowired
-    private WanxVideoClient wanxVideoClient;
+    private VideoClient videoClient;
+    @Autowired
+    private AgentConfig agentConfig;
     @Autowired
     private AiVideoLocalAssetStorage localAssetStorage;
     @Autowired
@@ -45,18 +48,27 @@ public class AiVideoWanxVideoTaskPoller
             }
             try
             {
-                WanxVideoTaskStatus result = wanxVideoClient.query(task.getProviderTaskId());
-                if ("SUCCEEDED".equals(result.getStatus()))
+                VideoQueryResult result = videoClient.queryVideo(
+                        agentConfig.getLlmApiKey(), task.getProviderTaskId());
+                
+                if (!result.success())
                 {
-                    if (result.getVideoUrl() == null || result.getVideoUrl().trim().isEmpty())
+                    throw new IllegalStateException("查询视频任务失败：" + result.error());
+                }
+                
+                String status = result.status() != null ? result.status() : "UNKNOWN";
+                
+                if ("SUCCEEDED".equals(status))
+                {
+                    if (result.videoUrl() == null || result.videoUrl().trim().isEmpty())
                     {
                         throw new IllegalStateException("Wanx 任务已成功但未返回视频地址");
                     }
-                    complete(task, result);
+                    complete(task, result.videoUrl());
                 }
-                else if ("FAILED".equals(result.getStatus()) || "CANCELED".equals(result.getStatus()))
+                else if ("FAILED".equals(status) || "CANCELED".equals(status))
                 {
-                    fail(task, result.getMessage());
+                    fail(task, result.error());
                 }
                 else
                 {
@@ -72,13 +84,13 @@ public class AiVideoWanxVideoTaskPoller
         }
     }
 
-    private void complete(AiVideoGenerationTask task, WanxVideoTaskStatus result) throws Exception
+    private void complete(AiVideoGenerationTask task, String videoUrl) throws Exception
     {
         AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
         if (asset == null) throw new IllegalStateException("视频任务关联资产不存在");
         AiVideoLocalAssetStorage.StoredFile stored = localAssetStorage.storeVideo(
                 asset.getProjectId(), asset.getAssetId(), asset.getVersionNo(),
-                asset.getAssetCode(), result.getVideoUrl());
+                asset.getAssetCode(), videoUrl);
         asset.setStorageProvider(stored.getPlatform());
         asset.setObjectKey(stored.getResourcePath());
         asset.setPreviewObjectKey(stored.getResourcePath());

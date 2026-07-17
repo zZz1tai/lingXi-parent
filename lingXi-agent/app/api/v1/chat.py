@@ -88,6 +88,53 @@ async def chat_invoke(
     """
     start_time = time.time()
 
+    # 检测是否是章节分析请求（影视预制片策划）
+    is_chapter_analysis = any(marker in request.message for marker in [
+        "影视预制片策划智能体", "小说章节转为严格 JSON", "供图片、视频、配音智能体调用",
+        "STORY_BIBLE", "story_bible", "章节分析"
+    ])
+
+    if is_chapter_analysis:
+        # 章节分析：直接调用 LLM，不经过 Agent
+        from app.api.dependencies import create_llm
+
+        llm = create_llm(request.llm_config)
+
+        # 构建消息列表（保留原始 system prompt + user message）
+        messages = [HumanMessage(content=request.message)]
+
+        logger.info(
+            "Chapter analysis (direct LLM) | request_id=%s | message_length=%d",
+            request_id,
+            len(request.message),
+        )
+
+        try:
+            result = await llm.ainvoke(messages)
+            final_response = result.content if hasattr(result, 'content') else str(result)
+
+            elapsed = time.time() - start_time
+            logger.info(
+                "Chapter analysis completed | request_id=%s | elapsed=%.2fs | response_length=%d",
+                request_id,
+                elapsed,
+                len(final_response),
+            )
+
+            return ChatResponse(
+                success=True,
+                message="ok",
+                data=ChatData(
+                    response=final_response,
+                    tool_calls=[],
+                    iterations=0,
+                    request_id=request_id,
+                ),
+            )
+        except Exception as exc:
+            logger.error("Chapter analysis failed | request_id=%s | error=%s", request_id, str(exc))
+            raise SearchError(f"Chapter analysis failed: {exc}") from exc
+
     # 检测是否是数据分析请求（消息中包含数据看板信息或工单统计等）
     is_data_analysis = any(marker in request.message for marker in [
         "数据看板信息", "数据看板", "工单统计", "销售统计", 
@@ -218,17 +265,23 @@ def _format_sse_event(event: StreamEvent) -> str:
 async def _stream_direct_llm(
     request: ChatRequest,
     request_id: str,
+    is_chapter_analysis: bool = False,
 ) -> AsyncGenerator[str, None]:
-    """Direct LLM streaming for data analysis (bypass Agent)."""
+    """Direct LLM streaming for data analysis or chapter analysis (bypass Agent)."""
     from app.api.dependencies import create_llm
     from langchain_core.messages import HumanMessage, SystemMessage
 
     llm = create_llm(request.llm_config)
 
-    messages = [
-        SystemMessage(content="你是一个专业的数据分析助手。请直接基于用户提供的数据进行分析和回答，不要回复问候语。"),
-        HumanMessage(content=request.message)
-    ]
+    if is_chapter_analysis:
+        # 章节分析：直接使用用户提供的完整 prompt
+        messages = [HumanMessage(content=request.message)]
+    else:
+        # 数据分析
+        messages = [
+            SystemMessage(content="你是一个专业的数据分析助手。请直接基于用户提供的数据进行分析和回答，不要回复问候语。"),
+            HumanMessage(content=request.message)
+        ]
 
     full_response = ""
 
@@ -368,6 +421,12 @@ async def chat_stream(
     """
     from fastapi.responses import StreamingResponse
 
+    # 检测是否是章节分析请求
+    is_chapter_analysis = any(marker in request.message for marker in [
+        "影视预制片策划智能体", "小说章节转为严格 JSON", "供图片、视频、配音智能体调用",
+        "STORY_BIBLE", "story_bible", "章节分析"
+    ])
+
     # 检测是否是数据分析请求
     is_data_analysis = any(marker in request.message for marker in [
         "数据看板信息", "数据看板", "工单统计", "销售统计", 
@@ -375,14 +434,19 @@ async def chat_stream(
     ])
 
     logger.info(
-        "Chat stream | request_id=%s | style=%s | data_analysis=%s",
+        "Chat stream | request_id=%s | style=%s | chapter_analysis=%s | data_analysis=%s",
         request_id,
         request.style,
+        is_chapter_analysis,
         is_data_analysis,
     )
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        if is_data_analysis:
+        if is_chapter_analysis:
+            # 章节分析：直接使用 LLM
+            async for event in _stream_direct_llm(request, request_id, is_chapter_analysis=True):
+                yield event
+        elif is_data_analysis:
             # 数据分析：直接使用 LLM
             async for event in _stream_direct_llm(request, request_id):
                 yield event

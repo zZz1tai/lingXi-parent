@@ -3,6 +3,8 @@ package com.lingXi.aiVedio.service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.lingXi.ai.client.VideoClient;
+import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.ai.config.DashScopeConfig;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
@@ -10,10 +12,10 @@ import com.lingXi.aiVedio.domain.AiVideoProject;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.mapper.AiVideoProjectMapper;
-import com.lingXi.aiVedio.provider.QwenImageClient;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 import com.lingXi.aiVedio.util.AiVideoCharacterPrompt;
 import com.lingXi.aiVedio.service.AiVideoImageReferenceService.ResolvedImageReferences;
+import com.lingXi.common.exception.ServiceException;
 
 /** 创建图片资产草稿，并在用户确认后执行 Qwen Image 生成。 */
 @Service
@@ -26,13 +28,15 @@ public class AiVideoQwenAssetService
     @Autowired
     private AiVideoProjectMapper projectMapper;
     @Autowired
-    private QwenImageClient qwenImageClient;
+    private VideoClient videoClient;
     @Autowired
     private AiVideoImageCompletionService imageCompletionService;
     @Autowired
     private AiVideoImageReferenceService imageReferenceService;
     @Autowired
     private DashScopeConfig dashScopeConfig;
+    @Autowired
+    private AgentConfig agentConfig;
 
     /**
      * 章节分析阶段只保存图片资产和提示词，不创建生成任务，也不调用图片模型。
@@ -146,7 +150,7 @@ public class AiVideoQwenAssetService
             ResolvedImageReferences references = imageReferenceService.resolveAndValidate(asset);
             String requestJson = AiVideoJsonMetadata.imageGenerationRequest(asset.getPromptText(),
                     asset.getNegativePromptText(), dashScopeConfig.getImageModel(), asset.getAssetType(), aspectRatio,
-                    QwenImageClient.toImageSize(aspectRatio),
+                    aspectRatioToSize(aspectRatio),
                     characterReference ? AiVideoCharacterPrompt.CONSTRAINT_VERSION : null,
                     references.getAssetIds());
             if (taskMapper.updateClaimedImageTaskRequest(
@@ -154,8 +158,23 @@ public class AiVideoQwenAssetService
             {
                 throw new IllegalStateException("图片任务状态已变化，拒绝调用图片模型");
             }
-            String imageUrl = qwenImageClient.generate(asset.getPromptText(), asset.getNegativePromptText(),
-                    aspectRatio, references.getImageUrls());
+            
+            // Call Python Agent API for image generation
+            VideoClient.ImageResult result = videoClient.generateImage(
+                    agentConfig.getLlmApiKey(),
+                    dashScopeConfig.getImageModel(),
+                    asset.getPromptText(),
+                    asset.getNegativePromptText(),
+                    aspectRatio,
+                    references.getImageUrls(),
+                    true);
+            
+            if (!result.success())
+            {
+                throw new ServiceException("图片生成失败：" + result.error());
+            }
+            
+            String imageUrl = result.imageUrl();
             try
             {
                 imageCompletionService.complete(task, asset, imageUrl, updateBy);
@@ -176,10 +195,36 @@ public class AiVideoQwenAssetService
                     asset.getMetadataJson(), ex.getMessage()));
             asset.setUpdateBy(updateBy);
             assetMapper.markAiVideoAssetFailed(asset);
-            boolean retryable = QwenImageClient.isRetryable(ex);
+            boolean retryable = isRetryableException(ex);
             taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), "RUNNING",
                     retryable ? "QWEN_IMAGE_MANUAL_RETRY_REQUIRED" : "QWEN_IMAGE_GENERATION_FAILED",
                     retryable ? "图片服务繁忙或连接中断，请检查提示词后手动重试：" + ex.getMessage() : ex.getMessage());
         }
+    }
+    
+    /**
+     * Convert aspect ratio to pixel size for DashScope.
+     */
+    private String aspectRatioToSize(String aspectRatio) {
+        if ("9:16".equals(aspectRatio)) {
+            return "720*1280";
+        } else if ("1:1".equals(aspectRatio)) {
+            return "1024*1024";
+        }
+        return "1280*720";
+    }
+    
+    /**
+     * Check if exception is retryable.
+     */
+    private boolean isRetryableException(Exception ex) {
+        String message = ex.getMessage();
+        if (message == null) {
+            return false;
+        }
+        return message.contains("408") || message.contains("429") 
+                || message.contains("500") || message.contains("502") 
+                || message.contains("503") || message.contains("timeout")
+                || message.contains("Connection");
     }
 }
