@@ -14,6 +14,23 @@ from pydantic import BaseModel, Field
 
 # ── Chat Endpoints ──────────────────────────────────────────────────────────
 
+class LLMConfig(BaseModel):
+    """LLM configuration passed from Java backend."""
+
+    api_key: str = Field(
+        ...,
+        description="API key for the LLM provider",
+    )
+    model: str = Field(
+        default="deepseek-v4-flash",
+        description="Model name to use",
+    )
+    base_url: Optional[str] = Field(
+        default=None,
+        description="Custom API base URL (for DashScope, Doubao, etc.)",
+    )
+
+
 class ChatRequest(BaseModel):
     """Request body for ``POST /api/v1/chat/invoke`` and ``/stream``."""
 
@@ -43,6 +60,10 @@ class ChatRequest(BaseModel):
         ge=1,
         le=20,
         description="Override default max agent iterations for this request",
+    )
+    llm_config: Optional[LLMConfig] = Field(
+        default=None,
+        description="LLM configuration passed from Java backend. If provided, overrides env settings.",
     )
 
 

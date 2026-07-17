@@ -30,8 +30,10 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 def _build_agent_input(request: ChatRequest) -> dict[str, Any]:
     """Construct the input state dict for the agent from a chat request."""
+    messages = [HumanMessage(content=request.message)]
+    logger.info("Building agent input | messages count=%d | first message=%s", len(messages), request.message[:50])
     return {
-        "messages": [HumanMessage(content=request.message)],
+        "messages": messages,
         "remaining_steps": (request.max_iterations or settings.max_iterations) * 2 + 1,
         "style": request.style,
         "user_id": request.user_id or "",
@@ -81,13 +83,14 @@ async def chat_invoke(
     The agent is bounded by ``max_iterations`` to prevent infinite loops.
     """
     start_time = time.time()
-    agent = get_agent()
+    agent = get_agent(llm_config=request.llm_config)
 
     logger.info(
-        "Chat invoke | request_id=%s | style=%s | message_length=%d",
+        "Chat invoke | request_id=%s | style=%s | message_length=%d | message=%s",
         request_id,
         request.style,
         len(request.message),
+        request.message[:100],  # 打印前100个字符
     )
 
     try:
@@ -109,11 +112,13 @@ async def chat_invoke(
 
         elapsed = time.time() - start_time
         logger.info(
-            "Chat invoke completed | request_id=%s | elapsed=%.2fs | iterations=%d",
+            "Chat invoke completed | request_id=%s | elapsed=%.2fs | iterations=%d | response_length=%d",
             request_id,
             elapsed,
             _count_iterations(messages),
+            len(final_response),
         )
+        logger.info("LLM response: %s", final_response[:200] if final_response else "empty")
 
         return ChatResponse(
             success=True,
@@ -127,12 +132,14 @@ async def chat_invoke(
         )
 
     except Exception as exc:
+        import traceback
         elapsed = time.time() - start_time
         logger.error(
-            "Chat invoke failed | request_id=%s | elapsed=%.2fs | error=%s",
+            "Chat invoke failed | request_id=%s | elapsed=%.2fs | error=%s\n%s",
             request_id,
             elapsed,
             str(exc),
+            traceback.format_exc(),
         )
 
         if "recursion_limit" in str(exc).lower() or "max_iterations" in str(exc).lower():
@@ -160,7 +167,7 @@ async def _stream_agent_events(
     Uses ``astream_events`` (v2) for granular token-level streaming.
     Supports both ``values`` and ``messages`` stream modes internally.
     """
-    agent = get_agent()
+    agent = get_agent(llm_config=request.llm_config)
     input_data = _build_agent_input(request)
     config = {
         "recursion_limit": get_recursion_limit(request.max_iterations),
