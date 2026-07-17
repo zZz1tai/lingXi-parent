@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiVedio.mapper.AiVideoChapterArchiveMapper">
+    <resultMap id="AiVideoChapterArchiveResult" type="AiVideoChapter">
+        <id property="chapterId" column="chapter_id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="chapterNo" column="chapter_no"/>
+        <result property="chapterTitle" column="chapter_title"/>
+        <result property="sourceText" column="source_text"/>
+        <result property="sourceHash" column="source_hash"/>
+        <result property="wordCount" column="word_count"/>
+        <result property="summaryText" column="summary_text"/>
+        <result property="parseStatus" column="parse_status"/>
+        <result property="pipelineStatus" column="pipeline_status"/>
+        <result property="currentBibleVersion" column="current_bible_version"/>
+        <result property="sourceMetadataJson" column="source_metadata_json"/>
+    </resultMap>
+
+    <resultMap id="AiVideoChapterTaskArchiveResult" type="AiVideoGenerationTask">
+        <id property="taskId" column="task_id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="chapterId" column="chapter_id"/>
+        <result property="assetId" column="asset_id"/>
+        <result property="taskName" column="task_name"/>
+        <result property="status" column="status"/>
+    </resultMap>
+
+    <resultMap id="AiVideoChapterAssetArchiveResult" type="AiVideoAsset">
+        <id property="assetId" column="asset_id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="chapterId" column="chapter_id"/>
+        <result property="assetName" column="asset_name"/>
+        <result property="assetType" column="asset_type"/>
+        <result property="assetScope" column="asset_scope"/>
+        <result property="status" column="status"/>
+    </resultMap>
+
+    <select id="selectAiVideoChapterForUpdate" resultMap="AiVideoChapterArchiveResult">
+        select chapter_id, project_id, chapter_no, chapter_title, source_text, source_hash, word_count,
+               summary_text, parse_status, pipeline_status, current_bible_version, source_metadata_json
+        from ai_video_chapter
+        where project_id = #{projectId} and chapter_id = #{chapterId} and del_flag = '0'
+        for update
+    </select>
+
+    <select id="selectAiVideoChaptersForUpdate" resultMap="AiVideoChapterArchiveResult">
+        select chapter_id, project_id, chapter_no, chapter_title, source_text, source_hash, word_count,
+               summary_text, parse_status, pipeline_status, current_bible_version, source_metadata_json
+        from ai_video_chapter
+        where project_id = #{projectId} and del_flag = '0' and chapter_id in
+        <foreach collection="chapterIds" item="chapterId" open="(" separator="," close=")">
+            #{chapterId}
+        </foreach>
+        order by chapter_id
+        for update
+    </select>
+
+    <!-- 锁住终态任务也很重要：人工重试会先把 FAILED 任务重置为 QUEUED，再更新资产。 -->
+    <select id="selectAiVideoChapterTasksForUpdate" resultMap="AiVideoChapterTaskArchiveResult">
+        select task_id, project_id, chapter_id, asset_id, task_name, status
+        from ai_video_generation_task
+        where project_id = #{projectId} and (del_flag = '0' or del_flag is null) and chapter_id in
+        <foreach collection="chapterIds" item="chapterId" open="(" separator="," close=")">
+            #{chapterId}
+        </foreach>
+        order by task_id
+        for update
+    </select>
+
+    <!-- PROJECT 人物三视图通常 chapter_id 为空；附加语义条件保护历史脏数据中的项目级人物资产。 -->
+    <select id="selectAiVideoChapterAssetsForUpdate" resultMap="AiVideoChapterAssetArchiveResult">
+        select asset_id, project_id, chapter_id, asset_name, asset_type, asset_scope, status
+        from ai_video_asset
+        where project_id = #{projectId} and del_flag = '0' and chapter_id in
+        <foreach collection="chapterIds" item="chapterId" open="(" separator="," close=")">
+            #{chapterId}
+        </foreach>
+          and not (asset_type = 'CHARACTER_REFERENCE' and asset_scope = 'PROJECT')
+        order by asset_id
+        for update
+    </select>
+
+    <update id="archiveAiVideoStoryBiblesByChapterIds">
+        update ai_video_story_bible
+        set status = 'DEPRECATED', del_flag = '2', update_by = #{updateBy}, update_time = now()
+        where project_id = #{projectId} and del_flag = '0' and chapter_id in
+        <foreach collection="chapterIds" item="chapterId" open="(" separator="," close=")">
+            #{chapterId}
+        </foreach>
+    </update>
+
+    <update id="archiveAiVideoShotsByChapterIds">
+        update ai_video_shot
+        set status = 'DEPRECATED', del_flag = '2', update_by = #{updateBy}, update_time = now()
+        where project_id = #{projectId} and del_flag = '0' and chapter_id in
+        <foreach collection="chapterIds" item="chapterId" open="(" separator="," close=")">
+            #{chapterId}
+        </foreach>
+    </update>
+
+    <update id="archiveAiVideoScenesByChapterIds">
+        update ai_video_scene
+        set status = 'DEPRECATED', del_flag = '2', update_by = #{updateBy}, update_time = now()
+        where project_id = #{projectId} and del_flag = '0' and chapter_id in
+        <foreach collection="chapterIds" item="chapterId" open="(" separator="," close=")">
+            #{chapterId}
+        </foreach>
+    </update>
+
+    <update id="archiveAiVideoAssetsByChapterIds">
+        update ai_video_asset
+        set status = 'ARCHIVED', del_flag = '2', update_by = #{updateBy}, update_time = now()
+        where project_id = #{projectId} and del_flag = '0' and chapter_id in
+        <foreach collection="chapterIds" item="chapterId" open="(" separator="," close=")">
+            #{chapterId}
+        </foreach>
+          and not (asset_type = 'CHARACTER_REFERENCE' and asset_scope = 'PROJECT')
+    </update>
+
+    <update id="archiveAiVideoTasksByChapterIds">
+        update ai_video_generation_task
+        set progress = case
+                when status in ('SUCCEEDED', 'FAILED', 'CANCELED') then progress
+                else 100
+            end,
+            error_code = case
+                when status in ('SUCCEEDED', 'FAILED', 'CANCELED') then error_code
+                else 'CHAPTER_ARCHIVED'
+            end,
+            error_message = case
+                when status in ('SUCCEEDED', 'FAILED', 'CANCELED') then error_message
+                else '章节已删除，任务已取消'
+            end,
+            completed_time = coalesce(completed_time, now()),
+            status = case
+                when status in ('SUCCEEDED', 'FAILED', 'CANCELED') then status
+                else 'CANCELED'
+            end,
+            del_flag = '2', update_by = #{updateBy}, update_time = now()
+        where project_id = #{projectId} and (del_flag = '0' or del_flag is null) and chapter_id in
+        <foreach collection="chapterIds" item="chapterId" open="(" separator="," close=")">
+            #{chapterId}
+        </foreach>
+    </update>
+</mapper>

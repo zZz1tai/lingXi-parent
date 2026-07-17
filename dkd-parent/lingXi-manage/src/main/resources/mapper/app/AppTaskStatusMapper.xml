@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.app.mapper.AppTaskStatusMapper">
+    <!-- 结果映射 -->
+    <resultMap id="BaseResultMap" type="com.lingXi.app.domain.AppTaskStatus">
+        <id column="status_id" property="statusId" />
+        <result column="status_name" property="statusName" />
+    </resultMap>
+
+    <!-- 查询所有工单状态 -->
+    <select id="selectList" resultMap="BaseResultMap">
+        SELECT * FROM tb_task_status WHERE status = 1
+    </select>
+</mapper>

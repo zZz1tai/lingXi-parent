@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.app.mapper.AppRoleMapper">
+    <!-- 结果映射 -->
+    <resultMap id="BaseResultMap" type="com.lingXi.app.domain.AppRole">
+        <id column="role_id" property="roleId" />
+        <result column="role_name" property="roleName" />
+        <result column="role_code" property="roleCode" />
+    </resultMap>
+
+    <!-- 根据ID查询角色 -->
+    <select id="selectById" parameterType="java.lang.Integer" resultMap="BaseResultMap">
+        SELECT * FROM tb_role WHERE role_id = #{id}
+    </select>
+</mapper>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.app.mapper.AppTaskTypeMapper">
+    <!-- 结果映射 -->
+    <resultMap id="BaseResultMap" type="com.lingXi.app.domain.AppTaskType">
+        <id column="type_id" property="typeId" />
+        <result column="type_name" property="typeName" />
+        <result column="type" property="type" />
+    </resultMap>
+
+    <!-- 查询所有任务类型 -->
+    <select id="selectList" resultMap="BaseResultMap">
+        SELECT * FROM tb_task_type
+    </select>
+</mapper>

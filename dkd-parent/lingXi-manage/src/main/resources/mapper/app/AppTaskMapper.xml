@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.app.mapper.AppTaskMapper">
+    <!-- 结果映射 -->
+    <resultMap id="BaseResultMap" type="com.lingXi.app.domain.AppTask">
+        <id column="task_id" property="taskId" />
+        <result column="task_code" property="taskCode" />
+        <result column="task_status" property="taskStatus" />
+        <result column="create_type" property="createType" />
+        <result column="inner_code" property="innerCode" />
+        <result column="region_id" property="regionId" />
+        <result column="user_id" property="userId" />
+        <result column="user_name" property="userName" />
+        <result column="desc" property="desc" />
+        <result column="product_type_id" property="productTypeId" />
+        <result column="assignor_id" property="assignorId" />
+        <result column="addr" property="addr" />
+        <result column="create_time" property="createTime" />
+        <result column="update_time" property="updateTime" />
+    </resultMap>
+
+    <!-- 分页查询工单 -->
+    <select id="selectPage" parameterType="java.util.Map" resultMap="BaseResultMap">
+        SELECT * FROM tb_task
+        <where>
+            <!-- 设备编号 -->
+            <if test="params.innerCode != null and params.innerCode != ''">
+                AND inner_code LIKE CONCAT('%', #{params.innerCode}, '%')
+            </if>
+            <!-- 用户ID -->
+            <if test="params.userId != null and params.userId > 0">
+                AND user_id = #{params.userId}
+            </if>
+            <!-- 工单编号 -->
+            <if test="params.taskCode != null and params.taskCode != ''">
+                AND task_code LIKE CONCAT('%', #{params.taskCode}, '%')
+            </if>
+            <!-- 工单状态 -->
+            <if test="params.status != null">
+                AND task_status = #{params.status}
+            </if>
+            <!-- 工单类型 -->
+            <if test="params.productTypeId != null">
+                AND product_type_id = #{params.productTypeId}
+            </if>
+            <!-- 创建时间范围 -->
+            <if test="params.start != null and params.end != null">
+                AND create_time BETWEEN #{params.start} AND #{params.end}
+            </if>
+        </where>
+        <!-- 按更新时间倒序排序 -->
+        ORDER BY update_time DESC
+        <!-- 分页 -->
+        LIMIT #{params.offset}, #{params.pageSize}
+    </select>
+
+    <!-- 查询工单总数 -->
+    <select id="selectCount" parameterType="java.util.Map" resultType="java.lang.Long">
+        SELECT COUNT(*) FROM tb_task
+        <where>
+            <!-- 设备编号 -->
+            <if test="params.innerCode != null and params.innerCode != ''">
+                AND inner_code LIKE CONCAT('%', #{params.innerCode}, '%')
+            </if>
+            <!-- 用户ID -->
+            <if test="params.userId != null and params.userId > 0">
+                AND user_id = #{params.userId}
+            </if>
+            <!-- 工单编号 -->
+            <if test="params.taskCode != null and params.taskCode != ''">
+                AND task_code LIKE CONCAT('%', #{params.taskCode}, '%')
+            </if>
+            <!-- 工单状态 -->
+            <if test="params.status != null">
+                AND task_status = #{params.status}
+            </if>
+            <!-- 工单类型 -->
+            <if test="params.productTypeId != null">
+                AND product_type_id = #{params.productTypeId}
+            </if>
+            <!-- 创建时间范围 -->
+            <if test="params.start != null and params.end != null">
+                AND create_time BETWEEN #{params.start} AND #{params.end}
+            </if>
+        </where>
+    </select>
+
+    <!-- 根据ID查询工单 -->
+    <select id="selectById" parameterType="java.lang.Long" resultMap="BaseResultMap">
+        SELECT * FROM tb_task WHERE task_id = #{id}
+    </select>
+
+    <!-- 更新工单 -->
+    <update id="updateById" parameterType="com.lingXi.app.domain.AppTask">
+        UPDATE tb_task
+        <set>
+            <if test="task.taskStatus != null">
+                task_status = #{task.taskStatus},
+            </if>
+            <if test="task.desc != null">
+                `desc` = #{task.desc},
+            </if>
+            <if test="task.updateTime != null">
+                update_time = #{task.updateTime},
+            </if>
+        </set>
+        WHERE task_id = #{task.taskId}
+    </update>
+</mapper>

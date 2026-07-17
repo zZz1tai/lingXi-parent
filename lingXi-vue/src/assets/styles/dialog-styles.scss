@@ -1,0 +1,309 @@
+/* 对话框统一样式 */
+
+/* 基础对话框样式 */
+:deep(.el-dialog) {
+  border-radius: 16px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  width: 400px !important;
+  background: white;
+  border: none;
+}
+
+/* 居中对齐对话框 */
+:deep(.el-dialog--center) {
+  .el-dialog__body {
+    text-align: center;
+  }
+  
+  .el-input {
+    max-width: 100%;
+  }
+}
+
+/* 对话框头部 */
+:deep(.el-dialog__header) {
+  padding: 24px 24px 16px;
+  background: white;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+/* 对话框标题 */
+:deep(.el-dialog__title) {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1e293b;
+  line-height: 1.3;
+}
+
+/* 对话框内容区 */
+:deep(.el-dialog__body) {
+  padding: 24px;
+  background: white;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #475569;
+}
+
+/* 对话框底部 */
+:deep(.el-dialog__footer) {
+  padding: 0 24px 24px;
+  background: white;
+  border-top: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/* 关闭按钮 */
+:deep(.el-dialog__close) {
+  font-size: 20px;
+  color: #94a3b8;
+  transition: color 0.3s ease;
+  
+  &:hover {
+    color: #64748b;
+  }
+}
+
+/* 输入框样式 */
+:deep(.el-input) {
+  width: 100%;
+  margin-bottom: 16px;
+  
+  &:last-child {
+    margin-bottom: 0;
+  }
+  
+  .el-input__wrapper {
+    border-radius: 12px;
+    border: 2px solid #e2e8f0;
+    transition: all 0.3s ease;
+    background: white;
+    
+    &:hover {
+      border-color: #cbd5e1;
+    }
+    
+    &.is-focus {
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+  }
+  
+  .el-input__inner {
+    height: 48px;
+    font-size: 16px;
+    padding: 0 20px;
+    color: #1e293b;
+  }
+  
+  .el-input__count {
+    color: #94a3b8;
+    font-size: 12px;
+  }
+  
+  &.is-disabled .el-input__wrapper {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+  }
+}
+
+/* 按钮样式 */
+:deep(.el-button) {
+  padding: 10px 24px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  min-width: 80px;
+  
+  &:hover {
+    transform: translateY(-2px);
+  }
+}
+
+:deep(.el-button--default) {
+  border: 1px solid #e2e8f0;
+  background: white;
+  color: #475569;
+  
+  &:hover {
+    border-color: #cbd5e1;
+    background: #f8fafc;
+  }
+}
+
+:deep(.el-button--primary) {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  color: white;
+  
+  &:hover {
+    background: linear-gradient(135deg, #5a6fd8 0%, #6a4391 100%);
+    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+  }
+  
+  &:disabled {
+    background: #cbd5e1;
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+}
+
+/* 表单样式 */
+:deep(.el-form) {
+  width: 100%;
+  
+  .el-form-item {
+    margin-bottom: 16px;
+    
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+  
+  .el-form-item__label {
+    font-size: 14px;
+    font-weight: 500;
+    color: #475569;
+  }
+}
+
+/* 不同尺寸的对话框 */
+.dialog-sm {
+  :deep(.el-dialog) {
+    width: 300px !important;
+  }
+}
+
+.dialog-md {
+  :deep(.el-dialog) {
+    width: 400px !important;
+  }
+}
+
+.dialog-lg {
+  :deep(.el-dialog) {
+    width: 600px !important;
+  }
+}
+
+.dialog-xl {
+  :deep(.el-dialog) {
+    width: 800px !important;
+  }
+}
+
+/* 消息框样式（确认对话框、提示对话框等） */
+:deep(.el-message-box) {
+  border-radius: 16px;
+  overflow: hidden;
+  border: none;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+}
+
+:deep(.el-message-box__header) {
+  padding: 24px 24px 16px;
+  background: white;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+:deep(.el-message-box__title) {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+:deep(.el-message-box__content) {
+  padding: 24px;
+  background: white;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #475569;
+}
+
+:deep(.el-message-box__footer) {
+  padding: 0 24px 24px;
+  background: white;
+  border-top: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/* 深色模式支持 */
+@media (prefers-color-scheme: dark) {
+  :deep(.el-dialog) {
+    background: #1e293b;
+  }
+  
+  :deep(.el-dialog__header) {
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+  }
+  
+  :deep(.el-dialog__title) {
+    color: #f8fafc;
+  }
+  
+  :deep(.el-dialog__body) {
+    background: #1e293b;
+    color: #cbd5e1;
+  }
+  
+  :deep(.el-dialog__footer) {
+    background: #1e293b;
+  }
+  
+  :deep(.el-message-box) {
+    background: #1e293b;
+  }
+  
+  :deep(.el-message-box__header) {
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+  }
+  
+  :deep(.el-message-box__title) {
+    color: #f8fafc;
+  }
+  
+  :deep(.el-message-box__content) {
+    background: #1e293b;
+    color: #cbd5e1;
+  }
+  
+  :deep(.el-message-box__footer) {
+    background: #1e293b;
+  }
+  
+  :deep(.el-input .el-input__wrapper) {
+    background: #334155;
+    border-color: #475569;
+    
+    &:hover {
+      border-color: #64748b;
+    }
+    
+    &.is-focus {
+      border-color: #667eea;
+    }
+  }
+  
+  :deep(.el-input .el-input__inner) {
+    color: #f8fafc;
+    background: #334155;
+  }
+  
+  :deep(.el-button--default) {
+    border-color: #475569;
+    background: #334155;
+    color: #cbd5e1;
+    
+    &:hover {
+      border-color: #64748b;
+      background: #475569;
+    }
+  }
+}

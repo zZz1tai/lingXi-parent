@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiVedio.mapper.AiVideoCharacterMapper">
+    <resultMap id="AiVideoCharacterResult" type="AiVideoCharacter">
+        <id property="characterId" column="character_id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="characterCode" column="character_code"/>
+        <result property="characterName" column="character_name"/>
+        <result property="aliasesJson" column="aliases_json"/>
+        <result property="gender" column="gender"/>
+        <result property="ageRange" column="age_range"/>
+        <result property="personalityJson" column="personality_json"/>
+        <result property="appearanceText" column="appearance_text"/>
+        <result property="speakingStyle" column="speaking_style"/>
+        <result property="visualPromptBase" column="visual_prompt_base"/>
+        <result property="status" column="status"/>
+    </resultMap>
+
+    <select id="selectAiVideoCharacterByProjectAndCodeForUpdate" parameterType="AiVideoCharacter"
+            resultMap="AiVideoCharacterResult">
+        select character_id, project_id, character_code, character_name, aliases_json, gender, age_range,
+               personality_json, appearance_text, speaking_style, visual_prompt_base, status
+        from ai_video_character
+        where project_id = #{projectId} and character_code = #{characterCode} and del_flag = '0'
+        limit 1
+        for update
+    </select>
+
+    <select id="selectAiVideoCharacterByProjectIdentityForUpdate" parameterType="AiVideoCharacter"
+            resultMap="AiVideoCharacterResult">
+        select character_id, project_id, character_code, character_name, aliases_json, gender, age_range,
+               personality_json, appearance_text, speaking_style, visual_prompt_base, status
+        from ai_video_character
+        where project_id = #{projectId} and del_flag = '0'
+          and (character_code = #{characterCode}
+               or character_name = #{characterName}
+               or exists (
+                    select 1
+                    from json_table(coalesce(aliases_json, json_array()), '$[*]'
+                         columns(alias_value varchar(255) path '$')) existing_alias
+                    where lower(trim(existing_alias.alias_value)) = lower(trim(#{characterName}))
+               )
+               or exists (
+                    select 1
+                    from json_table(cast(#{aliasesJson} as json), '$[*]'
+                         columns(alias_value varchar(255) path '$')) incoming_alias
+                    where lower(trim(incoming_alias.alias_value)) = lower(trim(character_name))
+               ))
+        order by case when character_code = #{characterCode} then 0
+                      when character_name = #{characterName} then 1
+                      else 2 end,
+                 character_id
+        for update
+    </select>
+
+    <select id="selectAiVideoCharactersByProjectId" parameterType="Long" resultMap="AiVideoCharacterResult">
+        select character_id, project_id, character_code, character_name, aliases_json, gender, age_range,
+               personality_json, appearance_text, speaking_style, visual_prompt_base, status
+        from ai_video_character
+        where project_id = #{projectId} and del_flag = '0'
+        order by character_id
+    </select>
+
+    <insert id="upsertAiVideoCharacter" parameterType="AiVideoCharacter" useGeneratedKeys="true" keyProperty="characterId">
+        insert into ai_video_character
+        (project_id, character_code, character_name, aliases_json, gender, age_range, personality_json, appearance_text,
+         speaking_style, visual_prompt_base, status, create_by, create_time)
+        values
+        (#{projectId}, #{characterCode}, #{characterName}, #{aliasesJson}, #{gender}, #{ageRange}, #{personalityJson}, #{appearanceText},
+         #{speakingStyle}, #{visualPromptBase}, #{status}, #{createBy}, now())
+        on duplicate key update
+            character_id = last_insert_id(character_id)
+    </insert>
+
+    <update id="updateAiVideoCharacterAliases">
+        update ai_video_character
+        set aliases_json = #{aliasesJson}, update_by = #{updateBy}, update_time = now()
+        where character_id = #{characterId} and del_flag = '0'
+    </update>
+</mapper>

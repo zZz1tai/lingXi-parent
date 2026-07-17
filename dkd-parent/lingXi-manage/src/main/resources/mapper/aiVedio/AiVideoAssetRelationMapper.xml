@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiVedio.mapper.AiVideoAssetRelationMapper">
+    <insert id="insertAiVideoAssetRelation" parameterType="AiVideoAssetRelation"
+            useGeneratedKeys="true" keyProperty="relationId">
+        insert into ai_video_asset_relation
+        (project_id, from_asset_id, to_asset_id, relation_type, relation_order, metadata_json, create_time)
+        values
+        (#{projectId}, #{fromAssetId}, #{toAssetId}, #{relationType}, #{relationOrder}, #{metadataJson}, now())
+        on duplicate key update
+            relation_order = values(relation_order), metadata_json = values(metadata_json)
+    </insert>
+
+    <insert id="copyIncomingReferenceRelations">
+        insert into ai_video_asset_relation
+        (project_id, from_asset_id, to_asset_id, relation_type, relation_order, metadata_json, create_time)
+        select project_id, from_asset_id, #{newAssetId}, relation_type, relation_order, metadata_json, now()
+        from ai_video_asset_relation
+        where project_id = #{projectId} and to_asset_id = #{sourceAssetId}
+          and relation_type = 'REFERENCE_IMAGE'
+        on duplicate key update
+            relation_order = values(relation_order), metadata_json = values(metadata_json)
+    </insert>
+
+    <select id="countActiveKeyframeReferences" parameterType="Long" resultType="int">
+        select count(1)
+        from ai_video_asset_relation r
+        inner join ai_video_asset target on target.asset_id = r.to_asset_id
+        where r.from_asset_id = #{fromAssetId} and r.relation_type = 'REFERENCE_IMAGE'
+          and target.asset_type = 'SHOT_KEYFRAME' and target.del_flag = '0'
+    </select>
+
+    <select id="selectActiveReferenceAssetsByTargetAssetId" parameterType="Long" resultType="AiVideoAsset">
+        select source.asset_id as assetId,
+               source.project_id as projectId,
+               source.chapter_id as chapterId,
+               source.scene_id as sceneId,
+               source.character_id as characterId,
+               source.asset_code as assetCode,
+               source.asset_name as assetName,
+               source.asset_type as assetType,
+               source.status as status,
+               source.version_no as versionNo,
+               source.storage_provider as storageProvider,
+               source.object_key as objectKey,
+               source.preview_object_key as previewObjectKey,
+               source.mime_type as mimeType,
+               source.file_size as fileSize,
+               source.width as width,
+               source.height as height
+        from ai_video_asset_relation relation_row
+        inner join ai_video_asset source
+                on source.asset_id = relation_row.from_asset_id and source.del_flag = '0'
+        inner join ai_video_asset target
+                on target.asset_id = relation_row.to_asset_id and target.del_flag = '0'
+        where relation_row.to_asset_id = #{targetAssetId}
+          and relation_row.relation_type = 'REFERENCE_IMAGE'
+        order by relation_row.relation_order asc, relation_row.relation_id asc
+    </select>
+
+</mapper>

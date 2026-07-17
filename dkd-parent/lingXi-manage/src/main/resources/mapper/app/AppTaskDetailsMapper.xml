@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.app.mapper.AppTaskDetailsMapper">
+    <!-- 结果映射 -->
+    <resultMap id="BaseResultMap" type="com.lingXi.app.domain.AppTaskDetails">
+        <id column="details_id" property="detailsId" />
+        <result column="task_id" property="taskId" />
+        <result column="channel_code" property="channelCode" />
+        <result column="expect_capacity" property="expectCapacity" />
+        <result column="sku_id" property="skuId" />
+        <result column="sku_name" property="skuName" />
+        <result column="sku_image" property="skuImage" />
+    </resultMap>
+
+    <!-- 根据工单ID查询工单详情 -->
+    <select id="selectByTaskId" parameterType="java.lang.Long" resultMap="BaseResultMap">
+        SELECT * FROM tb_task_details WHERE task_id = #{taskId}
+    </select>
+</mapper>

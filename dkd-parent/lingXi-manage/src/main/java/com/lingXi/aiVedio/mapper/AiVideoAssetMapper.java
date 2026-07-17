@@ -1,0 +1,65 @@
+package com.lingXi.aiVedio.mapper;
+
+import java.util.List;
+import org.apache.ibatis.annotations.Param;
+import com.lingXi.aiVedio.domain.AiVideoAsset;
+
+public interface AiVideoAssetMapper
+{
+    List<AiVideoAsset> selectAiVideoAssetList(AiVideoAsset asset);
+
+    AiVideoAsset selectAiVideoAssetByAssetId(Long assetId);
+
+    AiVideoAsset selectAiVideoAssetByAssetIdForUpdate(Long assetId);
+
+    AiVideoAsset selectLatestEditableVideoDraftBySourceAssetId(Long sourceAssetId);
+
+    AiVideoAsset selectProjectCharacterReferenceForUpdate(@Param("projectId") Long projectId,
+            @Param("characterId") Long characterId, @Param("characterCode") String characterCode);
+
+    Integer selectMaxAssetVersionForUpdate(@Param("projectId") Long projectId,
+            @Param("assetCode") String assetCode);
+
+    int insertAiVideoAsset(AiVideoAsset asset);
+
+    int promoteProjectCharacterReference(@Param("assetId") Long assetId,
+            @Param("characterId") Long characterId, @Param("updateBy") String updateBy);
+
+    int markAiVideoAssetGenerated(AiVideoAsset asset);
+
+    int approveAiVideoAsset(@Param("assetId") Long assetId, @Param("updateBy") String updateBy);
+
+    int updateAiVideoAssetPrompt(@Param("assetId") Long assetId, @Param("promptText") String promptText,
+            @Param("negativePromptText") String negativePromptText, @Param("updateBy") String updateBy);
+
+    int updateAiVideoAssetVideoPrompt(@Param("assetId") Long assetId,
+            @Param("promptText") String promptText,
+            @Param("negativePromptText") String negativePromptText,
+            @Param("durationMs") Integer durationMs,
+            @Param("generationParamsJson") String generationParamsJson,
+            @Param("updateBy") String updateBy);
+
+    int markDraftAiVideoAssetGenerating(@Param("assetId") Long assetId,
+            @Param("generationParamsJson") String generationParamsJson, @Param("updateBy") String updateBy);
+
+    int markEditableVideoAssetGenerating(@Param("assetId") Long assetId,
+            @Param("promptText") String promptText,
+            @Param("negativePromptText") String negativePromptText,
+            @Param("durationMs") Integer durationMs,
+            @Param("generationParamsJson") String generationParamsJson,
+            @Param("updateBy") String updateBy);
+
+    int markAiVideoAssetFailed(AiVideoAsset asset);
+
+    int markAiVideoAssetGenerating(@Param("assetId") Long assetId,
+            @Param("generationParamsJson") String generationParamsJson, @Param("updateBy") String updateBy);
+
+    int logicallyDeleteAiVideoAsset(@Param("assetId") Long assetId, @Param("updateBy") String updateBy);
+
+    int countActiveVideoAssetsBySourceAssetId(Long sourceAssetId);
+
+    int countOtherActiveAssetsByStoragePath(@Param("assetId") Long assetId,
+            @Param("storagePath") String storagePath);
+
+    int rejectOrphanedGeneratingAssets();
+}

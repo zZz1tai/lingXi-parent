@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper">
+    <resultMap id="AiVideoGenerationTaskResult" type="AiVideoGenerationTask">
+        <id property="taskId" column="task_id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="chapterId" column="chapter_id"/>
+        <result property="assetId" column="asset_id"/>
+        <result property="taskType" column="task_type"/>
+        <result property="taskName" column="task_name"/>
+        <result property="status" column="status"/>
+        <result property="idempotencyKey" column="idempotency_key"/>
+        <result property="providerTaskId" column="provider_task_id"/>
+        <result property="progress" column="progress"/>
+        <result property="requestJson" column="request_json"/>
+        <result property="errorCode" column="error_code"/>
+        <result property="errorMessage" column="error_message"/>
+        <result property="createTime" column="create_time"/>
+    </resultMap>
+
+    <insert id="insertAiVideoGenerationTask" parameterType="AiVideoGenerationTask" useGeneratedKeys="true" keyProperty="taskId">
+        insert into ai_video_generation_task
+        (project_id, chapter_id, asset_id, task_type, task_name, status, priority, idempotency_key, provider_code, model_code,
+         progress, max_retry, request_json, create_by, create_time)
+        values
+        (#{projectId}, #{chapterId}, #{assetId}, #{taskType}, #{taskName}, #{status}, #{priority}, #{idempotencyKey}, #{providerCode}, #{modelCode},
+         #{progress}, #{maxRetry}, #{requestJson}, #{createBy}, now())
+    </insert>
+
+    <select id="selectAiVideoGenerationTaskByIdempotencyKey" parameterType="String" resultMap="AiVideoGenerationTaskResult">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key, provider_task_id, progress
+        from ai_video_generation_task
+        where idempotency_key = #{idempotencyKey} and (del_flag = '0' or del_flag is null)
+    </select>
+
+    <select id="selectLatestImageTaskByAssetId" parameterType="Long" resultMap="AiVideoGenerationTaskResult">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key,
+               provider_task_id, progress, error_code, error_message, create_time
+        from ai_video_generation_task
+        where asset_id = #{assetId} and task_type = 'IMAGE' and provider_code = 'dashscope'
+          and (del_flag = '0' or del_flag is null)
+        order by task_id desc
+        limit 1
+    </select>
+
+    <select id="selectLatestNeedsReviewWanxTaskByAssetId" parameterType="Long" resultMap="AiVideoGenerationTaskResult">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key,
+               provider_task_id, progress, request_json, error_code, error_message, create_time
+        from ai_video_generation_task
+        where asset_id = #{assetId} and task_type = 'VIDEO' and provider_code = 'wanx'
+          and status = 'NEEDS_REVIEW' and (del_flag = '0' or del_flag is null)
+        order by task_id desc
+        limit 1
+        for update
+    </select>
+
+    <select id="countActiveAiVideoGenerationTasksByAssetId" parameterType="Long" resultType="int">
+        select count(1)
+        from ai_video_generation_task
+        where asset_id = #{assetId} and (del_flag = '0' or del_flag is null)
+          and status in ('PENDING', 'QUEUED', 'RUNNING', 'WAITING_CALLBACK', 'QUALITY_CHECK',
+                         'RETRYING', 'NEEDS_REVIEW', 'SUBMITTED', 'PROCESSING', 'VALIDATING')
+    </select>
+
+    <update id="updateAiVideoGenerationTaskStatus">
+        update ai_video_generation_task
+        <set>
+            status = #{status},
+            progress = #{progress},
+            error_code = #{errorCode},
+            error_message = #{errorMessage},
+            <if test="status == 'RUNNING'">started_time = now(),</if>
+            <if test="status == 'SUCCEEDED' or status == 'FAILED'">completed_time = now(),</if>
+            update_time = now()
+        </set>
+        where task_id = #{taskId} and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="claimStoryBibleTask">
+        update ai_video_generation_task
+        set status = 'RUNNING', progress = 10, error_code = null, error_message = null,
+            started_time = coalesce(started_time, now()), update_time = now()
+        where task_id = #{taskId}
+          and task_type = 'STORY_BIBLE'
+          and status = 'QUEUED'
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="updateAiVideoGenerationProviderTaskId">
+        update ai_video_generation_task set provider_task_id = #{providerTaskId}, update_time = now()
+        where task_id = #{taskId} and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="markWanxVideoTaskWaiting">
+        update ai_video_generation_task
+        set provider_task_id = #{providerTaskId}, status = 'WAITING_CALLBACK', progress = 20,
+            error_code = null, error_message = null, started_time = coalesce(started_time, now()), update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+          and status = 'QUEUED' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="markWanxVideoTaskNeedsReviewWithProviderId">
+        update ai_video_generation_task
+        set provider_task_id = #{providerTaskId}, status = 'NEEDS_REVIEW', progress = 20,
+            error_code = #{errorCode}, error_message = #{errorMessage}, update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+          and status in ('QUEUED', 'NEEDS_REVIEW') and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="claimWanxVideoTask">
+        update ai_video_generation_task
+        set status = 'RUNNING', progress = 30, error_code = null, error_message = null, update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+          and status = 'WAITING_CALLBACK' and provider_task_id is not null
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="updateClaimedWanxVideoTaskStatus">
+        update ai_video_generation_task
+        <set>
+            status = #{status},
+            progress = #{progress},
+            error_code = #{errorCode},
+            error_message = #{errorMessage},
+            <if test="status == 'SUCCEEDED' or status == 'FAILED' or status == 'CANCELED'">
+                completed_time = now(),
+            </if>
+            update_time = now()
+        </set>
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+          and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="markStaleWanxSubmissionsNeedsReview">
+        update ai_video_generation_task
+        set status = 'NEEDS_REVIEW', progress = 20,
+            error_code = 'WANX_VIDEO_SUBMISSION_INTERRUPTED',
+            error_message = '本地进程在确认 Wanx 任务ID前中断，请勿重复提交，需人工核对',
+            update_time = now()
+        where task_type = 'VIDEO' and provider_code = 'wanx' and status = 'QUEUED'
+          and provider_task_id is null
+          and coalesce(update_time, create_time) &lt; date_sub(now(), interval 2 minute)
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="recoverStaleWanxSubmissionsWithProviderId">
+        update ai_video_generation_task
+        set status = 'WAITING_CALLBACK', progress = 20,
+            error_code = null, error_message = null, started_time = coalesce(started_time, now()), update_time = now()
+        where task_type = 'VIDEO' and provider_code = 'wanx' and status = 'QUEUED'
+          and provider_task_id is not null
+          and coalesce(update_time, create_time) &lt; date_sub(now(), interval 2 minute)
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="releaseStaleClaimedWanxVideoTasks">
+        update ai_video_generation_task
+        set status = 'WAITING_CALLBACK', progress = 30,
+            error_code = 'WANX_VIDEO_POLL_INTERRUPTED',
+            error_message = '上次轮询处理中断，已安全恢复等待状态', update_time = now()
+        where task_type = 'VIDEO' and provider_code = 'wanx' and status = 'RUNNING'
+          and provider_task_id is not null
+          and coalesce(update_time, create_time) &lt; date_sub(now(), interval 5 minute)
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="failQueuedWanxVideoTask">
+        update ai_video_generation_task
+        set status = 'FAILED', progress = 100, error_code = #{errorCode}, error_message = #{errorMessage},
+            completed_time = now(), update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+          and status = 'QUEUED' and provider_task_id is null
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="resolveNeedsReviewWanxTaskWithProviderId">
+        update ai_video_generation_task
+        set provider_task_id = #{providerTaskId}, status = 'WAITING_CALLBACK', progress = 20,
+            error_code = null, error_message = null, started_time = coalesce(started_time, now()),
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.resolution', json_object(
+                    'action', 'RESUME_WITH_PROVIDER_TASK_ID',
+                    'resolvedBy', #{resolvedBy},
+                    'resolvedAt', date_format(now(), '%Y-%m-%dT%H:%i:%s'))),
+            update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+          and status = 'NEEDS_REVIEW' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="resolveNeedsReviewWanxTaskAsNotSubmitted">
+        update ai_video_generation_task
+        set status = 'FAILED', progress = 100,
+            error_code = 'WANX_VIDEO_CONFIRMED_NOT_SUBMITTED',
+            error_message = '人工核对确认 Wanx 未受理，视频草稿已解锁',
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.resolution', json_object(
+                    'action', 'CONFIRM_NOT_SUBMITTED',
+                    'resolvedBy', #{resolvedBy},
+                    'resolvedAt', date_format(now(), '%Y-%m-%dT%H:%i:%s'))),
+            completed_time = now(), update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+          and status = 'NEEDS_REVIEW' and provider_task_id is null
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="updateClaimedImageTaskRequest">
+        update ai_video_generation_task
+        set request_json = #{requestJson}, model_code = #{modelCode}, update_time = now()
+        where task_id = #{taskId} and task_type = 'IMAGE' and provider_code = 'dashscope'
+          and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="resetFailedImageTaskForRetry">
+        update ai_video_generation_task
+        set status = 'QUEUED', provider_task_id = null, progress = 5,
+            model_code = #{modelCode}, request_json = #{requestJson},
+            error_code = null, error_message = null, started_time = null, completed_time = null, update_time = now()
+        where task_id = #{taskId} and task_type = 'IMAGE' and provider_code = 'dashscope'
+          and status = 'FAILED' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="claimImageTask">
+        update ai_video_generation_task
+        set status = 'RUNNING', progress = 10, error_code = null, error_message = null,
+            started_time = now(), update_time = now()
+        where task_id = #{taskId} and task_type = 'IMAGE' and provider_code = 'dashscope'
+          and json_unquote(json_extract(request_json, '$.trigger')) = 'USER_CONFIRMED'
+          and status = #{expectedStatus} and (del_flag = '0' or del_flag is null)
+          <if test="expectedStatus == 'RUNNING'">
+              and coalesce(update_time, create_time) &lt; date_sub(now(), interval 5 minute)
+          </if>
+    </update>
+
+    <update id="failImageTaskIfExpectedStatus">
+        update ai_video_generation_task
+        set status = 'FAILED', progress = 100, error_code = #{errorCode}, error_message = #{errorMessage},
+            completed_time = now(), update_time = now()
+        where task_id = #{taskId} and task_type = 'IMAGE' and provider_code = 'dashscope'
+          and status = #{expectedStatus} and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <select id="selectQueuedImageTasksForRecovery" resultMap="AiVideoGenerationTaskResult">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key,
+               provider_task_id, progress, request_json
+        from ai_video_generation_task
+        where (del_flag = '0' or del_flag is null) and task_type = 'IMAGE' and provider_code = 'dashscope'
+          and (
+            status = 'QUEUED'
+            or (status = 'RETRYING'
+              and coalesce(update_time, create_time) &lt; date_sub(now(), interval 60 second))
+            or (status = 'RUNNING'
+              and coalesce(update_time, create_time) &lt; date_sub(now(), interval 5 minute))
+          )
+        order by create_time asc
+        limit 20
+    </select>
+
+    <select id="selectWaitingWanxVideoTasks" resultMap="AiVideoGenerationTaskResult">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key, provider_task_id, progress
+        from ai_video_generation_task
+        where (del_flag = '0' or del_flag is null) and task_type = 'VIDEO' and provider_code = 'wanx'
+          and status = 'WAITING_CALLBACK' and provider_task_id is not null
+        order by create_time asc
+        limit 10
+    </select>
+
+    <select id="selectAiVideoGenerationTaskList" parameterType="Long" resultMap="AiVideoGenerationTaskResult">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key,
+               provider_task_id, progress, error_code, error_message, create_time
+        from ai_video_generation_task
+        where project_id = #{projectId} and (del_flag = '0' or del_flag is null)
+        order by task_id desc
+    </select>
+</mapper>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.app.mapper.AppEmpMapper">
+    <!-- 结果映射 -->
+    <resultMap id="BaseResultMap" type="com.lingXi.app.domain.AppEmp">
+        <id column="id" property="id" />
+        <result column="role_id" property="roleId" />
+        <result column="role_code" property="roleCode" />
+        <result column="user_name" property="userName" />
+        <result column="mobile" property="mobile" />
+        <result column="region_id" property="regionId" />
+        <result column="region_name" property="regionName" />
+        <result column="image" property="image" />
+        <result column="status" property="status" />
+        <result column="user_id" property="userId" />
+    </resultMap>
+
+    <!-- 根据ID查询员工 -->
+    <select id="selectById" parameterType="java.lang.Integer" resultMap="BaseResultMap">
+        SELECT * FROM tb_emp WHERE id = #{id}
+    </select>
+    
+    <!-- 根据用户ID查询员工 -->
+    <select id="selectByUserId" parameterType="java.lang.Long" resultMap="BaseResultMap">
+        SELECT * FROM tb_emp WHERE user_id = #{userId}
+    </select>
+    
+    <!-- 查询已绑定员工的账号总数 -->
+    <select id="countBoundEmployees" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM tb_emp WHERE user_id IS NOT NULL AND user_id != ''
+    </select>
+</mapper>

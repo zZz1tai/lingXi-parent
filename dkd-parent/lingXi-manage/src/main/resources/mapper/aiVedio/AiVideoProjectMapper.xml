@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiVedio.mapper.AiVideoProjectMapper">
+    <resultMap id="AiVideoProjectResult" type="AiVideoProject">
+        <id property="projectId" column="project_id"/>
+        <result property="projectName" column="project_name"/>
+        <result property="sourceType" column="source_type"/>
+        <result property="adaptationMode" column="adaptation_mode"/>
+        <result property="status" column="status"/>
+        <result property="ownerUserId" column="owner_user_id"/>
+        <result property="visualStyle" column="visual_style"/>
+        <result property="styleGuideJson" column="style_guide_json"/>
+        <result property="defaultAspectRatio" column="default_aspect_ratio"/>
+        <result property="defaultLanguage" column="default_language"/>
+        <result property="storageBytes" column="storage_bytes"/>
+        <result property="estimatedCost" column="estimated_cost"/>
+        <result property="actualCost" column="actual_cost"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateBy" column="update_by"/>
+        <result property="updateTime" column="update_time"/>
+    </resultMap>
+
+    <sql id="selectAiVideoProjectVo">
+        select project_id, project_name, source_type, adaptation_mode, status, owner_user_id, visual_style,
+               style_guide_json, default_aspect_ratio, default_language, storage_bytes, estimated_cost, actual_cost,
+               create_by, create_time, update_by, update_time
+        from ai_video_project
+    </sql>
+
+    <select id="selectAiVideoProjectByProjectId" parameterType="Long" resultMap="AiVideoProjectResult">
+        <include refid="selectAiVideoProjectVo"/>
+        where project_id = #{projectId} and del_flag = '0'
+    </select>
+
+    <select id="selectAiVideoProjectList" parameterType="AiVideoProject" resultMap="AiVideoProjectResult">
+        <include refid="selectAiVideoProjectVo"/>
+        <where>
+            del_flag = '0'
+            <if test="ownerUserId != null">and owner_user_id = #{ownerUserId}</if>
+            <if test="projectName != null and projectName != ''">and project_name like concat('%', #{projectName}, '%')</if>
+            <if test="status != null and status != ''">and status = #{status}</if>
+        </where>
+        order by update_time desc, project_id desc
+    </select>
+
+    <insert id="insertAiVideoProject" parameterType="AiVideoProject" useGeneratedKeys="true" keyProperty="projectId">
+        insert into ai_video_project
+        (project_name, source_type, adaptation_mode, status, owner_user_id, visual_style, style_guide_json,
+         default_aspect_ratio, default_language, create_by, create_time)
+        values
+        (#{projectName}, #{sourceType}, #{adaptationMode}, #{status}, #{ownerUserId}, #{visualStyle}, #{styleGuideJson},
+         #{defaultAspectRatio}, #{defaultLanguage}, #{createBy}, #{createTime})
+    </insert>
+
+    <update id="updateAiVideoProject" parameterType="AiVideoProject">
+        update ai_video_project
+        <set>
+            project_name = #{projectName},
+            source_type = #{sourceType},
+            adaptation_mode = #{adaptationMode},
+            visual_style = #{visualStyle},
+            style_guide_json = #{styleGuideJson},
+            default_aspect_ratio = #{defaultAspectRatio},
+            default_language = #{defaultLanguage},
+            update_by = #{updateBy},
+            update_time = #{updateTime}
+        </set>
+        where project_id = #{projectId} and del_flag = '0'
+    </update>
+
+    <update id="deleteAiVideoProjectByProjectIds">
+        update ai_video_project set del_flag = '2', update_time = now()
+        where owner_user_id = #{ownerUserId} and del_flag = '0' and project_id in
+        <foreach collection="projectIds" item="projectId" open="(" separator="," close=")">
+            #{projectId}
+        </foreach>
+    </update>
+</mapper>

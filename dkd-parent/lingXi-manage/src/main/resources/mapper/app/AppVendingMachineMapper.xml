@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.app.mapper.AppVendingMachineMapper">
+    <!-- 更新设备状态 -->
+    <update id="updateStatus">
+        UPDATE tb_vending_machine SET vm_status = #{status} WHERE inner_code = #{innerCode}
+    </update>
+
+    <!-- 补货操作 -->
+    <update id="supply" parameterType="java.util.Map">
+        UPDATE tb_channel SET current_capacity = current_capacity + CASE
+        <foreach collection="details" item="detail" separator="">
+            WHEN channel_code = #{detail.channelCode} THEN #{detail.expectCapacity}
+        </foreach>
+        END
+        WHERE inner_code = #{innerCode}
+    </update>
+</mapper>

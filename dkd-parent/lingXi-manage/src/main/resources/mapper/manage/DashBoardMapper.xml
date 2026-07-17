@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.manage.mapper.DashBoardMapper">
+
+    <!-- 获取工单统计 -->
+    <select id="getTaskStats" resultType="java.util.Map">
+        SELECT
+            t.product_type_id,
+            tt.type as task_type,
+            t.task_status,
+            t.user_id
+        FROM tb_task t
+        LEFT JOIN tb_task_type tt ON t.product_type_id = tt.type_id
+        <where>
+            <if test="start != null and start != ''">
+                AND t.create_time &gt;= #{start}
+            </if>
+            <if test="end != null and end != ''">
+                AND t.create_time &lt;= #{end}
+            </if>
+        </where>
+    </select>
+
+    <!-- 获取销售统计 -->
+    <select id="getSaleStats" resultType="java.util.Map">
+        SELECT
+            COUNT(*) as orderCount,
+            SUM(amount) as orderAmount
+        FROM tb_order
+        <where>
+            <if test="start != null and start != ''">
+                AND create_time &gt;= #{start}
+            </if>
+            <if test="end != null and end != ''">
+                AND create_time &lt;= #{end}
+            </if>
+            AND status IN (1, 2) <!-- 只统计支付完成和出货成功的订单 -->
+        </where>
+    </select>
+
+    <!-- 获取SKU销售排名 -->
+    <select id="getSkuSaleRank" resultType="java.util.Map">
+        SELECT
+            sku_name as skuName,
+            SUM(quantity) as count
+        FROM tb_order 
+        <where>
+            <if test="start != null and start != ''">
+                AND create_time &gt;= #{start}
+            </if>
+            <if test="end != null and end != ''">
+                AND create_time &lt;= #{end}
+            </if>
+            AND status IN (1, 2) <!-- 只统计支付完成和出货成功的订单 -->
+        </where>
+        GROUP BY sku_name
+        ORDER BY count DESC
+        LIMIT 10
+    </select>
+
+    <!-- 获取SKU销售折线图X轴数据 -->
+    <select id="getSkuSaleLineXAxisData" resultType="java.lang.String">
+        SELECT DISTINCT
+            <choose>
+                <when test="collectType == 2">
+                    DATE_FORMAT(create_time, '%Y-%m') as date
+                </when>
+                <otherwise>
+                    DATE_FORMAT(create_time, '%Y-%m-%d') as date
+                </otherwise>
+            </choose>
+        FROM tb_order
+        <where>
+            <if test="start != null and start != ''">
+                AND create_time &gt;= #{start}
+            </if>
+            <if test="end != null and end != ''">
+                AND create_time &lt;= #{end}
+            </if>
+            AND status IN (1, 2) <!-- 只统计支付完成和出货成功的订单 -->
+        </where>
+        ORDER BY date
+    </select>
+
+    <!-- 获取SKU销售折线图系列数据 -->
+    <select id="getSkuSaleLineSeriesData" resultType="java.lang.Integer">
+        SELECT
+            SUM(amount) as amount
+        FROM tb_order
+        <where>
+            <if test="start != null and start != ''">
+                AND create_time &gt;= #{start}
+            </if>
+            <if test="end != null and end != ''">
+                AND create_time &lt;= #{end}
+            </if>
+            AND status IN (1, 2) <!-- 只统计支付完成和出货成功的订单 -->
+        </where>
+        GROUP BY 
+            <choose>
+                <when test="collectType == 2">
+                    DATE_FORMAT(create_time, '%Y-%m')
+                </when>
+                <otherwise>
+                    DATE_FORMAT(create_time, '%Y-%m-%d')
+                </otherwise>
+            </choose>
+        ORDER BY 
+            <choose>
+                <when test="collectType == 2">
+                    DATE_FORMAT(create_time, '%Y-%m')
+                </when>
+                <otherwise>
+                    DATE_FORMAT(create_time, '%Y-%m-%d')
+                </otherwise>
+            </choose>
+    </select>
+
+    <!-- 获取SKU销售柱状图X轴数据 -->
+    <select id="getSkuSaleBarXAxisData" resultType="java.lang.String">
+        SELECT DISTINCT
+            o.region_name as regionName
+        FROM tb_order o
+        <where>
+            <if test="start != null and start != ''">
+                AND o.create_time &gt;= #{start}
+            </if>
+            <if test="end != null and end != ''">
+                AND o.create_time &lt;= #{end}
+            </if>
+            AND o.status = 1
+            AND o.region_name IS NOT NULL
+        </where>
+        ORDER BY regionName
+    </select>
+
+    <!-- 获取SKU销售柱状图系列数据 -->
+    <select id="getSkuSaleBarSeriesData" resultType="java.lang.Integer">
+        SELECT
+            SUM(amount) as amount
+        FROM tb_order o
+        <where>
+            <if test="start != null and start != ''">
+                AND o.create_time &gt;= #{start}
+            </if>
+            <if test="end != null and end != ''">
+                AND o.create_time &lt;= #{end}
+            </if>
+            AND o.status = 1
+            AND o.region_name IS NOT NULL
+        </where>
+        GROUP BY o.region_name
+        ORDER BY o.region_name
+    </select>
+
+    <!-- 获取合作商节点饼图数据 -->
+    <select id="getPartnerNodeSeriesData" resultType="java.util.Map">
+        SELECT
+            p.partner_name as name,
+            COUNT(vm.id) as value
+        FROM tb_partner p
+        LEFT JOIN tb_node n ON p.id = n.partner_id
+        LEFT JOIN tb_vending_machine vm ON n.id = vm.node_id
+        GROUP BY p.id, p.partner_name
+        ORDER BY value DESC
+    </select>
+
+    <!-- 获取总节点数 -->
+    <select id="getTotalNodes" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM tb_node
+    </select>
+
+    <!-- 获取总合作商数 -->
+    <select id="getTotalPartners" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM tb_partner
+    </select>
+
+    <!-- 获取异常设备列表 -->
+    <select id="getAbnormalEquipment" resultType="java.util.Map">
+        SELECT
+            vm.id as id,
+            vm.inner_code as innerCode,
+            vm.addr as addr,
+            vm.update_time as updateTime,
+            vt.name as vmTypeName,
+            CONCAT('{"key": "', vm.running_status, '","value":"', 
+                CASE vm.running_status 
+                    WHEN '{\"statusCode\":\"1001\",\"status\":true}' THEN '正常' 
+                    ELSE '异常' 
+                END, '" }') as runningStatus
+        FROM tb_vending_machine vm
+        LEFT JOIN tb_vm_type vt ON vm.vm_type_id = vt.id
+        WHERE vm.running_status != '{\"statusCode\":\"1001\",\"status\":true}' OR vm.running_status IS NULL
+        ORDER BY vm.update_time DESC
+    </select>
+</mapper>

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiVedio.mapper.AiVideoChapterMapper">
+    <resultMap id="AiVideoChapterResult" type="AiVideoChapter">
+        <id property="chapterId" column="chapter_id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="chapterNo" column="chapter_no"/>
+        <result property="chapterTitle" column="chapter_title"/>
+        <result property="sourceText" column="source_text"/>
+        <result property="sourceHash" column="source_hash"/>
+        <result property="wordCount" column="word_count"/>
+        <result property="summaryText" column="summary_text"/>
+        <result property="parseStatus" column="parse_status"/>
+        <result property="pipelineStatus" column="pipeline_status"/>
+        <result property="currentBibleVersion" column="current_bible_version"/>
+        <result property="sourceMetadataJson" column="source_metadata_json"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateBy" column="update_by"/>
+        <result property="updateTime" column="update_time"/>
+    </resultMap>
+
+    <sql id="selectAiVideoChapterVo">
+        select chapter_id, project_id, chapter_no, chapter_title, source_text, source_hash, word_count, summary_text,
+               parse_status, pipeline_status, current_bible_version, source_metadata_json,
+               create_by, create_time, update_by, update_time
+        from ai_video_chapter
+    </sql>
+
+    <select id="selectAiVideoChapterByChapterId" parameterType="Long" resultMap="AiVideoChapterResult">
+        <include refid="selectAiVideoChapterVo"/>
+        where chapter_id = #{chapterId} and del_flag = '0'
+    </select>
+
+    <select id="selectAiVideoChapterList" parameterType="Long" resultMap="AiVideoChapterResult">
+        <include refid="selectAiVideoChapterVo"/>
+        where project_id = #{projectId} and del_flag = '0'
+        order by chapter_no asc, chapter_id asc
+    </select>
+
+    <insert id="insertAiVideoChapter" parameterType="AiVideoChapter" useGeneratedKeys="true" keyProperty="chapterId">
+        insert into ai_video_chapter
+        (project_id, chapter_no, chapter_title, source_text, source_hash, word_count, parse_status, pipeline_status,
+         current_bible_version, source_metadata_json, create_by, create_time)
+        values
+        (#{projectId}, #{chapterNo}, #{chapterTitle}, #{sourceText}, #{sourceHash}, #{wordCount}, #{parseStatus}, #{pipelineStatus},
+         #{currentBibleVersion}, #{sourceMetadataJson}, #{createBy}, #{createTime})
+    </insert>
+
+    <update id="updateAiVideoChapterAnalysisStatus">
+        update ai_video_chapter
+        <set>
+            parse_status = #{parseStatus},
+            pipeline_status = #{pipelineStatus},
+            <if test="summaryText != null">summary_text = #{summaryText},</if>
+            current_bible_version = #{currentBibleVersion},
+            update_time = now()
+        </set>
+        where chapter_id = #{chapterId} and del_flag = '0'
+    </update>
+
+    <update id="deleteAiVideoChapterByChapterIds">
+        update ai_video_chapter set del_flag = null, update_time = now()
+        where project_id = #{projectId} and del_flag = '0' and chapter_id in
+        <foreach collection="chapterIds" item="chapterId" open="(" separator="," close=")">
+            #{chapterId}
+        </foreach>
+    </update>
+</mapper>

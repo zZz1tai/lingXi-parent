@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiVedio.mapper.AiVideoSceneMapper">
+    <resultMap id="AiVideoSceneResult" type="AiVideoScene">
+        <id property="sceneId" column="scene_id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="chapterId" column="chapter_id"/>
+        <result property="sceneNo" column="scene_no"/>
+        <result property="sceneTitle" column="scene_title"/>
+        <result property="sourceParagraphFrom" column="source_paragraph_from"/>
+        <result property="sourceParagraphTo" column="source_paragraph_to"/>
+        <result property="timeDescription" column="time_description"/>
+        <result property="locationDescription" column="location_description"/>
+        <result property="atmosphere" column="atmosphere"/>
+        <result property="dramaticGoal" column="dramatic_goal"/>
+        <result property="characterIds" column="character_ids"/>
+        <result property="scenePackageJson" column="scene_package_json"/>
+        <result property="status" column="status"/>
+        <result property="versionNo" column="version_no"/>
+    </resultMap>
+
+    <select id="selectAiVideoSceneBySceneId" parameterType="Long" resultMap="AiVideoSceneResult">
+        select scene_id, project_id, chapter_id, scene_no, scene_title, source_paragraph_from,
+               source_paragraph_to, time_description, location_description, atmosphere, dramatic_goal,
+               character_ids, scene_package_json, status, version_no
+        from ai_video_scene
+        where scene_id = #{sceneId} and del_flag = '0'
+    </select>
+
+    <insert id="insertAiVideoScene" parameterType="AiVideoScene" useGeneratedKeys="true" keyProperty="sceneId">
+        insert into ai_video_scene
+        (project_id, chapter_id, scene_no, scene_title, source_paragraph_from, source_paragraph_to, time_description,
+         location_description, atmosphere, dramatic_goal, character_ids, scene_package_json, status, version_no, create_by, create_time)
+        values
+        (#{projectId}, #{chapterId}, #{sceneNo}, #{sceneTitle}, #{sourceParagraphFrom}, #{sourceParagraphTo}, #{timeDescription},
+         #{locationDescription}, #{atmosphere}, #{dramaticGoal}, #{characterIds}, #{scenePackageJson}, #{status}, #{versionNo}, #{createBy}, now())
+    </insert>
+</mapper>

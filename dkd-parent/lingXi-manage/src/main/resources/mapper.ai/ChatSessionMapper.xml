@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.ai.mapper.ChatSessionMapper">
+    
+    <resultMap type="ChatSession" id="ChatSessionResult">
+        <result property="id" column="id" />
+        <result property="sessionId" column="session_id" />
+        <result property="userId" column="user_id" />
+        <result property="sessionName" column="session_name" />
+        <result property="createTime" column="created_at" />
+        <result property="updateTime" column="updated_at" />
+    </resultMap>
+
+    <sql id="selectChatSessionVo">
+        select id, session_id, user_id, session_name, created_at, updated_at from tb_chat_session
+    </sql>
+
+    <select id="selectChatSessionList" parameterType="ChatSession" resultMap="ChatSessionResult">
+        <include refid="selectChatSessionVo"/>
+        <where>  
+            <if test="sessionId != null and sessionId != ''"> and session_id = #{sessionId}</if>
+            <if test="userId != null and userId != ''"> and user_id = #{userId}</if>
+            <if test="sessionName != null and sessionName != ''"> and session_name like concat('%', #{sessionName}, '%')</if>
+        </where>
+        order by created_at desc
+    </select>
+    
+    <select id="selectChatSessionByUserId" parameterType="String" resultMap="ChatSessionResult">
+        <include refid="selectChatSessionVo"/>
+        where user_id = #{userId}
+        order by created_at desc
+    </select>
+    
+    <select id="selectChatSessionById" parameterType="Long" resultMap="ChatSessionResult">
+        <include refid="selectChatSessionVo"/>
+        where id = #{id}
+    </select>
+    
+    <select id="selectChatSessionBySessionId" parameterType="String" resultMap="ChatSessionResult">
+        <include refid="selectChatSessionVo"/>
+        where session_id = #{sessionId}
+    </select>
+
+    <insert id="insertChatSession" parameterType="ChatSession" useGeneratedKeys="true" keyProperty="id">
+        insert into tb_chat_session
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="sessionId != null">session_id,</if>
+            <if test="userId != null">user_id,</if>
+            <if test="sessionName != null">session_name,</if>
+            <if test="createTime != null">created_at,</if>
+            <if test="updateTime != null">updated_at,</if>
+        </trim>
+        <trim prefix="values (" suffix=")" suffixOverrides=",">
+            <if test="sessionId != null">#{sessionId},</if>
+            <if test="userId != null">#{userId},</if>
+            <if test="sessionName != null">#{sessionName},</if>
+            <if test="createTime != null">#{createTime},</if>
+            <if test="updateTime != null">#{updateTime},</if>
+        </trim>
+    </insert>
+
+    <update id="updateChatSession" parameterType="ChatSession">
+        update tb_chat_session
+        <trim prefix="set" suffixOverrides=",">
+            <if test="sessionName != null">session_name = #{sessionName},</if>
+            <if test="updateTime != null">updated_at = #{updateTime},</if>
+        </trim>
+        where id = #{id}
+    </update>
+
+    <delete id="deleteChatSessionById" parameterType="Long">
+        delete from tb_chat_session where id = #{id}
+    </delete>
+
+    <delete id="deleteChatSessionBySessionId" parameterType="String">
+        delete from tb_chat_session where session_id = #{sessionId}
+    </delete>
+
+    <delete id="deleteChatSessionByIds" parameterType="Long[]">
+        delete from tb_chat_session where id in 
+        <foreach item="id" collection="array" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+    
+    <select id="checkSessionNameUnique" parameterType="ChatSession" resultType="Integer">
+        select count(*) from tb_chat_session where user_id = #{userId} and session_name = #{sessionName}
+        <if test="id != null"> and id &lt;&gt; #{id}</if>
+    </select>
+</mapper>
