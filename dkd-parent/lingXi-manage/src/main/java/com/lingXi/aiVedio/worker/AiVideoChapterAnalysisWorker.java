@@ -21,7 +21,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.lingXi.ai.service.IQwenService;
+import com.lingXi.ai.client.ChapterAnalysisClient;
+import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoAssetRelation;
 import com.lingXi.aiVedio.domain.AiVideoChapter;
@@ -65,7 +66,10 @@ public class AiVideoChapterAnalysisWorker
                     "man", "woman", "person")));
 
     @Autowired
-    private IQwenService qwenService;
+    private ChapterAnalysisClient chapterAnalysisClient;
+
+    @Autowired
+    private AgentConfig agentConfig;
 
     @Autowired
     private WanxVideoClient wanxVideoClient;
@@ -105,16 +109,50 @@ public class AiVideoChapterAnalysisWorker
             {
                 throw new IllegalStateException("章节不存在或已删除");
             }
-            List<SourceUnit> sourceUnits = buildSourceUnits(chapter.getSourceText());
-            if (sourceUnits.isEmpty())
-            {
-                throw new IllegalStateException("章节原文为空，无法建立视频镜头计划");
-            }
             List<AiVideoCharacter> projectCharacters = characterMapper
                     .selectAiVideoCharactersByProjectId(chapter.getProjectId());
-            String answer = qwenService.chat("ai-video-" + taskId + "-" + UUID.randomUUID(),
-                    buildPrompt(chapter, sourceUnits, projectCharacters));
-            JsonNode document = parseAndValidate(answer, sourceUnits);
+
+            // Build project characters list for Python
+            List<ObjectNode> projectCharacterNodes = new ArrayList<>();
+            for (AiVideoCharacter character : projectCharacters)
+            {
+                ObjectNode node = objectMapper.createObjectNode();
+                node.put("characterCode", character.getCharacterCode());
+                node.put("name", character.getCharacterName());
+                node.put("gender", character.getGender());
+                node.put("ageRange", character.getAgeRange());
+                node.put("appearance", character.getAppearanceText());
+                node.put("speakingStyle", character.getSpeakingStyle());
+                node.put("visualPromptBase", character.getVisualPromptBase());
+                try
+                {
+                    JsonNode aliases = objectMapper.readTree(
+                            character.getAliasesJson() == null ? "[]" : character.getAliasesJson());
+                    node.set("aliases", aliases != null && aliases.isArray()
+                            ? aliases : objectMapper.createArrayNode());
+                }
+                catch (Exception ignored)
+                {
+                    node.set("aliases", objectMapper.createArrayNode());
+                }
+                projectCharacterNodes.add(node);
+            }
+
+            // Call Python Agent for chapter analysis
+            ChapterAnalysisClient.AnalysisResult result = chapterAnalysisClient.analyzeChapter(
+                    agentConfig.getLlmApiKey(),
+                    agentConfig.getLlmModel(),
+                    agentConfig.getLlmBaseUrl(),
+                    chapter.getChapterTitle(),
+                    chapter.getSourceText(),
+                    projectCharacterNodes);
+
+            if (!result.isSuccess())
+            {
+                throw new IllegalStateException("章节分析失败：" + result.getError());
+            }
+
+            JsonNode document = result.getStoryBible();
             persistResult(chapter, document);
             updateTaskStatusWithLockRetry(taskId, "SUCCEEDED", 100, null, null);
         }
