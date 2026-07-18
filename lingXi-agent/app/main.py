@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.chat import router as chat_router
 from app.api.v1.extract import router as extract_router
 from app.api.v1.video import router as video_router
+from app.api.v1.chapter import router as chapter_router
 from app.config.settings import settings
 from app.schemas.response import HealthData, HealthResponse
 from app.utils.exceptions import (
@@ -118,6 +119,7 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler) 
 app.include_router(chat_router)
 app.include_router(extract_router)
 app.include_router(video_router)
+app.include_router(chapter_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
