@@ -10,6 +10,6 @@ public class AiVideoAssetRegenerationDraftRequest
     /** 新关键帧使用的唯一场景参考图；传入覆盖参数时必填。 */
     private Long sceneReferenceAssetId;
 
-    /** 新关键帧使用的0至2张人物参考图；顺序会保留为 Qwen 多图输入顺序。 */
+    /** 新关键帧使用的人物参考图；顺序会保存到资产关系中。 */
     private List<Long> characterReferenceAssetIds;
 }

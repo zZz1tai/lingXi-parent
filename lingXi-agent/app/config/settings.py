@@ -8,17 +8,22 @@ All sensitive values (API keys, model names) are managed here.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ENV_FILE = PROJECT_ROOT / ".env"
+
+
 class Settings(BaseSettings):
     """Global application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,

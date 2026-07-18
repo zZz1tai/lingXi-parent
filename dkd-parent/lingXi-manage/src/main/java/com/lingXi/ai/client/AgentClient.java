@@ -14,6 +14,9 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -33,6 +36,15 @@ public class AgentClient {
      * 同步调用 Agent 对话接口
      */
     public String chat(String message, String userId) {
+        return chat(message, userId, "chat", null);
+    }
+
+    /** 搬运结构化业务数据，由 Python 选择并构造数据分析 Prompt。 */
+    public String chatWithContext(String message, Object contextData, String userId) {
+        return chat(message, userId, "context_analysis", contextData);
+    }
+
+    private String chat(String message, String userId, String mode, Object contextData) {
         try {
             URL url = new URL(config.getBaseUrl() + config.getChatInvokeUrl());
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -42,7 +54,7 @@ public class AgentClient {
             conn.setReadTimeout(config.getReadTimeout());
             conn.setDoOutput(true);
 
-            String requestBody = buildRequest(message, userId);
+            String requestBody = buildRequest(message, userId, mode, contextData);
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(requestBody.getBytes(StandardCharsets.UTF_8));
             }
@@ -71,6 +83,15 @@ public class AgentClient {
      * 流式调用 Agent 对话接口
      */
     public SseEmitter streamChat(String message, String userId) {
+        return streamChat(message, userId, "chat", null);
+    }
+
+    /** 流式搬运结构化业务数据，由 Python 选择并构造数据分析 Prompt。 */
+    public SseEmitter streamChatWithContext(String message, Object contextData, String userId) {
+        return streamChat(message, userId, "context_analysis", contextData);
+    }
+
+    private SseEmitter streamChat(String message, String userId, String mode, Object contextData) {
         SseEmitter emitter = new SseEmitter(0L);
 
         executorService.execute(() -> {
@@ -84,7 +105,7 @@ public class AgentClient {
                 conn.setReadTimeout(config.getReadTimeout());
                 conn.setDoOutput(true);
 
-                String requestBody = buildRequest(message, userId);
+                String requestBody = buildRequest(message, userId, mode, contextData);
                 try (OutputStream os = conn.getOutputStream()) {
                     os.write(requestBody.getBytes(StandardCharsets.UTF_8));
                 }
@@ -140,27 +161,86 @@ public class AgentClient {
         return emitter;
     }
 
-    private String buildRequest(String message, String userId) {
+    /**
+     * 搬运对话历史到 Python 的结构化快捷问题链，并只解析其结构化响应。
+     */
+    public List<String> generateSmartQuestions(List<Map<String, Object>> chatHistory, String userId) {
+        try {
+            URL url = new URL(config.getBaseUrl() + config.getSmartQuestionsUrl());
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            conn.setConnectTimeout(config.getConnectTimeout());
+            conn.setReadTimeout(config.getReadTimeout());
+            conn.setDoOutput(true);
+
+            ObjectNode root = objectMapper.createObjectNode();
+            root.set("chat_history", objectMapper.valueToTree(chatHistory));
+            root.put("user_id", userId == null ? "" : userId);
+            putLlmConfig(root);
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(objectMapper.writeValueAsBytes(root));
+            }
+
+            if (conn.getResponseCode() != 200) {
+                throw new RuntimeException("Agent API error: " + conn.getResponseCode());
+            }
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) {
+                    response.append(line);
+                }
+                JsonNode questions = objectMapper.readTree(response.toString())
+                        .path("data").path("questions");
+                if (!questions.isArray() || questions.size() != 3) {
+                    throw new RuntimeException("Agent 快捷问题响应格式无效");
+                }
+                List<String> result = new ArrayList<>(3);
+                for (JsonNode question : questions) {
+                    String text = question.asText("").trim();
+                    if (text.isEmpty()) {
+                        throw new RuntimeException("Agent 快捷问题不能为空");
+                    }
+                    result.add(text);
+                }
+                return result;
+            }
+        } catch (Exception e) {
+            log.error("调用 Agent 快捷问题服务失败", e);
+            throw new RuntimeException("调用 Agent 快捷问题服务失败", e);
+        }
+    }
+
+    private String buildRequest(String message, String userId, String mode, Object contextData) {
         try {
             ObjectNode root = objectMapper.createObjectNode();
             root.put("message", message);
+            root.put("mode", mode);
+            if (contextData != null) {
+                root.set("context_data", objectMapper.valueToTree(contextData));
+            }
             root.put("style", config.getStyle());
             root.put("user_id", userId);
             root.put("max_iterations", config.getMaxIterations());
-
-            // 添加 LLM 配置
-            if (config.getLlmApiKey() != null && !config.getLlmApiKey().isEmpty()) {
-                ObjectNode llmConfig = root.putObject("llm_config");
-                llmConfig.put("api_key", config.getLlmApiKey());
-                llmConfig.put("model", config.getLlmModel());
-                if (config.getLlmBaseUrl() != null && !config.getLlmBaseUrl().isEmpty()) {
-                    llmConfig.put("base_url", config.getLlmBaseUrl());
-                }
-            }
+            putLlmConfig(root);
 
             return objectMapper.writeValueAsString(root);
         } catch (Exception e) {
             throw new RuntimeException("构建请求失败", e);
+        }
+    }
+
+    private void putLlmConfig(ObjectNode root) {
+        if (config.getLlmApiKey() != null && !config.getLlmApiKey().isEmpty()) {
+            ObjectNode llmConfig = root.putObject("llm_config");
+            llmConfig.put("api_key", config.getLlmApiKey());
+            llmConfig.put("model", config.getLlmModel());
+            if (config.getLlmBaseUrl() != null && !config.getLlmBaseUrl().isEmpty()) {
+                llmConfig.put("base_url", config.getLlmBaseUrl());
+            }
         }
     }
 

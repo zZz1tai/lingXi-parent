@@ -837,13 +837,13 @@
             </el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="人物三视图（可选，最多 2 张）">
+        <el-form-item label="人物三视图（可选，最多 4 张）">
           <el-select
             v-model="regenerationDialog.characterReferenceAssetIds"
             multiple
             filterable
             collapse-tags
-            :multiple-limit="2"
+            :multiple-limit="4"
             placeholder="请选择同项目已 APPROVED 的人物三视图版本"
             :disabled="regenerationDialog.loading || regenerationDialog.submitting"
           >
@@ -1114,6 +1114,7 @@ const preparingChapterId = ref(null)
 const regeneratingAssetId = ref(null)
 const deletingAssetId = ref(null)
 const keyframeReferenceOverrides = new Map()
+const MAX_CHARACTER_REFERENCE_IMAGES = 4
 const busyAssetStatuses = new Set([
   'PENDING', 'QUEUED', 'SUBMITTING', 'SUBMITTED', 'PROCESSING', 'GENERATING',
   'RUNNING', 'POLLING', 'WAITING', 'WAITING_CALLBACK', 'RETRYING', 'NEEDS_REVIEW',
@@ -1632,10 +1633,10 @@ function keyframeReferenceMetadataState(asset) {
     }
   }
   const characterState = strictReferenceAssetIds(metadata.characterReferenceAssetIds)
-  if (!characterState.valid || characterState.ids.length > 2) {
+  if (!characterState.valid || characterState.ids.length > MAX_CHARACTER_REFERENCE_IMAGES) {
     return {
       valid: false,
-      message: '关键帧的人物参考 metadata 必须是 0 至 2 个不重复的有效资产 ID，当前禁止生成',
+      message: `关键帧的人物参考 metadata 必须是 0 至 ${MAX_CHARACTER_REFERENCE_IMAGES} 个不重复的有效资产 ID，当前禁止生成`,
       sceneReferenceAssetId,
       characterReferenceAssetIds: []
     }
@@ -1923,7 +1924,7 @@ function currentKeyframeReferenceSelection(asset) {
   return {
     sceneReferenceAssetId: normalizeReferenceAssetId(metadata.sceneReferenceAssetId)
       || normalizeReferenceAssetId(asset?.sourceAssetId),
-    characterReferenceAssetIds: referenceAssetIds(metadata.characterReferenceAssetIds).slice(0, 2)
+    characterReferenceAssetIds: referenceAssetIds(metadata.characterReferenceAssetIds)
   }
 }
 
@@ -2002,8 +2003,8 @@ function submitKeyframeRegenerationDraft() {
     return
   }
   if (characterReferences.length !== regenerationDialog.characterReferenceAssetIds.length
-    || characterReferences.length > 2) {
-    proxy.$modal.msgWarning('人物参考图必须是 0 至 2 张同项目且已 APPROVED 的人物三视图')
+    || characterReferences.length > MAX_CHARACTER_REFERENCE_IMAGES) {
+    proxy.$modal.msgWarning(`人物参考图必须是 0 至 ${MAX_CHARACTER_REFERENCE_IMAGES} 张同项目且已 APPROVED 的人物三视图`)
     return
   }
   const payload = {

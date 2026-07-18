@@ -12,7 +12,7 @@ All responses follow a uniform envelope:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -63,6 +63,19 @@ class ChatResponse(BaseResponse):
     data: Optional[ChatData] = None
 
 
+class SmartQuestionsData(BaseModel):
+    """Validated smart questions generated from structured chat history."""
+
+    questions: list[str] = Field(..., min_length=3, max_length=3)
+    request_id: str = Field(default="", description="Request trace ID")
+
+
+class SmartQuestionsResponse(BaseResponse):
+    """Response for ``POST /api/v1/chat/smart-questions``."""
+
+    data: Optional[SmartQuestionsData] = None
+
+
 # ── Extract ─────────────────────────────────────────────────────────────────
 
 class ExtractData(BaseModel):
@@ -105,7 +118,7 @@ class ErrorResponse(BaseModel):
 class StreamEvent(BaseModel):
     """Schema for a single SSE event payload."""
 
-    type: str = Field(
+    type: Literal["token", "tool_start", "tool_end", "done", "error"] = Field(
         ...,
         description="Event type: token / tool_start / tool_end / done / error",
     )

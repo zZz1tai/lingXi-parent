@@ -4,7 +4,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.lingXi.ai.client.VideoClient;
-import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.ai.config.DashScopeConfig;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
@@ -13,9 +12,7 @@ import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.mapper.AiVideoProjectMapper;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
-import com.lingXi.aiVedio.util.AiVideoCharacterPrompt;
 import com.lingXi.aiVedio.service.AiVideoImageReferenceService.ResolvedImageReferences;
-import com.lingXi.common.exception.ServiceException;
 
 /** 创建图片资产草稿，并在用户确认后执行 Qwen Image 生成。 */
 @Service
@@ -35,8 +32,6 @@ public class AiVideoQwenAssetService
     private AiVideoImageReferenceService imageReferenceService;
     @Autowired
     private DashScopeConfig dashScopeConfig;
-    @Autowired
-    private AgentConfig agentConfig;
 
     /**
      * 章节分析阶段只保存图片资产和提示词，不创建生成任务，也不调用图片模型。
@@ -86,12 +81,8 @@ public class AiVideoQwenAssetService
         asset.setSourceAssetId(sourceAssetId);
         asset.setPromptText(prompt);
         asset.setNegativePromptText(negativePrompt);
-        boolean characterReference = AiVideoCharacterPrompt.isCharacterReference(assetType);
         asset.setGenerationParamsJson(AiVideoJsonMetadata.generationParameters(
-                "dashscope", dashScopeConfig.getImageModel(),
-                characterReference ? AiVideoCharacterPrompt.ASPECT_RATIO : null,
-                characterReference ? AiVideoCharacterPrompt.IMAGE_SIZE : null,
-                characterReference ? AiVideoCharacterPrompt.CONSTRAINT_VERSION : null));
+                "dashscope", dashScopeConfig.getImageModel()));
         asset.setMetadataJson(metadataJson);
         asset.setCreateBy("ai-video-worker");
         assetMapper.insertAiVideoAsset(asset);
@@ -136,22 +127,15 @@ public class AiVideoQwenAssetService
         try
         {
             AiVideoProject project = projectMapper.selectAiVideoProjectByProjectId(asset.getProjectId());
-            boolean characterReference = AiVideoCharacterPrompt.isCharacterReference(asset.getAssetType());
-            if (characterReference)
+            String aspectRatio = project == null ? null : project.getDefaultAspectRatio();
+            if (aspectRatio != null)
             {
-                asset.setPromptText(AiVideoCharacterPrompt.ensureThreeViewPrompt(asset.getPromptText()));
-                asset.setNegativePromptText(
-                        AiVideoCharacterPrompt.ensureThreeViewNegativePrompt(asset.getNegativePromptText()));
+                aspectRatio = aspectRatio.trim();
+                if (aspectRatio.isEmpty()) aspectRatio = null;
             }
-            String aspectRatio = characterReference
-                    ? AiVideoCharacterPrompt.ASPECT_RATIO
-                    : project == null || project.getDefaultAspectRatio() == null
-                            ? "16:9" : project.getDefaultAspectRatio();
             ResolvedImageReferences references = imageReferenceService.resolveAndValidate(asset);
             String requestJson = AiVideoJsonMetadata.imageGenerationRequest(asset.getPromptText(),
                     asset.getNegativePromptText(), dashScopeConfig.getImageModel(), asset.getAssetType(), aspectRatio,
-                    aspectRatioToSize(aspectRatio),
-                    characterReference ? AiVideoCharacterPrompt.CONSTRAINT_VERSION : null,
                     references.getAssetIds());
             if (taskMapper.updateClaimedImageTaskRequest(
                     task.getTaskId(), requestJson, dashScopeConfig.getImageModel()) != 1)
@@ -161,17 +145,28 @@ public class AiVideoQwenAssetService
             
             // Call Python Agent API for image generation
             VideoClient.ImageResult result = videoClient.generateImage(
-                    agentConfig.getLlmApiKey(),
+                    dashScopeConfig.getApiKey(),
                     dashScopeConfig.getImageModel(),
+                    asset.getAssetType(),
                     asset.getPromptText(),
                     asset.getNegativePromptText(),
                     aspectRatio,
-                    references.getImageUrls(),
-                    true);
+                    references.getImageUrls());
             
             if (!result.success())
             {
-                throw new ServiceException("图片生成失败：" + result.error());
+                String errorCode = result.errorCode() == null ? "IMAGE_GENERATION_FAILED"
+                        : result.errorCode();
+                String detail = result.error() == null ? "图片生成失败" : result.error();
+                String message = errorCode + "：" + detail;
+                if (result.retryable())
+                {
+                    message = "图片服务暂时不可用，请检查提示词后手动重试：" + message;
+                }
+                markImageFailure(task, asset, updateBy,
+                        result.retryable() ? "QWEN_IMAGE_MANUAL_RETRY_REQUIRED" : errorCode,
+                        message);
+                return;
             }
             
             String imageUrl = result.imageUrl();
@@ -181,50 +176,25 @@ public class AiVideoQwenAssetService
             }
             catch (Exception storageEx)
             {
-                asset.setMetadataJson(AiVideoJsonMetadata.generationFailure(
-                        asset.getMetadataJson(), storageEx.getMessage()));
-                asset.setUpdateBy(updateBy);
-                assetMapper.markAiVideoAssetFailed(asset);
-                taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), "RUNNING",
+                markImageFailure(task, asset, updateBy,
                         "IMAGE_STORAGE_FAILED", storageEx.getMessage());
             }
         }
         catch (Exception ex)
         {
-            asset.setMetadataJson(AiVideoJsonMetadata.generationFailure(
-                    asset.getMetadataJson(), ex.getMessage()));
-            asset.setUpdateBy(updateBy);
-            assetMapper.markAiVideoAssetFailed(asset);
-            boolean retryable = isRetryableException(ex);
-            taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), "RUNNING",
-                    retryable ? "QWEN_IMAGE_MANUAL_RETRY_REQUIRED" : "QWEN_IMAGE_GENERATION_FAILED",
-                    retryable ? "图片服务繁忙或连接中断，请检查提示词后手动重试：" + ex.getMessage() : ex.getMessage());
+            markImageFailure(task, asset, updateBy,
+                    "QWEN_IMAGE_GENERATION_FAILED", ex.getMessage());
         }
     }
-    
-    /**
-     * Convert aspect ratio to pixel size for DashScope.
-     */
-    private String aspectRatioToSize(String aspectRatio) {
-        if ("9:16".equals(aspectRatio)) {
-            return "720*1280";
-        } else if ("1:1".equals(aspectRatio)) {
-            return "1024*1024";
-        }
-        return "1280*720";
-    }
-    
-    /**
-     * Check if exception is retryable.
-     */
-    private boolean isRetryableException(Exception ex) {
-        String message = ex.getMessage();
-        if (message == null) {
-            return false;
-        }
-        return message.contains("408") || message.contains("429") 
-                || message.contains("500") || message.contains("502") 
-                || message.contains("503") || message.contains("timeout")
-                || message.contains("Connection");
+
+    private void markImageFailure(AiVideoGenerationTask task, AiVideoAsset asset,
+            String updateBy, String errorCode, String message)
+    {
+        String detail = message == null || message.trim().isEmpty() ? "图片生成失败" : message;
+        asset.setMetadataJson(AiVideoJsonMetadata.generationFailure(
+                asset.getMetadataJson(), detail));
+        asset.setUpdateBy(updateBy);
+        assetMapper.markAiVideoAssetFailed(asset);
+        taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), "RUNNING", errorCode, detail);
     }
 }

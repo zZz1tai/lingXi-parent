@@ -22,6 +22,8 @@ public class LingXiApplication
     {
         // System.setProperty("spring.devtools.restart.enabled", "false");
         SpringApplication.run(LingXiApplication.class, args);
-        System.out.println("(=①ω①=)灵犀终端管理系统启动成功(=①ω①=)");
+        System.out.println("(=①ω①=)灵犀启动成功(=①ω①=)");
+        System.out.println("超级AI视频生成服务启动成功");
+        System.out.println("666666666666666666666666666666666666\n666666666666666666666666666");
     }
 }

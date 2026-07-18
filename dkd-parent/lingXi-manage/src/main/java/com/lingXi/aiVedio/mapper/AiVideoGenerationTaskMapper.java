@@ -25,7 +25,8 @@ public interface AiVideoGenerationTaskMapper
     int updateAiVideoGenerationProviderTaskId(@Param("taskId") Long taskId, @Param("providerTaskId") String providerTaskId);
 
     int markWanxVideoTaskWaiting(@Param("taskId") Long taskId,
-            @Param("providerTaskId") String providerTaskId);
+            @Param("providerTaskId") String providerTaskId,
+            @Param("normalizedDurationMs") Integer normalizedDurationMs);
 
     int markWanxVideoTaskNeedsReviewWithProviderId(@Param("taskId") Long taskId,
             @Param("providerTaskId") String providerTaskId,

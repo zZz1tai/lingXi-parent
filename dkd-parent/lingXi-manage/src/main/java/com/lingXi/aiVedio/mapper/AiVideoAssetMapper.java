@@ -49,6 +49,11 @@ public interface AiVideoAssetMapper
             @Param("generationParamsJson") String generationParamsJson,
             @Param("updateBy") String updateBy);
 
+    int updateGeneratingVideoDuration(@Param("assetId") Long assetId,
+            @Param("durationMs") Integer durationMs,
+            @Param("generationParamsJson") String generationParamsJson,
+            @Param("updateBy") String updateBy);
+
     int markAiVideoAssetFailed(AiVideoAsset asset);
 
     int markAiVideoAssetGenerating(@Param("assetId") Long assetId,

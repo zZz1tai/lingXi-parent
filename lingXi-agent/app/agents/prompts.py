@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
 from app.utils.logger import logger
 
 
@@ -69,7 +69,7 @@ def dynamic_prompt(func: Callable[..., Any]) -> Callable[..., Any]:
 # ── Dynamic Prompt Implementation ───────────────────────────────────────────
 
 @dynamic_prompt
-def get_system_prompt(state: dict[str, Any]) -> list:
+def get_system_prompt(state: dict[str, Any]) -> list[BaseMessage]:
     """Generate a dynamic system prompt based on agent state.
 
     Examines the ``style`` and ``business_tag`` fields in the state
@@ -81,7 +81,8 @@ def get_system_prompt(state: dict[str, Any]) -> list:
             - ``business_tag``: Optional business context string
 
     Returns:
-        A list containing a ``SystemMessage`` with the composed prompt.
+        The composed ``SystemMessage`` followed by all existing state
+        messages, preserving the complete conversation sent to the model.
     """
     style: str = state.get("style", "professional")
 
@@ -98,7 +99,11 @@ def get_system_prompt(state: dict[str, Any]) -> list:
     if business_tag:
         base_prompt += f"\n\n## Current Business Context\n{business_tag}"
 
-    return [SystemMessage(content=base_prompt)]
+    # A callable passed as ``create_react_agent(prompt=...)`` is a complete
+    # model-input transformer, not merely a system-message factory.  Returning
+    # only the system message drops the user's conversation entirely.
+    messages = list(state.get("messages") or [])
+    return [SystemMessage(content=base_prompt), *messages]
 
 
 def get_prompt_text(style: str = "professional") -> str:

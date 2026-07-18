@@ -9,7 +9,6 @@ import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.service.AiVideoQwenAssetService;
-import com.lingXi.aiVedio.util.AiVideoCharacterPrompt;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 
 /** 串行领取用户确认过的图片任务；异常中断任务只转人工重试，不自动再次调用模型。 */
@@ -34,15 +33,6 @@ public class AiVideoQueuedImageTaskRecovery
             {
                 failWithoutGeneration(task, "IMAGE_CONFIRMATION_MISSING",
                         "旧图片任务缺少人工确认凭证，请检查提示词后手动生成");
-                continue;
-            }
-            AiVideoAsset queuedAsset = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
-            if (queuedAsset != null
-                    && AiVideoCharacterPrompt.isCharacterReference(queuedAsset.getAssetType())
-                    && !AiVideoJsonMetadata.hasCharacterThreeViewConstraint(task.getRequestJson()))
-            {
-                failWithoutGeneration(task, "CHARACTER_THREE_VIEW_RECONFIRM_REQUIRED",
-                        "人物图片规范已升级为正面、侧面、背面三视图，请重新查看提示词并手动确认生成");
                 continue;
             }
             if (!"QUEUED".equals(task.getStatus()))

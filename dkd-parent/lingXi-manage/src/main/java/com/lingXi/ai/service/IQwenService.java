@@ -3,6 +3,7 @@ package com.lingXi.ai.service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
+import java.util.Map;
 
 public interface IQwenService {
 
@@ -21,7 +22,7 @@ public interface IQwenService {
      * @param userMessage 用户消息
      * @return 大模型的回复
      */
-    String chatWithContext(String sessionId, String userMessage, String contextData);
+    String chatWithContext(String sessionId, String userMessage, Object contextData);
 
     /**
      * 带会话ID的聊天，会保存对话历史
@@ -42,7 +43,7 @@ public interface IQwenService {
      * @param contextData 上下文数据
      * @return 大模型的回复
      */
-    String chatWithContext(String sessionId, String userId, String userName, String userMessage, String contextData);
+    String chatWithContext(String sessionId, String userId, String userName, String userMessage, Object contextData);
 
     /**
      * 流式聊天，会保存对话历史
@@ -63,20 +64,15 @@ public interface IQwenService {
      * @param contextData 上下文数据
      * @return SseEmitter 用于发送流式响应
      */
-    SseEmitter streamChatWithContext(String sessionId, String userId, String userName, String userMessage, String contextData);
-
-    /**
-     * 对用户输入进行简单 JSON 转义
-     */
-    String escapeJson(String str);
+    SseEmitter streamChatWithContext(String sessionId, String userId, String userName, String userMessage, Object contextData);
     
     /**
-     * 格式化看板数据为文本
+     * 读取看板结构化数据，由 Python Agent 负责格式化与分析 Prompt
      * @param start 开始时间
      * @param end 结束时间
-     * @return 格式化后的看板数据文本
+     * @return 原始看板数据
      */
-    String formatDashboardData(String start, String end);
+    Map<String, Object> loadDashboardData(String start, String end);
 
     /**
      * 生成智能快捷提问

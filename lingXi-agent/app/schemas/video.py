@@ -40,32 +40,42 @@ class GenerateImageRequest(BaseModel):
         description="DashScope API key",
     )
     model: str = Field(
-        default="qwen-image-2.0-pro-2026-06-22",
+        ...,
+        min_length=1,
         description="Image generation model name",
     )
     base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        description="DashScope API base URL",
+        ...,
+        min_length=1,
+        description="DashScope native API base URL",
+    )
+    asset_type: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Business asset type used by Python to select image model rules",
     )
     prompt: str = Field(
         ...,
         min_length=1,
-        max_length=2000,
+        max_length=12000,
         description="Text prompt for image generation",
     )
     negative_prompt: Optional[str] = Field(
         default=None,
-        max_length=500,
+        max_length=4000,
         description="Negative prompt to exclude certain elements",
     )
-    aspect_ratio: ImageAspectRatio = Field(
-        default=ImageAspectRatio.LANDSCAPE_16_9,
-        description="Image aspect ratio",
+    aspect_ratio: Optional[ImageAspectRatio] = Field(
+        default=None,
+        description="Project-requested image aspect ratio; Python applies asset rules",
     )
     reference_image_urls: Optional[list[str]] = Field(
         default=None,
-        max_length=3,
-        description="Up to 3 reference image URLs for style/content guidance",
+        max_length=5,
+        description=(
+            "Up to 5 reference image URLs in input order: "
+            "at most 4 character references followed by 1 scene reference"
+        ),
     )
     prompt_extend: bool = Field(
         default=True,
@@ -92,6 +102,14 @@ class GenerateImageResponse(BaseModel):
         default=None,
         description="HTTP status code from DashScope",
     )
+    error_code: Optional[str] = Field(
+        default=None,
+        description="Stable machine-readable failure code",
+    )
+    retryable: bool = Field(
+        default=False,
+        description="Whether a later manual retry is safe",
+    )
 
 
 # ── Video Generation ─────────────────────────────────────────────────────────
@@ -104,34 +122,43 @@ class SubmitVideoRequest(BaseModel):
         description="DashScope API key",
     )
     model: str = Field(
-        default="wanx2.1-i2v-turbo",
+        ...,
+        min_length=1,
         description="Video generation model name",
     )
     base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/api/v1",
+        ...,
+        min_length=1,
         description="DashScope API base URL",
     )
     prompt: str = Field(
         ...,
         min_length=1,
-        max_length=1500,
-        description="Text prompt for video generation",
+        max_length=12000,
+        description=(
+            "Unmodified video prompt. The route applies the configured "
+            "model's provider limit immediately before submission."
+        ),
     )
     negative_prompt: Optional[str] = Field(
         default=None,
-        max_length=500,
-        description="Negative prompt to exclude certain elements",
+        max_length=4000,
+        description=(
+            "Unmodified negative prompt. The route applies the provider "
+            "limit immediately before submission."
+        ),
     )
     image_url: str = Field(
         ...,
         description="Public URL of the keyframe image",
     )
     resolution: str = Field(
-        default="720P",
+        ...,
+        min_length=1,
         description="Video resolution",
     )
-    duration_ms: Optional[int] = Field(
-        default=4000,
+    duration_ms: int = Field(
+        ...,
         ge=1000,
         le=10000,
         description="Video duration in milliseconds (1000-10000)",
@@ -153,6 +180,12 @@ class SubmitVideoResponse(BaseModel):
         default=None,
         description="DashScope task ID for polling",
     )
+    normalized_duration_ms: Optional[int] = Field(
+        default=None,
+        ge=1000,
+        le=10000,
+        description="Actual duration accepted by the selected Wanx model",
+    )
     error: Optional[str] = Field(
         default=None,
         description="Error message if failed",
@@ -160,6 +193,21 @@ class SubmitVideoResponse(BaseModel):
     status_code: Optional[int] = Field(
         default=None,
         description="HTTP status code from DashScope",
+    )
+    error_code: Optional[str] = Field(
+        default=None,
+        description="Stable machine-readable failure code",
+    )
+    retryable: bool = Field(
+        default=False,
+        description="Whether a later submission retry is safe",
+    )
+    submission_uncertain: bool = Field(
+        default=False,
+        description=(
+            "True when Wanx may have accepted the request but no task ID was "
+            "received; callers must not submit again automatically"
+        ),
     )
 
 
@@ -171,7 +219,8 @@ class QueryVideoRequest(BaseModel):
         description="DashScope API key",
     )
     base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/api/v1",
+        ...,
+        min_length=1,
         description="DashScope API base URL",
     )
     task_id: str = Field(
@@ -202,4 +251,12 @@ class QueryVideoResponse(BaseModel):
     status_code: Optional[int] = Field(
         default=None,
         description="HTTP status code from DashScope",
+    )
+    error_code: Optional[str] = Field(
+        default=None,
+        description="Stable machine-readable failure code",
+    )
+    retryable: bool = Field(
+        default=False,
+        description="Whether polling may be retried",
     )

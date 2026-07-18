@@ -94,6 +94,8 @@
     <update id="markWanxVideoTaskWaiting">
         update ai_video_generation_task
         set provider_task_id = #{providerTaskId}, status = 'WAITING_CALLBACK', progress = 20,
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.normalizedDurationMs', #{normalizedDurationMs}),
             error_code = null, error_message = null, started_time = coalesce(started_time, now()), update_time = now()
         where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
           and status = 'QUEUED' and (del_flag = '0' or del_flag is null)

@@ -13,12 +13,10 @@ import com.lingXi.aiVedio.mapper.AiVideoAssetRelationMapper;
 import com.lingXi.aiVedio.storage.AiVideoPublicAssetUrlResolver;
 import com.lingXi.common.exception.ServiceException;
 
-/** 统一校验并解析 Qwen Image 分镜参考图，避免入队与执行阶段规则漂移。 */
+/** 校验资产关系并将分镜参考图解析为下游可访问的数据。 */
 @Service
 public class AiVideoImageReferenceService
 {
-    private static final long MAX_REFERENCE_IMAGE_BYTES = 10L * 1024L * 1024L;
-
     @Autowired
     private AiVideoAssetRelationMapper relationMapper;
     @Autowired
@@ -66,11 +64,6 @@ public class AiVideoImageReferenceService
         {
             throw new ServiceException("镜头关键帧缺少场景参考图，请先完成场景图片");
         }
-        if (characterReferences.size() > 2)
-        {
-            throw new ServiceException("Qwen Image 最多支持2张人物参考图加1张场景参考图");
-        }
-
         List<Long> assetIds = new ArrayList<>(characterReferences.size() + 1);
         List<String> imageUrls = new ArrayList<>(characterReferences.size() + 1);
         Set<Long> uniqueAssetIds = new LinkedHashSet<>();
@@ -78,7 +71,7 @@ public class AiVideoImageReferenceService
         {
             addResolvedReference(characterReference, uniqueAssetIds, assetIds, imageUrls);
         }
-        // 官方多图接口以最后一张输入图决定输出比例，因此场景图必须最后发送。
+        // 保持人物关系在前、场景关系在后的稳定搬运顺序。
         addResolvedReference(sceneReference, uniqueAssetIds, assetIds, imageUrls);
         return new ResolvedImageReferences(assetIds, imageUrls);
     }
@@ -105,10 +98,6 @@ public class AiVideoImageReferenceService
         if (reference.getFileSize() == null || reference.getFileSize().longValue() < 1L)
         {
             throw new ServiceException("参考图缺少文件大小信息：" + referenceName(reference));
-        }
-        if (reference.getFileSize().longValue() > MAX_REFERENCE_IMAGE_BYTES)
-        {
-            throw new ServiceException("参考图超过10MB：" + referenceName(reference));
         }
     }
 
@@ -139,7 +128,7 @@ public class AiVideoImageReferenceService
         }
         catch (Exception ex)
         {
-            throw new ServiceException("参考图不是可供 DashScope 访问的公网HTTP(S)地址："
+            throw new ServiceException("参考图不是下游服务可访问的公网HTTP(S)地址："
                     + referenceName(reference));
         }
     }

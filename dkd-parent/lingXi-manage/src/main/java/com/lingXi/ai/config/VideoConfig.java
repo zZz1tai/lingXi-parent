@@ -16,35 +16,52 @@ public class VideoConfig {
     /**
      * Python Agent base URL for video endpoints.
      */
-    private String baseUrl = "http://localhost:5000";
+    private String baseUrl;
 
     /**
      * Image generation endpoint path.
      */
-    private String generateImageUrl = "/api/v1/video/generate-image";
+    private String generateImageUrl;
 
     /**
      * Video submission endpoint path.
      */
-    private String submitVideoUrl = "/api/v1/video/submit-video";
+    private String submitVideoUrl;
 
     /**
      * Video query endpoint path.
      */
-    private String queryVideoUrl = "/api/v1/video/query-video";
+    private String queryVideoUrl;
+
+    /**
+     * Chapter story-bible analysis endpoint path.
+     */
+    private String analyzeChapterUrl;
 
     /**
      * Connection timeout in milliseconds.
      */
-    private Integer connectTimeout = 5000;
+    private Integer connectTimeout;
 
     /**
      * Read timeout for image generation in milliseconds (3 minutes).
      */
-    private Integer imageReadTimeout = 180000;
+    private Integer imageReadTimeout;
+
+    /**
+     * Read timeout for chapter analysis, including one structured-output
+     * repair attempt in the Python LangChain workflow.
+     */
+    private Integer chapterReadTimeout;
+
+    /**
+     * Read timeout in seconds for each chapter-analysis LLM provider call made
+     * by Python. This value is transported as llm_config.timeout_seconds.
+     */
+    private Integer chapterProviderReadTimeoutSeconds;
 
     /**
      * Read timeout for video operations in milliseconds.
      */
-    private Integer videoReadTimeout = 60000;
+    private Integer videoReadTimeout;
 }

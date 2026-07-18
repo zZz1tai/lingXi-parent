@@ -3,6 +3,7 @@ package com.lingXi.ai.client;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.ai.config.VideoConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -26,10 +27,12 @@ import java.util.stream.Collectors;
 public class VideoClient {
 
     private final VideoConfig config;
+    private final AgentConfig agentConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public VideoClient(VideoConfig config) {
+    public VideoClient(VideoConfig config, AgentConfig agentConfig) {
         this.config = config;
+        this.agentConfig = agentConfig;
     }
 
     // ── Inner Classes (replacing Java records for compatibility) ─────────────
@@ -42,18 +45,25 @@ public class VideoClient {
         private final String imageUrl;
         private final String error;
         private final Integer statusCode;
+        private final String errorCode;
+        private final boolean retryable;
 
-        public ImageResult(boolean success, String imageUrl, String error, Integer statusCode) {
+        public ImageResult(boolean success, String imageUrl, String error, Integer statusCode,
+                String errorCode, boolean retryable) {
             this.success = success;
             this.imageUrl = imageUrl;
             this.error = error;
             this.statusCode = statusCode;
+            this.errorCode = errorCode;
+            this.retryable = retryable;
         }
 
         public boolean success() { return success; }
         public String imageUrl() { return imageUrl; }
         public String error() { return error; }
         public Integer statusCode() { return statusCode; }
+        public String errorCode() { return errorCode; }
+        public boolean retryable() { return retryable; }
     }
 
     /**
@@ -64,18 +74,32 @@ public class VideoClient {
         private final String taskId;
         private final String error;
         private final Integer statusCode;
+        private final String errorCode;
+        private final boolean retryable;
+        private final boolean submissionUncertain;
+        private final Integer normalizedDurationMs;
 
-        public VideoSubmitResult(boolean success, String taskId, String error, Integer statusCode) {
+        public VideoSubmitResult(boolean success, String taskId, String error, Integer statusCode,
+                String errorCode, boolean retryable, boolean submissionUncertain,
+                Integer normalizedDurationMs) {
             this.success = success;
             this.taskId = taskId;
             this.error = error;
             this.statusCode = statusCode;
+            this.errorCode = errorCode;
+            this.retryable = retryable;
+            this.submissionUncertain = submissionUncertain;
+            this.normalizedDurationMs = normalizedDurationMs;
         }
 
         public boolean success() { return success; }
         public String taskId() { return taskId; }
         public String error() { return error; }
         public Integer statusCode() { return statusCode; }
+        public String errorCode() { return errorCode; }
+        public boolean retryable() { return retryable; }
+        public boolean submissionUncertain() { return submissionUncertain; }
+        public Integer normalizedDurationMs() { return normalizedDurationMs; }
     }
 
     /**
@@ -87,13 +111,18 @@ public class VideoClient {
         private final String videoUrl;
         private final String error;
         private final Integer statusCode;
+        private final String errorCode;
+        private final boolean retryable;
 
-        public VideoQueryResult(boolean success, String status, String videoUrl, String error, Integer statusCode) {
+        public VideoQueryResult(boolean success, String status, String videoUrl, String error,
+                Integer statusCode, String errorCode, boolean retryable) {
             this.success = success;
             this.status = status;
             this.videoUrl = videoUrl;
             this.error = error;
             this.statusCode = statusCode;
+            this.errorCode = errorCode;
+            this.retryable = retryable;
         }
 
         public boolean success() { return success; }
@@ -101,6 +130,8 @@ public class VideoClient {
         public String videoUrl() { return videoUrl; }
         public String error() { return error; }
         public Integer statusCode() { return statusCode; }
+        public String errorCode() { return errorCode; }
+        public boolean retryable() { return retryable; }
     }
 
     // ── Image Generation ────────────────────────────────────────────────────
@@ -110,35 +141,40 @@ public class VideoClient {
      *
      * @param apiKey            DashScope API key
      * @param model             Image generation model name
+     * @param assetType         Asset business type used by Python to select model rules
      * @param prompt            Text prompt
      * @param negativePrompt    Negative prompt (optional)
      * @param aspectRatio       Aspect ratio (e.g., "16:9", "9:16", "1:1")
-     * @param referenceImageUrls Reference image URLs (optional, max 3)
-     * @param promptExtend      Whether to extend the prompt
+     * @param referenceImageUrls Reference image URLs resolved from asset relations
      * @return ImageResult with success status and image URL or error
      */
     public ImageResult generateImage(
             String apiKey,
             String model,
+            String assetType,
             String prompt,
             String negativePrompt,
             String aspectRatio,
-            List<String> referenceImageUrls,
-            boolean promptExtend) {
+            List<String> referenceImageUrls) {
 
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("api_key", apiKey);
             body.put("model", model);
+            putProviderBaseUrl(body);
+            if (assetType != null && !assetType.trim().isEmpty()) {
+                body.put("asset_type", assetType.trim());
+            }
             body.put("prompt", prompt);
             if (negativePrompt != null && !negativePrompt.isEmpty()) {
                 body.put("negative_prompt", negativePrompt);
             }
-            body.put("aspect_ratio", aspectRatio);
+            if (aspectRatio != null && !aspectRatio.trim().isEmpty()) {
+                body.put("aspect_ratio", aspectRatio.trim());
+            }
             if (referenceImageUrls != null && !referenceImageUrls.isEmpty()) {
                 body.set("reference_image_urls", objectMapper.valueToTree(referenceImageUrls));
             }
-            body.put("prompt_extend", promptExtend);
 
             String url = config.getBaseUrl() + config.getGenerateImageUrl();
             int timeout = config.getImageReadTimeout();
@@ -148,7 +184,8 @@ public class VideoClient {
 
         } catch (Exception e) {
             log.error("Failed to generate image: {}", e.getMessage(), e);
-            return new ImageResult(false, null, e.getMessage(), null);
+            return new ImageResult(false, null, e.getMessage(), 503,
+                    "AGENT_IMAGE_TRANSPORT_ERROR", true);
         }
     }
 
@@ -156,11 +193,13 @@ public class VideoClient {
         boolean success = response.path("success").asBoolean(false);
         if (success) {
             String imageUrl = response.path("image_url").asText(null);
-            return new ImageResult(true, imageUrl, null, 200);
+            return new ImageResult(true, imageUrl, null, 200, null, false);
         } else {
             String error = response.path("error").asText("Unknown error");
             int statusCode = response.path("status_code").asInt(0);
-            return new ImageResult(false, null, error, statusCode);
+            String errorCode = response.path("error_code").asText(null);
+            boolean retryable = response.path("retryable").asBoolean(false);
+            return new ImageResult(false, null, error, statusCode, errorCode, retryable);
         }
     }
 
@@ -176,7 +215,6 @@ public class VideoClient {
      * @param imageUrl       Public URL of the keyframe image
      * @param resolution     Video resolution (e.g., "720P")
      * @param durationMs     Duration in milliseconds
-     * @param promptExtend   Whether to extend the prompt
      * @return VideoSubmitResult with task ID or error
      */
     public VideoSubmitResult submitVideo(
@@ -186,13 +224,13 @@ public class VideoClient {
             String negativePrompt,
             String imageUrl,
             String resolution,
-            int durationMs,
-            boolean promptExtend) {
+            int durationMs) {
 
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("api_key", apiKey);
             body.put("model", model);
+            putProviderBaseUrl(body);
             body.put("prompt", prompt);
             if (negativePrompt != null && !negativePrompt.isEmpty()) {
                 body.put("negative_prompt", negativePrompt);
@@ -200,7 +238,6 @@ public class VideoClient {
             body.put("image_url", imageUrl);
             body.put("resolution", resolution);
             body.put("duration_ms", durationMs);
-            body.put("prompt_extend", promptExtend);
 
             String url = config.getBaseUrl() + config.getSubmitVideoUrl();
             int timeout = config.getVideoReadTimeout();
@@ -210,19 +247,28 @@ public class VideoClient {
 
         } catch (Exception e) {
             log.error("Failed to submit video task: {}", e.getMessage(), e);
-            return new VideoSubmitResult(false, null, e.getMessage(), null);
+            return new VideoSubmitResult(false, null,
+                    "WANX_SUBMISSION_UNCERTAIN: Agent transport error: " + e.getMessage(),
+                    503, "WANX_SUBMISSION_UNCERTAIN", false, true, null);
         }
     }
 
     private VideoSubmitResult parseVideoSubmitResponse(JsonNode response) {
         boolean success = response.path("success").asBoolean(false);
+        Integer normalizedDurationMs = response.path("normalized_duration_ms").canConvertToInt()
+                ? Integer.valueOf(response.path("normalized_duration_ms").asInt()) : null;
         if (success) {
             String taskId = response.path("task_id").asText(null);
-            return new VideoSubmitResult(true, taskId, null, 200);
+            return new VideoSubmitResult(true, taskId, null, 200, null, false, false,
+                    normalizedDurationMs);
         } else {
             String error = response.path("error").asText("Unknown error");
             int statusCode = response.path("status_code").asInt(0);
-            return new VideoSubmitResult(false, null, error, statusCode);
+            String errorCode = response.path("error_code").asText(null);
+            boolean retryable = response.path("retryable").asBoolean(false);
+            boolean submissionUncertain = response.path("submission_uncertain").asBoolean(false);
+            return new VideoSubmitResult(false, null, error, statusCode,
+                    errorCode, retryable, submissionUncertain, normalizedDurationMs);
         }
     }
 
@@ -239,6 +285,7 @@ public class VideoClient {
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("api_key", apiKey);
+            putProviderBaseUrl(body);
             body.put("task_id", taskId);
 
             String url = config.getBaseUrl() + config.getQueryVideoUrl();
@@ -249,7 +296,8 @@ public class VideoClient {
 
         } catch (Exception e) {
             log.error("Failed to query video task: {}", e.getMessage(), e);
-            return new VideoQueryResult(false, null, null, e.getMessage(), null);
+            return new VideoQueryResult(false, null, null, e.getMessage(), 503,
+                    "AGENT_VIDEO_QUERY_TRANSPORT_ERROR", true);
         }
     }
 
@@ -259,15 +307,26 @@ public class VideoClient {
             String status = response.path("status").asText("UNKNOWN");
             String videoUrl = response.path("video_url").asText(null);
             String error = response.path("error").asText(null);
-            return new VideoQueryResult(true, status, videoUrl, error, 200);
+            return new VideoQueryResult(true, status, videoUrl, error, 200, null, false);
         } else {
             String error = response.path("error").asText("Unknown error");
             int statusCode = response.path("status_code").asInt(0);
-            return new VideoQueryResult(false, null, null, error, statusCode);
+            String errorCode = response.path("error_code").asText(null);
+            boolean retryable = response.path("retryable").asBoolean(false);
+            return new VideoQueryResult(false, null, null, error, statusCode,
+                    errorCode, retryable);
         }
     }
 
     // ── HTTP Helpers ────────────────────────────────────────────────────────
+
+    /** Provider URL remains configuration-driven; Python converts compatible-mode/v1 to native api/v1. */
+    private void putProviderBaseUrl(ObjectNode body) {
+        String baseUrl = agentConfig.getLlmBaseUrl();
+        if (baseUrl != null && !baseUrl.trim().isEmpty()) {
+            body.put("base_url", baseUrl.trim());
+        }
+    }
 
     private JsonNode doPost(String urlStr, String jsonBody, int readTimeout) throws IOException {
         HttpURLConnection conn = null;

@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lingXi.ai.config.DashScopeConfig;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.common.utils.SecurityUtils;
@@ -19,26 +21,19 @@ import com.lingXi.aiVedio.domain.AiVideoAssetRelation;
 import com.lingXi.aiVedio.domain.AiVideoChapter;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.AiVideoProject;
-import com.lingXi.aiVedio.domain.AiVideoScene;
 import com.lingXi.aiVedio.domain.AiVideoShot;
 import com.lingXi.aiVedio.domain.dto.AiVideoAssetRegenerationDraftRequest;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoAssetRelationMapper;
 import com.lingXi.aiVedio.mapper.AiVideoChapterMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
-import com.lingXi.aiVedio.mapper.AiVideoSceneMapper;
 import com.lingXi.aiVedio.mapper.AiVideoShotMapper;
 import com.lingXi.aiVedio.service.IAiVideoAssetService;
 import com.lingXi.aiVedio.service.IAiVideoProjectService;
-import com.lingXi.aiVedio.service.AiVideoVideoPromptComposer;
-import com.lingXi.aiVedio.service.AiVideoVideoPromptComposer.ComposedVideoPrompt;
 import com.lingXi.aiVedio.service.AiVideoWanxVideoService;
 import com.lingXi.aiVedio.service.AiVideoImageReferenceService;
 import com.lingXi.aiVedio.service.AiVideoImageReferenceService.ResolvedImageReferences;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
-import com.lingXi.aiVedio.util.AiVideoCharacterPrompt;
-import com.lingXi.aiVedio.provider.QwenImageClient;
-import com.lingXi.aiVedio.provider.WanxVideoClient;
 import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage;
 
 @Service
@@ -59,9 +54,6 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     private AiVideoShotMapper shotMapper;
 
     @Autowired
-    private AiVideoSceneMapper sceneMapper;
-
-    @Autowired
     private AiVideoChapterMapper chapterMapper;
 
     @Autowired
@@ -74,16 +66,13 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     private AiVideoImageReferenceService imageReferenceService;
 
     @Autowired
-    private AiVideoVideoPromptComposer videoPromptComposer;
-
-    @Autowired
     private AiVideoLocalAssetStorage assetStorage;
 
     @Autowired
     private DashScopeConfig dashScopeConfig;
 
     @Autowired
-    private WanxVideoClient wanxVideoClient;
+    private ObjectMapper objectMapper;
 
     @Override
     public List<AiVideoAsset> selectAiVideoAssetList(AiVideoAsset asset)
@@ -93,12 +82,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             throw new ServiceException("项目ID不能为空");
         }
         projectService.checkProjectOwner(asset.getProjectId());
-        List<AiVideoAsset> assets = assetMapper.selectAiVideoAssetList(asset);
-        for (AiVideoAsset item : assets)
-        {
-            normalizeCharacterPrompt(item);
-        }
-        return assets;
+        return assetMapper.selectAiVideoAssetList(asset);
     }
 
     @Override
@@ -110,7 +94,6 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             throw new ServiceException("资产不存在");
         }
         projectService.checkProjectOwner(asset.getProjectId());
-        normalizeCharacterPrompt(asset);
         return asset;
     }
 
@@ -155,9 +138,8 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             throw new ServiceException("未找到该资产对应的图片生成任务");
         }
         final String username = SecurityUtils.getUsername();
-        validateImagePrompt(asset.getPromptText(), asset.getNegativePromptText());
+        validateImagePrompt(asset.getPromptText());
         ResolvedImageReferences references = imageReferenceService.resolveAndValidate(asset);
-        persistCharacterPromptIfNeeded(asset, username);
         String requestJson = buildImageRequestJson(asset, references.getAssetIds());
         String generationParamsJson = buildImageGenerationParamsJson(asset);
         if (taskMapper.resetFailedImageTaskForRetry(
@@ -186,12 +168,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         }
         String normalizedPrompt = promptText == null ? "" : promptText.trim();
         String normalizedNegativePrompt = negativePromptText == null ? null : negativePromptText.trim();
-        if (AiVideoCharacterPrompt.isCharacterReference(asset.getAssetType()))
-        {
-            normalizedPrompt = AiVideoCharacterPrompt.ensureThreeViewPrompt(normalizedPrompt);
-            normalizedNegativePrompt = AiVideoCharacterPrompt.ensureThreeViewNegativePrompt(normalizedNegativePrompt);
-        }
-        validateImagePrompt(normalizedPrompt, normalizedNegativePrompt);
+        validateImagePrompt(normalizedPrompt);
         if (assetMapper.updateAiVideoAssetPrompt(assetId, normalizedPrompt, normalizedNegativePrompt,
                 SecurityUtils.getUsername()) != 1)
         {
@@ -230,21 +207,11 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             throw new ServiceException("关键帧关联的分镜不存在");
         }
         validateCurrentChapterShot(keyframe, shot);
-        Integer supportedShotDurationMs = wanxVideoClient.normalizeDurationMs(shot.getDurationMs());
-        if (shot.getDurationMs() == null || !supportedShotDurationMs.equals(shot.getDurationMs()))
-        {
-            throw new ServiceException("分镜时长不符合当前 Wanx 模型能力，请重新分析章节（支持 "
-                    + (supportedShotDurationMs.intValue() / 1000) + " 秒）");
-        }
-        AiVideoScene scene = keyframe.getSceneId() == null
-                ? null : sceneMapper.selectAiVideoSceneBySceneId(keyframe.getSceneId());
-        if (scene != null && !keyframe.getProjectId().equals(scene.getProjectId()))
-        {
-            throw new ServiceException("关键帧关联的场景不属于当前项目");
-        }
-
-        ComposedVideoPrompt composed = videoPromptComposer.compose(keyframe, shot, scene);
-        validateVideoPrompt(composed.getPromptText(), composed.getNegativePromptText(), composed.getDurationMs());
+        JsonNode promptContext = parseShotPromptContext(shot);
+        String videoPrompt = requirePromptContextText(promptContext, "videoPrompt", "视频正向提示词");
+        String videoNegativePrompt = optionalPromptContextText(promptContext, "videoNegativePrompt");
+        Integer durationMs = shot.getDurationMs();
+        validateVideoPrompt(videoPrompt, durationMs);
         String username = SecurityUtils.getUsername();
         AiVideoAsset draft = new AiVideoAsset();
         draft.setProjectId(keyframe.getProjectId());
@@ -259,12 +226,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         draft.setStatus("DRAFT");
         draft.setVersionNo(1);
         draft.setSourceAssetId(keyframe.getAssetId());
-        draft.setDurationMs(composed.getDurationMs());
-        draft.setPromptText(composed.getPromptText());
-        draft.setNegativePromptText(composed.getNegativePromptText());
-        draft.setGenerationParamsJson(buildVideoGenerationParamsJson(composed.getDurationMs()));
+        draft.setDurationMs(durationMs);
+        draft.setPromptText(videoPrompt);
+        draft.setNegativePromptText(videoNegativePrompt);
+        draft.setGenerationParamsJson(buildVideoGenerationParamsJson(durationMs));
         Integer analysisVersion = AiVideoJsonMetadata.analysisVersion(keyframe.getMetadataJson());
-        draft.setMetadataJson(AiVideoJsonMetadata.withAnalysisVersion(composed.getMetadataJson(),
+        draft.setMetadataJson(AiVideoJsonMetadata.withAnalysisVersion(shot.getPromptContextJson(),
                 analysisVersion == null ? shot.getVersionNo() : analysisVersion));
         draft.setCreateBy(username);
         if (assetMapper.insertAiVideoAsset(draft) != 1)
@@ -295,16 +262,10 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             normalizedNegativePrompt = null;
         }
         Integer requestedDurationMs = durationMs == null ? video.getDurationMs() : durationMs;
-        Integer normalizedDurationMs = wanxVideoClient.normalizeDurationMs(requestedDurationMs);
-        if (requestedDurationMs != null && !normalizedDurationMs.equals(requestedDurationMs))
-        {
-            throw new ServiceException("当前 Wanx 模型不支持该时长，请改为 "
-                    + (normalizedDurationMs.intValue() / 1000) + " 秒");
-        }
-        validateVideoPrompt(normalizedPrompt, normalizedNegativePrompt, normalizedDurationMs);
+        validateVideoPrompt(normalizedPrompt, requestedDurationMs);
         if (assetMapper.updateAiVideoAssetVideoPrompt(videoAssetId, normalizedPrompt,
-                normalizedNegativePrompt, normalizedDurationMs,
-                buildVideoGenerationParamsJson(normalizedDurationMs), SecurityUtils.getUsername()) != 1)
+                normalizedNegativePrompt, requestedDurationMs,
+                buildVideoGenerationParamsJson(requestedDurationMs), SecurityUtils.getUsername()) != 1)
         {
             throw new ServiceException("视频提示词状态已变化，请刷新后重试");
         }
@@ -429,7 +390,6 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         {
             throw new ServiceException("新版本草稿创建后读取失败");
         }
-        normalizeCharacterPrompt(created);
         return created;
     }
 
@@ -486,9 +446,8 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             throw new ServiceException("请先填写图片提示词");
         }
         final String username = SecurityUtils.getUsername();
-        validateImagePrompt(asset.getPromptText(), asset.getNegativePromptText());
+        validateImagePrompt(asset.getPromptText());
         ResolvedImageReferences references = imageReferenceService.resolveAndValidate(asset);
-        persistCharacterPromptIfNeeded(asset, username);
         String generationParamsJson = buildImageGenerationParamsJson(asset);
         if (assetMapper.markDraftAiVideoAssetGenerating(assetId, generationParamsJson, username) != 1)
         {
@@ -538,13 +497,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         {
             throw new ServiceException("视频草稿与来源关键帧不属于同一项目");
         }
-        validateVideoPrompt(video.getPromptText(), video.getNegativePromptText(), video.getDurationMs());
-        Integer supportedDurationMs = wanxVideoClient.normalizeDurationMs(video.getDurationMs());
-        if (!supportedDurationMs.equals(video.getDurationMs()))
-        {
-            throw new ServiceException("当前 Wanx 模型仅支持 " + supportedDurationMs
-                    + " 毫秒，请先保存视频提示词草稿后再生成");
-        }
+        validateVideoPrompt(video.getPromptText(), video.getDurationMs());
         return wanxVideoService.submit(video, keyframe, SecurityUtils.getUsername());
     }
 
@@ -650,11 +603,6 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
 
         List<Long> characterAssetIds = request.getCharacterReferenceAssetIds();
         int characterCount = characterAssetIds == null ? 0 : characterAssetIds.size();
-        if (characterCount > 2)
-        {
-            throw new ServiceException("关键帧最多只能选择2张人物参考图");
-        }
-
         Set<Long> uniqueReferenceIds = new LinkedHashSet<>();
         Long sceneAssetId = request.getSceneReferenceAssetId();
         uniqueReferenceIds.add(sceneAssetId);
@@ -718,7 +666,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             insertReferenceRelation(draft.getProjectId(), characterReference.getAssetId(),
                     draft.getAssetId(), relationOrder++, "CHARACTER_REFERENCE");
         }
-        // Qwen 多图编辑由最后一张图片控制输出比例，因此场景参考图必须排在最后。
+        // 按稳定的资产关系顺序保存人物与场景引用。
         insertReferenceRelation(draft.getProjectId(),
                 referenceOverride.getSceneReference().getAssetId(), draft.getAssetId(),
                 relationOrder, "SCENE_REFERENCE");
@@ -830,67 +778,70 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
                 || "NEEDS_REVIEW".equals(status) || "QUALITY_CHECK".equals(status);
     }
 
-    private void normalizeCharacterPrompt(AiVideoAsset asset)
+    private JsonNode parseShotPromptContext(AiVideoShot shot)
     {
-        if (asset != null && AiVideoCharacterPrompt.isCharacterReference(asset.getAssetType())
-                && ("DRAFT".equals(asset.getStatus()) || "REJECTED".equals(asset.getStatus())))
+        if (shot.getPromptContextJson() == null || shot.getPromptContextJson().trim().isEmpty())
         {
-            asset.setPromptText(AiVideoCharacterPrompt.ensureThreeViewPrompt(asset.getPromptText()));
-            asset.setNegativePromptText(
-                    AiVideoCharacterPrompt.ensureThreeViewNegativePrompt(asset.getNegativePromptText()));
+            throw new ServiceException("分镜缺少 Python 已最终化的提示词上下文");
+        }
+        try
+        {
+            JsonNode context = objectMapper.readTree(shot.getPromptContextJson());
+            if (context == null || !context.isObject())
+            {
+                throw new ServiceException("分镜提示词上下文必须是 JSON 对象");
+            }
+            return context;
+        }
+        catch (ServiceException ex)
+        {
+            throw ex;
+        }
+        catch (Exception ex)
+        {
+            throw new ServiceException("分镜提示词上下文 JSON 无法解析")
+                    .setDetailMessage(ex.getMessage());
         }
     }
 
-    private void persistCharacterPromptIfNeeded(AiVideoAsset asset, String username)
+    private String requirePromptContextText(JsonNode context, String fieldName, String displayName)
     {
-        if (!AiVideoCharacterPrompt.isCharacterReference(asset.getAssetType()))
+        JsonNode value = context.get(fieldName);
+        if (value == null || !value.isTextual() || value.asText().trim().isEmpty())
         {
-            return;
+            throw new ServiceException("分镜缺少 Python 已最终化的" + displayName);
         }
-        if (assetMapper.updateAiVideoAssetPrompt(asset.getAssetId(), asset.getPromptText(),
-                asset.getNegativePromptText(), username) != 1)
-        {
-            throw new ServiceException("人物三视图提示词状态已变化，请刷新后重试");
-        }
+        return value.asText();
     }
 
-    private void validateImagePrompt(String promptText, String negativePromptText)
+    private String optionalPromptContextText(JsonNode context, String fieldName)
+    {
+        JsonNode value = context.get(fieldName);
+        if (value == null || value.isNull())
+        {
+            return null;
+        }
+        if (!value.isTextual())
+        {
+            throw new ServiceException("分镜 " + fieldName + " 必须是文本");
+        }
+        return value.asText();
+    }
+
+    private void validateImagePrompt(String promptText)
     {
         if (promptText == null || promptText.trim().isEmpty())
         {
             throw new ServiceException("图片正向提示词不能为空");
         }
-        if (promptText.length() > 12000)
-        {
-            throw new ServiceException("图片正向提示词不能超过12000个字符");
-        }
-        if (negativePromptText != null && negativePromptText.length() > 4000)
-        {
-            throw new ServiceException("图片负向提示词不能超过4000个字符");
-        }
     }
 
-    private void validateVideoPrompt(String promptText, String negativePromptText, Integer durationMs)
+    private void validateVideoPrompt(String promptText, Integer durationMs)
     {
         validateVideoDuration(durationMs);
         if (promptText == null || promptText.trim().isEmpty())
         {
             throw new ServiceException("视频正向提示词不能为空");
-        }
-        int promptLimit = wanxVideoClient.getPromptLimit();
-        if (promptText.length() > promptLimit)
-        {
-            throw new ServiceException("当前 Wanx 模型的视频正向提示词不能超过" + promptLimit + "个字符");
-        }
-        int negativePromptLimit = wanxVideoClient.getNegativePromptLimit();
-        if (negativePromptText != null && negativePromptText.length() > negativePromptLimit)
-        {
-            throw new ServiceException("视频负向提示词不能超过" + negativePromptLimit + "个字符");
-        }
-        if (durationMs == null || durationMs < 1000
-                || durationMs > WanxVideoClient.MAX_VIDEO_DURATION_MS)
-        {
-            throw new ServiceException("视频目标时长必须在1到10秒之间");
         }
     }
 
@@ -900,47 +851,37 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         {
             throw new ServiceException("视频时长必须大于 0 毫秒");
         }
-        if (durationMs.intValue() > WanxVideoClient.MAX_VIDEO_DURATION_MS)
-        {
-            throw new ServiceException("单条视频时长不能超过 "
-                    + (WanxVideoClient.MAX_VIDEO_DURATION_MS / 1000) + " 秒");
-        }
     }
 
     private String buildVideoGenerationParamsJson(Integer durationMs)
     {
         return AiVideoJsonMetadata.videoGenerationParameters("wanx", dashScopeConfig.getVideoModel(),
-                durationMs, AiVideoVideoPromptComposer.PROMPT_VERSION);
+                durationMs, null);
     }
 
     private String buildImageRequestJson(AiVideoAsset asset, List<Long> referenceAssetIds)
     {
         String aspectRatio = resolveImageAspectRatio(asset);
-        boolean characterReference = AiVideoCharacterPrompt.isCharacterReference(asset.getAssetType());
         return AiVideoJsonMetadata.imageGenerationRequest(asset.getPromptText(), asset.getNegativePromptText(),
                 dashScopeConfig.getImageModel(), asset.getAssetType(), aspectRatio,
-                QwenImageClient.toImageSize(aspectRatio),
-                characterReference ? AiVideoCharacterPrompt.CONSTRAINT_VERSION : null,
                 referenceAssetIds);
     }
 
     private String buildImageGenerationParamsJson(AiVideoAsset asset)
     {
         String aspectRatio = resolveImageAspectRatio(asset);
-        boolean characterReference = AiVideoCharacterPrompt.isCharacterReference(asset.getAssetType());
         return AiVideoJsonMetadata.generationParameters("dashscope", dashScopeConfig.getImageModel(),
-                aspectRatio, QwenImageClient.toImageSize(aspectRatio),
-                characterReference ? AiVideoCharacterPrompt.CONSTRAINT_VERSION : null);
+                aspectRatio);
     }
 
     private String resolveImageAspectRatio(AiVideoAsset asset)
     {
-        if (AiVideoCharacterPrompt.isCharacterReference(asset.getAssetType()))
-        {
-            return AiVideoCharacterPrompt.ASPECT_RATIO;
-        }
         AiVideoProject project = projectService.selectAiVideoProjectByProjectId(asset.getProjectId());
-        return project == null || project.getDefaultAspectRatio() == null
-                ? "16:9" : project.getDefaultAspectRatio();
+        if (project == null || project.getDefaultAspectRatio() == null)
+        {
+            return null;
+        }
+        String aspectRatio = project.getDefaultAspectRatio().trim();
+        return aspectRatio.isEmpty() ? null : aspectRatio;
     }
 }

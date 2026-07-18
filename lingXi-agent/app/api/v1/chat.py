@@ -13,13 +13,25 @@ import time
 from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Depends
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from fastapi.responses import StreamingResponse
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agents.builder import get_recursion_limit
-from app.api.dependencies import get_agent, get_request_id
+from app.api.dependencies import create_llm, get_agent, get_request_id
+from app.chains.business_chat import (
+    analyze_context,
+    generate_smart_questions,
+    stream_context_analysis,
+)
 from app.config.settings import settings
-from app.schemas.request import ChatRequest
-from app.schemas.response import ChatData, ChatResponse, StreamEvent
+from app.schemas.request import ChatMode, ChatRequest, SmartQuestionsRequest
+from app.schemas.response import (
+    ChatData,
+    ChatResponse,
+    SmartQuestionsData,
+    SmartQuestionsResponse,
+    StreamEvent,
+)
 from app.utils.exceptions import AgentTimeoutError, SearchError
 from app.utils.logger import logger
 
@@ -31,14 +43,17 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 def _build_agent_input(request: ChatRequest) -> dict[str, Any]:
     """Construct the input state dict for the agent from a chat request."""
     messages = [HumanMessage(content=request.message)]
-    logger.info("Building agent input | messages count=%d | first message=%s", len(messages), request.message[:100])
+    logger.info(
+        "Building agent input | messages=%d | message_length=%d",
+        len(messages),
+        len(request.message),
+    )
     
     # 打印当前使用的 style
     logger.info("Using style=%s for prompt", request.style)
     
     return {
         "messages": messages,
-        "remaining_steps": (request.max_iterations or settings.max_iterations) * 2 + 1,
         "style": request.style,
         "user_id": request.user_id or "",
         "business_tag": request.business_tag or "",
@@ -88,40 +103,26 @@ async def chat_invoke(
     """
     start_time = time.time()
 
-    # 检测是否是章节分析请求（影视预制片策划）
-    is_chapter_analysis = any(marker in request.message for marker in [
-        "影视预制片策划智能体", "小说章节转为严格 JSON", "供图片、视频、配音智能体调用",
-        "STORY_BIBLE", "story_bible", "章节分析"
-    ])
-
-    if is_chapter_analysis:
-        # 章节分析：直接调用 LLM，不经过 Agent
-        from app.api.dependencies import create_llm
-
+    if request.mode == ChatMode.CONTEXT_ANALYSIS:
         logger.info(
-            "Chapter analysis (direct LLM) | request_id=%s | message_length=%d | has_llm_config=%s",
+            "Context analysis | request_id=%s | message_length=%d",
             request_id,
             len(request.message),
-            request.llm_config is not None,
         )
-
-        llm = create_llm(request.llm_config)
-
-        # 构建消息列表（保留原始 system prompt + user message）
-        messages = [HumanMessage(content=request.message)]
-
         try:
-            result = await llm.ainvoke(messages)
-            final_response = result.content if hasattr(result, 'content') else str(result)
-
+            llm = create_llm(request.llm_config)
+            final_response = await analyze_context(
+                llm,
+                request.message,
+                request.context_data,
+            )
             elapsed = time.time() - start_time
             logger.info(
-                "Chapter analysis completed | request_id=%s | elapsed=%.2fs | response_length=%d",
+                "Context analysis completed | request_id=%s | elapsed=%.2fs | response_length=%d",
                 request_id,
                 elapsed,
                 len(final_response),
             )
-
             return ChatResponse(
                 success=True,
                 message="ok",
@@ -133,72 +134,23 @@ async def chat_invoke(
                 ),
             )
         except Exception as exc:
-            import traceback
-            logger.error("Chapter analysis failed | request_id=%s | error=%s\n%s", request_id, str(exc), traceback.format_exc())
-            raise SearchError(f"Chapter analysis failed: {exc}") from exc
-
-    # 检测是否是数据分析请求（消息中包含数据看板信息或工单统计等）
-    is_data_analysis = any(marker in request.message for marker in [
-        "数据看板信息", "数据看板", "工单统计", "销售统计", 
-        "商品热榜", "异常设备列表", "以下是系统提供的数据"
-    ])
-
-    if is_data_analysis:
-        # 数据分析：直接调用 LLM，不经过 Agent
-        from app.api.dependencies import create_llm
-
-        llm = create_llm(request.llm_config)
-
-        # 构建消息列表
-        messages = [
-            SystemMessage(content="你是一个专业的数据分析助手。请直接基于用户提供的数据进行分析和回答，不要回复问候语。"),
-            HumanMessage(content=request.message)
-        ]
-
-        logger.info(
-            "Data analysis (direct LLM) | request_id=%s | message_length=%d",
-            request_id,
-            len(request.message),
-        )
-
-        try:
-            result = await llm.ainvoke(messages)
-            final_response = result.content if hasattr(result, 'content') else str(result)
-
-            elapsed = time.time() - start_time
-            logger.info(
-                "Data analysis completed | request_id=%s | elapsed=%.2fs | response_length=%d",
+            logger.error(
+                "Context analysis failed | request_id=%s | error=%s",
                 request_id,
-                elapsed,
-                len(final_response),
+                str(exc),
             )
-
-            return ChatResponse(
-                success=True,
-                message="ok",
-                data=ChatData(
-                    response=final_response,
-                    tool_calls=[],
-                    iterations=0,
-                    request_id=request_id,
-                ),
-            )
-        except Exception as exc:
-            logger.error("Data analysis failed | request_id=%s | error=%s", request_id, str(exc))
-            raise SearchError(f"Data analysis failed: {exc}") from exc
-
-    # 普通对话：使用 Agent
-    agent = get_agent(llm_config=request.llm_config)
+            raise SearchError(f"Context analysis failed: {exc}") from exc
 
     logger.info(
-        "Chat invoke | request_id=%s | style=%s | message_length=%d | message=%s",
+        "Chat invoke | request_id=%s | style=%s | message_length=%d",
         request_id,
         request.style,
         len(request.message),
-        request.message[:100],  # 打印前100个字符
     )
 
     try:
+        # 普通对话：使用 Agent
+        agent = get_agent(llm_config=request.llm_config)
         input_data = _build_agent_input(request)
         config = {
             "recursion_limit": get_recursion_limit(request.max_iterations),
@@ -255,6 +207,42 @@ async def chat_invoke(
         raise SearchError(f"Agent execution failed: {exc}") from exc
 
 
+@router.post(
+    "/smart-questions",
+    response_model=SmartQuestionsResponse,
+    summary="Generate structured smart questions",
+)
+async def smart_questions(
+    request: SmartQuestionsRequest,
+    request_id: str = Depends(get_request_id),
+) -> SmartQuestionsResponse:
+    """Generate exactly three questions from transported conversation data."""
+
+    try:
+        llm = create_llm(
+            request.llm_config,
+            profile="smart-questions",
+            temperature=0.2,
+            max_retries=1,
+        )
+        questions = await generate_smart_questions(llm, request.chat_history)
+        return SmartQuestionsResponse(
+            success=True,
+            message="ok",
+            data=SmartQuestionsData(
+                questions=questions,
+                request_id=request_id,
+            ),
+        )
+    except Exception as exc:
+        logger.error(
+            "Smart questions failed | request_id=%s | error=%s",
+            request_id,
+            str(exc),
+        )
+        raise SearchError(f"Smart questions failed: {exc}") from exc
+
+
 # ── SSE Streaming ───────────────────────────────────────────────────────────
 
 def _format_sse_event(event: StreamEvent) -> str:
@@ -263,39 +251,26 @@ def _format_sse_event(event: StreamEvent) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def _stream_direct_llm(
+async def _stream_context_analysis(
     request: ChatRequest,
     request_id: str,
-    is_chapter_analysis: bool = False,
 ) -> AsyncGenerator[str, None]:
-    """Direct LLM streaming for data analysis or chapter analysis (bypass Agent)."""
-    from app.api.dependencies import create_llm
-
-    llm = create_llm(request.llm_config)
-
-    if is_chapter_analysis:
-        # 章节分析：直接使用用户提供的完整 prompt
-        messages = [HumanMessage(content=request.message)]
-    else:
-        # 数据分析
-        messages = [
-            SystemMessage(content="你是一个专业的数据分析助手。请直接基于用户提供的数据进行分析和回答，不要回复问候语。"),
-            HumanMessage(content=request.message)
-        ]
-
+    """Stream the explicit Python-owned context-analysis chain."""
     full_response = ""
 
     try:
-        async for chunk in llm.astream(messages):
-            if hasattr(chunk, 'content') and chunk.content:
-                content = chunk.content
-                if isinstance(content, str):
-                    full_response += content
-                    yield _format_sse_event(StreamEvent(
-                        type="token",
-                        content=content,
-                        request_id=request_id,
-                    ))
+        llm = create_llm(request.llm_config)
+        async for content in stream_context_analysis(
+            llm,
+            request.message,
+            request.context_data,
+        ):
+            full_response += content
+            yield _format_sse_event(StreamEvent(
+                type="token",
+                content=content,
+                request_id=request_id,
+            ))
 
         yield _format_sse_event(StreamEvent(
             type="done",
@@ -304,7 +279,11 @@ async def _stream_direct_llm(
         ))
 
     except Exception as exc:
-        logger.error("Direct LLM stream error | request_id=%s | error=%s", request_id, str(exc))
+        logger.error(
+            "Context analysis stream error | request_id=%s | error=%s",
+            request_id,
+            str(exc),
+        )
         yield _format_sse_event(StreamEvent(
             type="error",
             content=str(exc),
@@ -321,16 +300,15 @@ async def _stream_agent_events(
     Uses ``astream_events`` (v2) for granular token-level streaming.
     Supports both ``values`` and ``messages`` stream modes internally.
     """
-    agent = get_agent(llm_config=request.llm_config)
-    input_data = _build_agent_input(request)
-    config = {
-        "recursion_limit": get_recursion_limit(request.max_iterations),
-        "metadata": {"request_id": request_id},
-    }
-
     full_response = ""
 
     try:
+        agent = get_agent(llm_config=request.llm_config)
+        input_data = _build_agent_input(request)
+        config = {
+            "recursion_limit": get_recursion_limit(request.max_iterations),
+            "metadata": {"request_id": request_id},
+        }
         async for event in agent.astream_events(
             input_data,
             config=config,
@@ -403,11 +381,25 @@ async def _stream_agent_events(
         ))
 
 
-@router.post("/stream", summary="SSE streaming chat")
+@router.post(
+    "/stream",
+    summary="SSE streaming chat",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "Server-Sent Events stream terminated by data: [DONE]",
+            "content": {
+                "text/event-stream": {
+                    "schema": {"type": "string"},
+                }
+            },
+        }
+    },
+)
 async def chat_stream(
     request: ChatRequest,
     request_id: str = Depends(get_request_id),
-):
+) -> StreamingResponse:
     """Stream agent execution in real-time via Server-Sent Events.
 
     Event types:
@@ -419,39 +411,18 @@ async def chat_stream(
 
     The stream ends with a ``[DONE]`` sentinel event.
     """
-    from fastapi.responses import StreamingResponse
-
-    # 检测是否是章节分析请求
-    is_chapter_analysis = any(marker in request.message for marker in [
-        "影视预制片策划智能体", "小说章节转为严格 JSON", "供图片、视频、配音智能体调用",
-        "STORY_BIBLE", "story_bible", "章节分析"
-    ])
-
-    # 检测是否是数据分析请求
-    is_data_analysis = any(marker in request.message for marker in [
-        "数据看板信息", "数据看板", "工单统计", "销售统计", 
-        "商品热榜", "异常设备列表", "以下是系统提供的数据"
-    ])
-
     logger.info(
-        "Chat stream | request_id=%s | style=%s | chapter_analysis=%s | data_analysis=%s",
+        "Chat stream | request_id=%s | style=%s | mode=%s",
         request_id,
         request.style,
-        is_chapter_analysis,
-        is_data_analysis,
+        request.mode.value,
     )
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        if is_chapter_analysis:
-            # 章节分析：直接使用 LLM
-            async for event in _stream_direct_llm(request, request_id, is_chapter_analysis=True):
-                yield event
-        elif is_data_analysis:
-            # 数据分析：直接使用 LLM
-            async for event in _stream_direct_llm(request, request_id):
+        if request.mode == ChatMode.CONTEXT_ANALYSIS:
+            async for event in _stream_context_analysis(request, request_id):
                 yield event
         else:
-            # 普通对话：使用 Agent
             async for event in _stream_agent_events(request, request_id):
                 yield event
         # SSE termination sentinel

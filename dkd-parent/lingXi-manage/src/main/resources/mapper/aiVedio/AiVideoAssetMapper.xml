@@ -177,6 +177,14 @@
           and del_flag = '0'
     </update>
 
+    <update id="updateGeneratingVideoDuration">
+        update ai_video_asset
+        set duration_ms = #{durationMs}, generation_params_json = #{generationParamsJson},
+            update_by = #{updateBy}, update_time = now()
+        where asset_id = #{assetId} and asset_type = 'VIDEO_CLIP'
+          and status = 'GENERATING' and del_flag = '0'
+    </update>
+
     <update id="markAiVideoAssetFailed" parameterType="AiVideoAsset">
         update ai_video_asset
         set status = 'REJECTED', metadata_json = #{metadataJson}, update_by = #{updateBy}, update_time = now()

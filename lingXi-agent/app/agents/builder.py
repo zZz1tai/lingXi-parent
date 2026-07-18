@@ -15,8 +15,8 @@ from langchain_core.messages import BaseMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.managed import RemainingSteps
 from langgraph.prebuilt import create_react_agent
-from langgraph.prebuilt.chat_agent_executor import AgentState as _LangGraphAgentState
 from pydantic import BaseModel
 from typing_extensions import Annotated, TypedDict
 
@@ -39,8 +39,10 @@ class AgentState(TypedDict):
     # Standard message channel — accumulates all messages via add_messages reducer
     messages: Annotated[list[BaseMessage], add_messages]
 
-    # Required by LangGraph 0.6+ for recursion tracking
-    remaining_steps: int
+    # LangGraph-managed recursion budget.  This must retain the
+    # ``RemainingSteps`` annotation so the runtime decrements it after every
+    # graph step; a plain ``int`` silently disables that managed behaviour.
+    remaining_steps: RemainingSteps
 
     # Custom fields — carried as metadata through the graph
     style: str                  # "professional" | "casual"

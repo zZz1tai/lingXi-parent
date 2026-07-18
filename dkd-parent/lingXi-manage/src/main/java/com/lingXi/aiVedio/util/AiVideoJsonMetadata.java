@@ -1,6 +1,5 @@
 package com.lingXi.aiVedio.util;
 
-import java.util.Collections;
 import java.util.List;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -147,18 +146,15 @@ public final class AiVideoJsonMetadata
 
     public static String generationParameters(String provider, String model)
     {
-        return generationParameters(provider, model, null, null, null);
+        return generationParameters(provider, model, null);
     }
 
-    public static String generationParameters(String provider, String model, String aspectRatio,
-            String imageSize, String constraintVersion)
+    public static String generationParameters(String provider, String model, String aspectRatio)
     {
         ObjectNode parameters = OBJECT_MAPPER.createObjectNode();
         parameters.put("provider", sanitize(provider));
         parameters.put("model", sanitize(model));
         if (aspectRatio != null) parameters.put("aspectRatio", sanitize(aspectRatio));
-        if (imageSize != null) parameters.put("size", sanitize(imageSize));
-        if (constraintVersion != null) parameters.put("constraintVersion", sanitize(constraintVersion));
         return parameters.toString();
     }
 
@@ -173,34 +169,20 @@ public final class AiVideoJsonMetadata
         return parameters.toString();
     }
 
-    public static String imageGenerationRequest(String prompt, String negativePrompt, String model)
-    {
-        return imageGenerationRequest(prompt, negativePrompt, model, null, null, null, null);
-    }
-
     public static String imageGenerationRequest(String prompt, String negativePrompt, String model,
-            String assetType, String aspectRatio, String imageSize, String constraintVersion)
-    {
-        return imageGenerationRequest(prompt, negativePrompt, model, assetType, aspectRatio,
-                imageSize, constraintVersion, Collections.<Long>emptyList());
-    }
-
-    public static String imageGenerationRequest(String prompt, String negativePrompt, String model,
-            String assetType, String aspectRatio, String imageSize, String constraintVersion,
+            String assetType, String aspectRatio,
             List<Long> referenceAssetIds)
     {
         ObjectNode request = OBJECT_MAPPER.createObjectNode();
         request.put("trigger", "USER_CONFIRMED");
-        request.put("prompt", sanitize(prompt, 12000));
+        request.put("prompt", sanitizePayload(prompt));
         if (negativePrompt != null && !negativePrompt.trim().isEmpty())
         {
-            request.put("negativePrompt", sanitize(negativePrompt, 4000));
+            request.put("negativePrompt", sanitizePayload(negativePrompt));
         }
         request.put("model", sanitize(model));
         if (assetType != null) request.put("assetType", sanitize(assetType));
         if (aspectRatio != null) request.put("aspectRatio", sanitize(aspectRatio));
-        if (imageSize != null) request.put("size", sanitize(imageSize));
-        if (constraintVersion != null) request.put("constraintVersion", sanitize(constraintVersion));
         if (referenceAssetIds != null && !referenceAssetIds.isEmpty())
         {
             com.fasterxml.jackson.databind.node.ArrayNode references = request.putArray("referenceAssetIds");
@@ -225,32 +207,17 @@ public final class AiVideoJsonMetadata
         }
     }
 
-    public static boolean hasCharacterThreeViewConstraint(String requestJson)
-    {
-        if (requestJson == null || requestJson.trim().isEmpty()) return false;
-        try
-        {
-            com.fasterxml.jackson.databind.JsonNode request = OBJECT_MAPPER.readTree(requestJson);
-            return AiVideoCharacterPrompt.CONSTRAINT_VERSION.equals(request.path("constraintVersion").asText())
-                    && AiVideoCharacterPrompt.ASSET_TYPE.equals(request.path("assetType").asText())
-                    && AiVideoCharacterPrompt.ASPECT_RATIO.equals(request.path("aspectRatio").asText())
-                    && AiVideoCharacterPrompt.IMAGE_SIZE.equals(request.path("size").asText())
-                    && AiVideoCharacterPrompt.hasRequiredThreeViewPrompt(request.path("prompt").asText())
-                    && AiVideoCharacterPrompt.hasRequiredThreeViewNegativePrompt(
-                            request.path("negativePrompt").asText());
-        }
-        catch (Exception ignored)
-        {
-            return false;
-        }
-    }
-
     /**
      * 上游 HTTP 错误体可能携带控制字符或不成对的 UTF-16 代理项；MySQL JSON 不接受它们。
      */
     private static String sanitize(String value)
     {
         return sanitize(value, 4000);
+    }
+
+    private static String sanitizePayload(String value)
+    {
+        return sanitize(value, value == null ? 0 : value.length());
     }
 
     private static String sanitize(String value, int maxLength)

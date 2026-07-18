@@ -8,7 +8,6 @@ import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.manage.domain.ChatSession;
 import com.lingXi.manage.domain.ModelHistory;
 import com.lingXi.ai.service.IChatSessionService;
-import com.lingXi.manage.service.IDashBoardService;
 import com.lingXi.manage.service.IModelHistoryService;
 import com.lingXi.ai.service.IQwenService;
 import io.swagger.annotations.Api;
@@ -18,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
+import java.util.Map;
 
 @Api(tags = "千问对话接口")
 @RestController
@@ -26,8 +26,6 @@ public class AiController {
 
     @Autowired
     private IQwenService qwenService;
-    @Autowired
-    private IDashBoardService dashBoardService;
     @Autowired
     private IModelHistoryService modelHistoryService;
     @Autowired
@@ -73,7 +71,7 @@ public class AiController {
     @PostMapping("/analyze")
     public AjaxResult analyzeDashboard(AnalyzeVO analyzeVO) {
         try {
-            String contextData = qwenService.formatDashboardData(analyzeVO.getStart(), analyzeVO.getEnd());
+            Map<String, Object> contextData = qwenService.loadDashboardData(analyzeVO.getStart(), analyzeVO.getEnd());
             String answer = qwenService.chatWithContext(analyzeVO.getSessionId(), analyzeVO.getUserId(), analyzeVO.getUserName(), analyzeVO.getQuestion(), contextData);
             return AjaxResult.success(answer);
         } catch (Exception e) {
@@ -85,7 +83,7 @@ public class AiController {
     @PostMapping("/analyze/stream")
     public SseEmitter streamAnalyzeDashboard(AnalyzeVO analyzeVO) {
         try {
-            String contextData = qwenService.formatDashboardData(analyzeVO.getStart(), analyzeVO.getEnd());
+            Map<String, Object> contextData = qwenService.loadDashboardData(analyzeVO.getStart(), analyzeVO.getEnd());
             return qwenService.streamChatWithContext(analyzeVO.getSessionId(), analyzeVO.getUserId(), analyzeVO.getUserName(), analyzeVO.getQuestion(), contextData);
         } catch (Exception e) {
             SseEmitter emitter = new SseEmitter();
@@ -103,7 +101,7 @@ public class AiController {
     @GetMapping("/analyze/stream")
     public SseEmitter streamAnalyzeDashboardGet(AnalyzeVO analyzeVO) {
         try {
-            String contextData = qwenService.formatDashboardData(analyzeVO.getStart(), analyzeVO.getEnd());
+            Map<String, Object> contextData = qwenService.loadDashboardData(analyzeVO.getStart(), analyzeVO.getEnd());
             return qwenService.streamChatWithContext(analyzeVO.getSessionId(), analyzeVO.getUserId(), analyzeVO.getUserName(), analyzeVO.getQuestion(), contextData);
         } catch (Exception e) {
             SseEmitter emitter = new SseEmitter();

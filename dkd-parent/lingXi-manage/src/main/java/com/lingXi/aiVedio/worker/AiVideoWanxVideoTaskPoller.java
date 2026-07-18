@@ -8,7 +8,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import com.lingXi.ai.client.VideoClient;
 import com.lingXi.ai.client.VideoClient.VideoQueryResult;
-import com.lingXi.ai.config.AgentConfig;
+import com.lingXi.ai.config.DashScopeConfig;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
@@ -27,7 +27,7 @@ public class AiVideoWanxVideoTaskPoller
     @Autowired
     private VideoClient videoClient;
     @Autowired
-    private AgentConfig agentConfig;
+    private DashScopeConfig dashScopeConfig;
     @Autowired
     private AiVideoLocalAssetStorage localAssetStorage;
     @Autowired
@@ -49,7 +49,7 @@ public class AiVideoWanxVideoTaskPoller
             try
             {
                 VideoQueryResult result = videoClient.queryVideo(
-                        agentConfig.getLlmApiKey(), task.getProviderTaskId());
+                        dashScopeConfig.getApiKey(), task.getProviderTaskId());
                 
                 if (!result.success())
                 {

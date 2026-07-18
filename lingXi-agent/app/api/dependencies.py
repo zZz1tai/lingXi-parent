@@ -7,7 +7,7 @@ Supports both singleton mode (env-based) and per-request mode (config from Java)
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
@@ -27,58 +27,124 @@ _agent_instance: Optional[CompiledStateGraph] = None
 
 # ── LLM Provider ────────────────────────────────────────────────────────────
 
-def create_llm(config: Optional[LLMConfig] = None) -> BaseChatModel:
+def _redact_secret(message: str, secret: str) -> str:
+    """Remove a credential if a provider includes it in an error message."""
+    if not secret:
+        return message
+    return message.replace(secret, "[REDACTED]")
+
+
+def _new_chat_model(
+    config: Optional[LLMConfig] = None,
+    *,
+    profile: Optional[str] = None,
+    timeout: Optional[float] = None,
+    max_retries: Optional[int] = None,
+    temperature: Optional[float] = None,
+    streaming: Optional[bool] = None,
+) -> BaseChatModel:
+    """Construct one OpenAI-compatible chat model without caching it."""
+    from langchain_openai import ChatOpenAI
+
+    api_key = config.api_key if config is not None else settings.openai_api_key
+    model_name = config.model if config is not None else settings.model_name
+    base_url = config.base_url if config is not None else settings.openai_api_base
+    configured_timeout = config.timeout_seconds if config is not None else None
+    effective_timeout = timeout if timeout is not None else configured_timeout
+    if not api_key:
+        raise ConfigurationError(
+            "LLM API key is not configured. Pass llm_config.api_key or set "
+            "OPENAI_API_KEY."
+        )
+
+    kwargs: dict[str, Any] = {
+        "model": model_name,
+        "api_key": api_key,
+        "temperature": settings.temperature if temperature is None else temperature,
+        "timeout": 30 if effective_timeout is None else effective_timeout,
+        "max_retries": 1 if max_retries is None else max_retries,
+    }
+    if base_url:
+        kwargs["base_url"] = base_url
+    if streaming is not None:
+        kwargs["streaming"] = streaming
+
+    model = ChatOpenAI(**kwargs)
+    logger.info(
+        "LLM initialized | profile=%s | provider=%s | model=%s | endpoint=%s | "
+        "timeout=%s | temperature=%s | max_retries=%s | streaming=%s",
+        profile or "default",
+        settings.llm_provider,
+        model_name,
+        "custom" if base_url else "default",
+        kwargs["timeout"],
+        kwargs["temperature"],
+        kwargs["max_retries"],
+        kwargs.get("streaming", "provider-default"),
+    )
+    return model
+
+
+def create_llm(
+    config: Optional[LLMConfig] = None,
+    *,
+    profile: Optional[str] = None,
+    timeout: Optional[float] = None,
+    max_retries: Optional[int] = None,
+    temperature: Optional[float] = None,
+    streaming: Optional[bool] = None,
+) -> BaseChatModel:
     """Create an LLM instance from config or env settings.
 
     Args:
-        config: Optional LLM config from Java backend request.
-                If None, uses env-based settings (singleton).
+        config: Optional LLM config from Java backend request. Its
+                ``timeout_seconds`` is used unless ``timeout`` explicitly
+                overrides it. If None, uses env-based settings (singleton).
+        profile: Optional workload label for credential-free diagnostics.
+        timeout: Optional provider request timeout in seconds.
+        max_retries: Optional provider retry count.
+        temperature: Optional sampling temperature override.
+        streaming: Optional ChatOpenAI streaming-mode override.
 
     Returns:
         A configured ``BaseChatModel`` instance.
     """
-    # Use singleton if no config provided
-    if config is None:
-        return get_llm()
+    # Preserve the singleton for ordinary env-configured chat calls.  A caller
+    # asking for different runtime characteristics (for example the five-minute
+    # chapter-analysis timeout) receives a purpose-built model instead.
+    has_overrides = any(
+        value is not None
+        for value in (timeout, max_retries, temperature, streaming)
+    )
+    if config is None and not has_overrides:
+        return get_llm(profile=profile)
 
-    # Create per-request LLM from Java-provided config
     try:
-        from langchain_openai import ChatOpenAI
-
-        kwargs: dict = {
-            "model": config.model,
-            "api_key": config.api_key,
-            "temperature": settings.temperature,
-            "timeout": 30,
-            "max_retries": 1,
-        }
-
-        if config.base_url:
-            kwargs["base_url"] = config.base_url
-
-        logger.info(
-            "Creating LLM from config | model=%s | base_url=%s | api_key=%s...",
-            config.model,
-            config.base_url or "default",
-            config.api_key[:10] if config.api_key else "None",
+        return _new_chat_model(
+            config,
+            profile=profile,
+            timeout=timeout,
+            max_retries=max_retries,
+            temperature=temperature,
+            streaming=streaming,
         )
-
-        llm = ChatOpenAI(**kwargs)
-        logger.info(
-            "LLM created from request config | model=%s | base_url=%s",
-            config.model,
-            config.base_url or "default",
-        )
-        return llm
-
     except Exception as exc:
-        logger.error("Failed to create LLM from config: %s", str(exc))
+        if isinstance(exc, ConfigurationError):
+            raise
+        api_key = config.api_key if config is not None else settings.openai_api_key
+        safe_error = _redact_secret(str(exc), api_key)
+        logger.error(
+            "Failed to create LLM | profile=%s | error=%s",
+            profile or "default",
+            safe_error,
+        )
         raise ModelNotAvailableError(
-            f"Failed to initialize LLM from config: {exc}"
-        ) from exc
+            f"Failed to initialize LLM for profile '{profile or 'default'}': "
+            f"{safe_error}"
+        ) from None
 
 
-def get_llm() -> BaseChatModel:
+def get_llm(*, profile: Optional[str] = None) -> BaseChatModel:
     """Return a cached LLM instance based on application settings.
 
     Supports OpenAI-compatible APIs (including Doubao/Coze) via the
@@ -103,32 +169,21 @@ def get_llm() -> BaseChatModel:
         )
 
     try:
-        from langchain_openai import ChatOpenAI
-
-        kwargs: dict = {
-            "model": settings.model_name,
-            "api_key": settings.openai_api_key,
-            "temperature": settings.temperature,
-            "timeout": 30,
-            "max_retries": 1,
-        }
-
-        if settings.openai_api_base:
-            kwargs["base_url"] = settings.openai_api_base
-
-        _llm_instance = ChatOpenAI(**kwargs)
-        logger.info(
-            "LLM initialized | provider=%s | model=%s | base_url=%s",
-            settings.llm_provider,
-            settings.model_name,
-            settings.openai_api_base or "default",
-        )
+        _llm_instance = _new_chat_model(profile=profile)
         return _llm_instance
 
     except Exception as exc:
+        if isinstance(exc, ConfigurationError):
+            raise
+        safe_error = _redact_secret(str(exc), settings.openai_api_key)
+        logger.error(
+            "Failed to initialize cached LLM | profile=%s | error=%s",
+            profile or "default",
+            safe_error,
+        )
         raise ModelNotAvailableError(
-            f"Failed to initialize LLM: {exc}"
-        ) from exc
+            f"Failed to initialize LLM: {safe_error}"
+        ) from None
 
 
 # ── Agent Provider ──────────────────────────────────────────────────────────

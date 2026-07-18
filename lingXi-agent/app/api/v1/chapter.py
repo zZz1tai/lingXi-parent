@@ -7,22 +7,22 @@ Handles source unit building, prompt construction, LLM call, and JSON validation
 
 from __future__ import annotations
 
-import json
 import time
+from collections.abc import Iterator
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends
+from httpx import TimeoutException as HttpxTimeoutException
+from openai import APITimeoutError
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import create_llm, get_request_id
+from app.chains.chapter_analysis import build_chapter_analysis_chain
 from app.schemas.request import LLMConfig
 from app.services.chapter_analysis import (
-    SourceUnit,
     build_prompt,
     build_source_units,
-    parse_and_validate,
 )
-from app.utils.exceptions import SearchError
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/api/v1/video", tags=["chapter"])
@@ -47,6 +47,11 @@ class AnalyzeChapterRequest(BaseModel):
         default=None,
         description="Existing project characters for cross-chapter identity reuse",
     )
+    video_model: str = Field(
+        ...,
+        min_length=1,
+        description="Configured downstream Wanx model used for duration normalization",
+    )
     llm_config: Optional[LLMConfig] = Field(
         default=None,
         description="LLM configuration from Java backend",
@@ -61,7 +66,44 @@ class AnalyzeChapterResponse(BaseModel):
     source_units: Optional[list[dict[str, Any]]] = None
     prompt: Optional[str] = None
     raw_llm_response: Optional[str] = None
+    repair_count: int = 0
     error: Optional[str] = None
+    error_code: Optional[str] = None
+    retryable: bool = False
+
+
+class _ChapterConfigurationError(ValueError):
+    """The Java-to-Python chapter request omitted required runtime config."""
+
+
+def _iter_exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    """Yield an exception and its explicit/implicit causes without looping."""
+    current: Optional[BaseException] = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _chapter_error_details(exc: BaseException) -> tuple[str, bool, str]:
+    """Map provider failures to a stable transport contract for Java."""
+    if any(
+        isinstance(item, (APITimeoutError, HttpxTimeoutException, TimeoutError))
+        for item in _iter_exception_chain(exc)
+    ):
+        return (
+            "CHAPTER_LLM_TIMEOUT",
+            True,
+            "章节分析模型调用超时，请稍后重试",
+        )
+    if isinstance(exc, _ChapterConfigurationError):
+        return (
+            "CHAPTER_CONFIGURATION_INVALID",
+            False,
+            str(exc),
+        )
+    return ("CHAPTER_ANALYSIS_FAILED", False, str(exc) or "章节解析失败")
 
 
 # ── Endpoint ─────────────────────────────────────────────────────────────────
@@ -103,6 +145,7 @@ async def analyze_chapter(
             return AnalyzeChapterResponse(
                 success=False,
                 error="章节原文为空，无法分析",
+                error_code="CHAPTER_SOURCE_EMPTY",
             )
 
         # Step 2: Build prompt
@@ -110,6 +153,7 @@ async def analyze_chapter(
             chapter_title=request.chapter_title,
             source_units=source_units,
             project_characters=request.project_characters,
+            video_model=request.video_model,
         )
         logger.info(
             "Prompt built | request_id=%s | prompt_length=%d",
@@ -117,43 +161,44 @@ async def analyze_chapter(
             len(prompt),
         )
 
-        # Step 3: Call LLM (with streaming for long responses)
-        from langchain_openai import ChatOpenAI
-
-        llm_config = request.llm_config
-        llm_kwargs = {
-            "model": llm_config.model if llm_config else "qwen-max",
-            "api_key": llm_config.api_key if llm_config else None,
-            "timeout": 300,  # 5 minutes for chapter analysis
-            "max_retries": 2,
-            "streaming": True,  # Use streaming to prevent server timeout
-        }
-        if llm_config and llm_config.base_url:
-            llm_kwargs["base_url"] = llm_config.base_url
-        llm = ChatOpenAI(**llm_kwargs)
-
-        from langchain_core.messages import HumanMessage
-
-        messages = [HumanMessage(content=prompt)]
-
-        logger.info("Calling LLM (streaming) | request_id=%s", request_id)
-        
-        # Collect streaming response
-        raw_response = ""
-        async for chunk in llm.astream(messages):
-            if hasattr(chunk, "content") and chunk.content:
-                content = chunk.content
-                if isinstance(content, str):
-                    raw_response += content
+        # Step 3: Run the reusable LangChain workflow. Java owns the timeout
+        # value and transports it as seconds; Python owns streaming behavior.
+        if request.llm_config is None or request.llm_config.timeout_seconds is None:
+            raise _ChapterConfigurationError(
+                "章节分析缺少 llm_config.timeout_seconds 配置"
+            )
+        llm = create_llm(
+            request.llm_config,
+            max_retries=0,
+            temperature=0.1,
+            streaming=True,
+            profile="chapter-analysis",
+        )
+        logger.info(
+            "Calling chapter LCEL chain | request_id=%s | timeout_seconds=%d | streaming=true",
+            request_id,
+            request.llm_config.timeout_seconds,
+        )
+        analysis_chain = build_chapter_analysis_chain(llm)
+        chain_result = await analysis_chain.ainvoke(
+            prompt,
+            source_units,
+            request_id=request_id,
+            video_model=request.video_model,
+            timeout_seconds=request.llm_config.timeout_seconds,
+        )
+        raw_response = chain_result.raw_response
+        story_bible = chain_result.story_bible
         
         logger.info(
-            "LLM response received | request_id=%s | response_length=%d",
+            "LLM response received | request_id=%s | response_length=%d | repairs=%d",
             request_id,
             len(raw_response),
+            chain_result.repair_count,
         )
 
-        # Step 4: Parse and validate
-        story_bible = parse_and_validate(raw_response, source_units)
+        # Step 4: The chain has already parsed and deterministically validated
+        # the result before it reaches persistence.
         logger.info(
             "Story bible validated | request_id=%s | scenes=%d | characters=%d",
             request_id,
@@ -180,19 +225,26 @@ async def analyze_chapter(
             source_units=su_list,
             prompt=prompt,
             raw_llm_response=raw_response,
+            repair_count=chain_result.repair_count,
         )
 
     except Exception as exc:
         import traceback
         elapsed = time.time() - start_time
+        error_code, retryable, error_message = _chapter_error_details(exc)
         logger.error(
-            "Chapter analysis failed | request_id=%s | elapsed=%.2fs | error=%s\n%s",
+            "Chapter analysis failed | request_id=%s | elapsed=%.2fs | error_code=%s | "
+            "retryable=%s | error=%s\n%s",
             request_id,
             elapsed,
+            error_code,
+            retryable,
             str(exc),
             traceback.format_exc(),
         )
         return AnalyzeChapterResponse(
             success=False,
-            error=str(exc),
+            error=error_message,
+            error_code=error_code,
+            retryable=retryable,
         )
