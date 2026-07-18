@@ -1,82 +1,151 @@
-"""
-FastAPI dependency injection providers.
-
-Manages LLM model and search agent instances.
-Supports both singleton mode (env-based) and per-request mode (config from Java).
-"""
+"""Application-scoped LangChain v1 models, Agent graph, and memory resources."""
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import hashlib
+import json
+import os
+from collections import OrderedDict
+from threading import RLock
+from typing import Any
 
+from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.store.base import BaseStore
+from pydantic import SecretStr
 
 from app.agents.builder import build_search_agent
+from app.agents.checkpoints import create_in_memory_checkpointer
+from app.agents.state import AgentContext, checkpoint_thread_id
 from app.config.settings import settings
 from app.schemas.request import LLMConfig
-from app.utils.exceptions import ConfigurationError, ModelNotAvailableError
+from app.security.outbound import validate_outbound_http_url
+from app.services.http_client import get_http_client
+from app.utils.exceptions import (
+    AgentError,
+    ConfigurationError,
+    InputValidationError,
+    ModelNotAvailableError,
+)
 from app.utils.logger import logger
 
 
-# ── Singleton Cache (fallback when no config provided) ───────────────────────
+_llm_instance: BaseChatModel | None = None
+_agent_instance: CompiledStateGraph | None = None
+_ephemeral_agent_instance: CompiledStateGraph | None = None
+_checkpointer_instance: BaseCheckpointSaver | None = None
+_store_instance: BaseStore | None = None
 
-_llm_instance: Optional[BaseChatModel] = None
-_agent_instance: Optional[CompiledStateGraph] = None
+_model_cache: OrderedDict[str, BaseChatModel] = OrderedDict()
+_model_cache_lock = RLock()
+_MODEL_CACHE_LIMIT = max(1, min(int(os.getenv("AGENT_MODEL_CACHE_SIZE", "8")), 32))
 
 
-# ── LLM Provider ────────────────────────────────────────────────────────────
+def _secret_value(value: str | SecretStr) -> str:
+    return value.get_secret_value() if isinstance(value, SecretStr) else value
 
-def _redact_secret(message: str, secret: str) -> str:
+
+def _redact_secret(message: str, secret: str | SecretStr) -> str:
     """Remove a credential if a provider includes it in an error message."""
-    if not secret:
+
+    raw_secret = _secret_value(secret)
+    if not raw_secret:
         return message
-    return message.replace(secret, "[REDACTED]")
+    return message.replace(raw_secret, "[REDACTED]")
+
+
+def _normalized_model_values(
+    config: LLMConfig | None,
+) -> tuple[str, str, str | None, float | None]:
+    api_key = (
+        _secret_value(config.api_key)
+        if config is not None
+        else _secret_value(settings.openai_api_key)
+    )
+    model_name = config.model if config is not None else settings.model_name
+    raw_base_url = config.base_url if config is not None else settings.openai_api_base
+    base_url = str(raw_base_url).rstrip("/") if raw_base_url else None
+    if base_url:
+        base_url = validate_outbound_http_url(base_url)
+    configured_timeout = config.timeout_seconds if config is not None else None
+    return api_key, model_name, base_url, configured_timeout
+
+
+def _model_cache_key(
+    *,
+    api_key: str,
+    model_name: str,
+    base_url: str | None,
+    timeout: float,
+    max_retries: int,
+    temperature: float,
+    streaming: bool | None,
+) -> str:
+    payload = json.dumps(
+        {
+            "api_key": api_key,
+            "model": model_name,
+            "base_url": base_url,
+            "timeout": timeout,
+            "max_retries": max_retries,
+            "temperature": temperature,
+            "streaming": streaming,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _new_chat_model(
-    config: Optional[LLMConfig] = None,
+    config: LLMConfig | None = None,
     *,
-    profile: Optional[str] = None,
-    timeout: Optional[float] = None,
-    max_retries: Optional[int] = None,
-    temperature: Optional[float] = None,
-    streaming: Optional[bool] = None,
+    profile: str | None = None,
+    timeout: float | None = None,
+    max_retries: int | None = None,
+    temperature: float | None = None,
+    streaming: bool | None = None,
 ) -> BaseChatModel:
-    """Construct one OpenAI-compatible chat model without caching it."""
-    from langchain_openai import ChatOpenAI
+    """Construct one OpenAI-compatible v1 chat model without caching it."""
 
-    api_key = config.api_key if config is not None else settings.openai_api_key
-    model_name = config.model if config is not None else settings.model_name
-    base_url = config.base_url if config is not None else settings.openai_api_base
-    configured_timeout = config.timeout_seconds if config is not None else None
-    effective_timeout = timeout if timeout is not None else configured_timeout
+    api_key, model_name, base_url, configured_timeout = _normalized_model_values(config)
     if not api_key:
         raise ConfigurationError(
-            "LLM API key is not configured. Pass llm_config.api_key or set "
-            "OPENAI_API_KEY."
+            "LLM API key is not configured. Pass llm_config.api_key or set OPENAI_API_KEY."
         )
 
     kwargs: dict[str, Any] = {
-        "model": model_name,
         "api_key": api_key,
         "temperature": settings.temperature if temperature is None else temperature,
-        "timeout": 30 if effective_timeout is None else effective_timeout,
+        "timeout": 30 if timeout is None and configured_timeout is None else (
+            configured_timeout if timeout is None else timeout
+        ),
         "max_retries": 1 if max_retries is None else max_retries,
+        "output_version": "v1",
+        # The application-owned client has follow_redirects=False, preventing
+        # an allowlisted provider from redirecting model traffic to an
+        # untrusted/private destination.
+        "http_async_client": get_http_client(),
     }
     if base_url:
         kwargs["base_url"] = base_url
     if streaming is not None:
         kwargs["streaming"] = streaming
 
-    model = ChatOpenAI(**kwargs)
+    model = init_chat_model(
+        model_name,
+        model_provider="openai",
+        **kwargs,
+    )
     logger.info(
-        "LLM initialized | profile=%s | provider=%s | model=%s | endpoint=%s | "
+        "LLM initialized | profile=%s | provider=%s | model_length=%d | endpoint=%s | "
         "timeout=%s | temperature=%s | max_retries=%s | streaming=%s",
         profile or "default",
         settings.llm_provider,
-        model_name,
-        "custom" if base_url else "default",
+        len(model_name),
+        "custom-allowlisted" if base_url else "default",
         kwargs["timeout"],
         kwargs["temperature"],
         kwargs["max_retries"],
@@ -86,151 +155,203 @@ def _new_chat_model(
 
 
 def create_llm(
-    config: Optional[LLMConfig] = None,
+    config: LLMConfig | None = None,
     *,
-    profile: Optional[str] = None,
-    timeout: Optional[float] = None,
-    max_retries: Optional[int] = None,
-    temperature: Optional[float] = None,
-    streaming: Optional[bool] = None,
+    profile: str | None = None,
+    timeout: float | None = None,
+    max_retries: int | None = None,
+    temperature: float | None = None,
+    streaming: bool | None = None,
 ) -> BaseChatModel:
-    """Create an LLM instance from config or env settings.
+    """Return a model from a credential-safe bounded cache."""
 
-    Args:
-        config: Optional LLM config from Java backend request. Its
-                ``timeout_seconds`` is used unless ``timeout`` explicitly
-                overrides it. If None, uses env-based settings (singleton).
-        profile: Optional workload label for credential-free diagnostics.
-        timeout: Optional provider request timeout in seconds.
-        max_retries: Optional provider retry count.
-        temperature: Optional sampling temperature override.
-        streaming: Optional ChatOpenAI streaming-mode override.
-
-    Returns:
-        A configured ``BaseChatModel`` instance.
-    """
-    # Preserve the singleton for ordinary env-configured chat calls.  A caller
-    # asking for different runtime characteristics (for example the five-minute
-    # chapter-analysis timeout) receives a purpose-built model instead.
-    has_overrides = any(
-        value is not None
-        for value in (timeout, max_retries, temperature, streaming)
-    )
-    if config is None and not has_overrides:
+    if config is None and all(
+        value is None for value in (timeout, max_retries, temperature, streaming)
+    ):
         return get_llm(profile=profile)
 
     try:
-        return _new_chat_model(
-            config,
-            profile=profile,
-            timeout=timeout,
-            max_retries=max_retries,
-            temperature=temperature,
+        api_key, model_name, base_url, configured_timeout = _normalized_model_values(config)
+        effective_timeout = float(
+            30 if timeout is None and configured_timeout is None else (
+                configured_timeout if timeout is None else timeout
+            )
+        )
+        effective_retries = 1 if max_retries is None else max_retries
+        effective_temperature = settings.temperature if temperature is None else temperature
+        cache_key = _model_cache_key(
+            api_key=api_key,
+            model_name=model_name,
+            base_url=base_url,
+            timeout=effective_timeout,
+            max_retries=effective_retries,
+            temperature=effective_temperature,
             streaming=streaming,
         )
+
+        with _model_cache_lock:
+            cached = _model_cache.get(cache_key)
+            if cached is not None:
+                _model_cache.move_to_end(cache_key)
+                return cached
+
+            model = _new_chat_model(
+                config,
+                profile=profile,
+                timeout=timeout,
+                max_retries=max_retries,
+                temperature=temperature,
+                streaming=streaming,
+            )
+            _model_cache[cache_key] = model
+            while len(_model_cache) > _MODEL_CACHE_LIMIT:
+                _model_cache.popitem(last=False)
+            return model
     except Exception as exc:
-        if isinstance(exc, ConfigurationError):
+        if isinstance(exc, InputValidationError) and config is None:
+            raise ConfigurationError("Configured LLM base URL is not allowed") from exc
+        if isinstance(exc, AgentError):
             raise
         api_key = config.api_key if config is not None else settings.openai_api_key
         safe_error = _redact_secret(str(exc), api_key)
         logger.error(
-            "Failed to create LLM | profile=%s | error=%s",
+            "Failed to create LLM | profile=%s | error_type=%s",
             profile or "default",
-            safe_error,
+            type(exc).__name__,
         )
         raise ModelNotAvailableError(
-            f"Failed to initialize LLM for profile '{profile or 'default'}': "
-            f"{safe_error}"
+            f"Failed to initialize LLM for profile '{profile or 'default'}': {safe_error}"
         ) from None
 
 
-def get_llm(*, profile: Optional[str] = None) -> BaseChatModel:
-    """Return a cached LLM instance based on application settings.
+def get_llm(*, profile: str | None = None) -> BaseChatModel:
+    """Return the cached environment-configured default model."""
 
-    Supports OpenAI-compatible APIs (including Doubao/Coze) via the
-    ``openai_api_base`` setting.
-
-    Returns:
-        A configured ``BaseChatModel`` instance.
-
-    Raises:
-        ConfigurationError: If the API key is not configured.
-        ModelNotAvailableError: If the model fails to initialize.
-    """
     global _llm_instance
-
     if _llm_instance is not None:
         return _llm_instance
-
-    if not settings.openai_api_key:
-        raise ConfigurationError(
-            "OPENAI_API_KEY is not configured. "
-            "Please set it in the .env file or as an environment variable."
-        )
 
     try:
         _llm_instance = _new_chat_model(profile=profile)
         return _llm_instance
-
     except Exception as exc:
-        if isinstance(exc, ConfigurationError):
+        if isinstance(exc, InputValidationError):
+            raise ConfigurationError("Configured LLM base URL is not allowed") from exc
+        if isinstance(exc, AgentError):
             raise
         safe_error = _redact_secret(str(exc), settings.openai_api_key)
         logger.error(
-            "Failed to initialize cached LLM | profile=%s | error=%s",
+            "Failed to initialize cached LLM | profile=%s | error_type=%s",
             profile or "default",
-            safe_error,
+            type(exc).__name__,
         )
         raise ModelNotAvailableError(
             f"Failed to initialize LLM: {safe_error}"
         ) from None
 
 
-# ── Agent Provider ──────────────────────────────────────────────────────────
+def configure_agent_runtime(
+    checkpointer: BaseCheckpointSaver,
+    *,
+    store: BaseStore | None = None,
+) -> None:
+    """Inject lifespan-owned durable memory/store resources before serving."""
 
-def get_agent(llm_config: Optional[LLMConfig] = None) -> CompiledStateGraph:
-    """Return a search agent instance.
+    global _checkpointer_instance, _store_instance, _agent_instance
+    global _ephemeral_agent_instance
+    _checkpointer_instance = checkpointer
+    _store_instance = store
+    _agent_instance = None
+    _ephemeral_agent_instance = None
 
-    When llm_config is provided, creates a new agent with that config.
-    When llm_config is None, returns the cached singleton agent.
 
-    Args:
-        llm_config: Optional LLM config from Java backend.
+def get_checkpointer() -> BaseCheckpointSaver:
+    """Return configured memory, falling back to isolated development memory."""
 
-    Returns:
-        A compiled LangGraph ``CompiledStateGraph`` agent.
-    """
-    # If config provided, always create new agent (no caching)
-    if llm_config is not None:
-        model = create_llm(llm_config)
-        agent = build_search_agent(model=model)
-        logger.info("Search agent created from request config")
-        return agent
+    global _checkpointer_instance
+    if _checkpointer_instance is None:
+        _checkpointer_instance = create_in_memory_checkpointer()
+        logger.warning(
+            "Using in-memory Agent checkpoints; configure Postgres for production"
+        )
+    return _checkpointer_instance
 
-    # Fallback to singleton
-    global _agent_instance
-    if _agent_instance is not None:
+
+def get_agent(*, checkpointed: bool = True) -> CompiledStateGraph:
+    """Return a cached graph with or without cross-request checkpoints."""
+
+    global _agent_instance, _ephemeral_agent_instance
+    if checkpointed:
+        if _agent_instance is None:
+            _agent_instance = build_search_agent(
+                model=get_llm(profile="agent-default"),
+                checkpointer=get_checkpointer(),
+                store=_store_instance,
+            )
+            logger.info("Checkpointed search agent initialized and cached")
         return _agent_instance
 
-    model = get_llm()
-    _agent_instance = build_search_agent(model=model)
-    logger.info("Search agent initialized and cached")
-    return _agent_instance
+    if _ephemeral_agent_instance is None:
+        _ephemeral_agent_instance = build_search_agent(
+            model=get_llm(profile="agent-default"),
+            checkpointer=None,
+            store=_store_instance,
+        )
+        logger.info("Ephemeral search agent initialized and cached")
+    return _ephemeral_agent_instance
 
 
-# ── Request ID Provider ─────────────────────────────────────────────────────
+async def delete_agent_thread(*, user_id: str, thread_id: str) -> None:
+    """Permanently delete one user's checkpointed conversation."""
+
+    await get_checkpointer().adelete_thread(
+        checkpoint_thread_id(user_id, thread_id)
+    )
+
+
+def create_agent_context(
+    *,
+    llm_config: LLMConfig | None,
+    user_id: str,
+    thread_id: str,
+    style: str,
+    business_tag: str,
+) -> AgentContext:
+    """Build immutable context and resolve any bounded model override."""
+
+    model = (
+        create_llm(llm_config, profile="chat-request")
+        if llm_config is not None
+        else None
+    )
+    return AgentContext(
+        user_id=user_id,
+        thread_id=thread_id,
+        style="casual" if style == "casual" else "professional",
+        business_tag=business_tag,
+        model=model,
+    )
+
 
 def get_request_id() -> str:
-    """Generate a unique request ID for tracing."""
-    from app.utils.logger import generate_request_id
-    return generate_request_id()
+    """Reuse the request middleware's ID, generating only in direct calls."""
 
+    from app.utils.logger import generate_request_id, get_request_id as current_request_id
 
-# ── Lifecycle Hooks ─────────────────────────────────────────────────────────
+    current = current_request_id()
+    return generate_request_id() if not current or current == "-" else current
+
 
 def reset_singletons() -> None:
-    """Reset cached instances (useful for testing or reconfiguration)."""
-    global _llm_instance, _agent_instance
+    """Reset process-local caches for tests and application shutdown."""
+
+    global _llm_instance, _agent_instance, _ephemeral_agent_instance
+    global _checkpointer_instance, _store_instance
     _llm_instance = None
     _agent_instance = None
-    logger.info("Singleton instances reset")
+    _ephemeral_agent_instance = None
+    _checkpointer_instance = None
+    _store_instance = None
+    with _model_cache_lock:
+        _model_cache.clear()
+    logger.info("LangChain runtime singletons reset")

@@ -3,20 +3,18 @@ package com.lingXi.ai.client;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.ai.config.VideoConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * HTTP client for calling Python Agent chapter analysis endpoint.
@@ -30,6 +28,7 @@ public class ChapterAnalysisClient {
     private static final long CHAPTER_TRANSPORT_MARGIN_MS = 60_000L;
 
     private final VideoConfig config;
+    private final AgentConfig agentConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static class ChapterClientConfigurationException extends IllegalStateException {
@@ -40,8 +39,9 @@ public class ChapterAnalysisClient {
         }
     }
 
-    public ChapterAnalysisClient(VideoConfig config) {
+    public ChapterAnalysisClient(VideoConfig config, AgentConfig agentConfig) {
         this.config = config;
+        this.agentConfig = agentConfig;
     }
 
     // ── Inner Classes ───────────────────────────────────────────────────────
@@ -124,15 +124,15 @@ public class ChapterAnalysisClient {
             int timeout = requirePositive(config.getChapterReadTimeout(), "video.chapter-read-timeout");
             validateChapterTimeoutBudget(timeout, providerReadTimeoutSeconds);
 
-            log.info("Calling Python chapter analysis | url={} | textLength={} | "
+            log.info("Calling Python chapter analysis | textLength={} | "
                             + "providerTimeoutSeconds={} | httpReadTimeoutMs={}",
-                    url, sourceText.length(), providerReadTimeoutSeconds, timeout);
+                    sourceText.length(), providerReadTimeoutSeconds, timeout);
 
             JsonNode response = doPost(url, body.toString(), timeout);
             return parseAnalysisResponse(response);
 
         } catch (SocketTimeoutException e) {
-            log.error("Python chapter analysis request timed out: {}", e.getMessage(), e);
+            log.error("Python chapter analysis request timed out");
             return new AnalysisResult(
                     false, null, null, "Python 章节分析接口等待超时", "CHAPTER_AGENT_TIMEOUT", true);
         } catch (ChapterClientConfigurationException e) {
@@ -140,15 +140,16 @@ public class ChapterAnalysisClient {
             return new AnalysisResult(
                     false, null, null, e.getMessage(), "CHAPTER_CONFIGURATION_INVALID", false);
         } catch (IOException e) {
-            log.error("Python chapter analysis transport failed: {}", e.getMessage(), e);
-            String message = e.getMessage() == null
-                    ? "Python 章节分析接口通信失败"
-                    : "Python 章节分析接口通信失败：" + e.getMessage();
+            log.error("Python chapter analysis transport failed, errorType={}",
+                    e.getClass().getSimpleName());
             return new AnalysisResult(
-                    false, null, null, message, "CHAPTER_AGENT_TRANSPORT_ERROR", true);
+                    false, null, null, "Python 章节分析接口通信失败",
+                    "CHAPTER_AGENT_TRANSPORT_ERROR", true);
         } catch (Exception e) {
-            log.error("Failed to analyze chapter: {}", e.getMessage(), e);
-            return new AnalysisResult(false, null, null, e.getMessage(), null, false);
+            log.error("Failed to analyze chapter, errorType={}",
+                    e.getClass().getSimpleName());
+            return new AnalysisResult(false, null, null,
+                    "Python 章节分析失败", "CHAPTER_ANALYSIS_FAILED", false);
         }
     }
 
@@ -193,6 +194,7 @@ public class ChapterAnalysisClient {
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            applyServiceAuth(conn);
             conn.setConnectTimeout(requirePositive(config.getConnectTimeout(), "video.connect-timeout"));
             conn.setReadTimeout(readTimeout);
             conn.setDoOutput(true);
@@ -204,29 +206,26 @@ public class ChapterAnalysisClient {
 
             int statusCode = conn.getResponseCode();
 
-            String responseBody;
-            try (BufferedReader br = new BufferedReader(
-                    new InputStreamReader(
-                            statusCode >= 200 && statusCode < 300
-                                    ? conn.getInputStream()
-                                    : conn.getErrorStream(),
-                            StandardCharsets.UTF_8))) {
-                responseBody = br.lines().collect(Collectors.joining());
-            }
+            String responseBody = AgentResponseUtil.readResponseBody(conn, statusCode);
 
             if (statusCode < 200 || statusCode >= 300) {
-                log.error("HTTP error | status={} | url={} | body={}", statusCode, urlStr, responseBody);
-                ObjectNode errorResponse = structuredHttpError(responseBody);
-                errorResponse.put("success", false);
-                if (!errorResponse.hasNonNull("error")) {
-                    errorResponse.put("error", "HTTP " + statusCode + ": " + responseBody);
-                }
-                return errorResponse;
+                log.error("Python Agent chapter HTTP error | status={}", statusCode);
+                return AgentResponseUtil.normalizeError(
+                        objectMapper,
+                        responseBody,
+                        statusCode,
+                        "CHAPTER_AGENT_HTTP_ERROR",
+                        "Python 章节分析接口请求失败");
             }
 
-            JsonNode response = objectMapper.readTree(responseBody);
-            if (response == null) {
-                throw new IOException("Python chapter analysis returned an empty response");
+            JsonNode response = AgentResponseUtil.parseSuccess(objectMapper, responseBody);
+            if (!response.path("success").asBoolean(false)) {
+                return AgentResponseUtil.normalizeError(
+                        objectMapper,
+                        responseBody,
+                        statusCode,
+                        "CHAPTER_ANALYSIS_FAILED",
+                        "Python 章节分析接口请求失败");
             }
             return response;
 
@@ -237,17 +236,12 @@ public class ChapterAnalysisClient {
         }
     }
 
-    private ObjectNode structuredHttpError(String responseBody) {
-        if (responseBody != null && !responseBody.trim().isEmpty()) {
-            try {
-                JsonNode parsed = objectMapper.readTree(responseBody);
-                if (parsed != null && parsed.isObject()) {
-                    return ((ObjectNode) parsed).deepCopy();
-                }
-            } catch (IOException ignored) {
-                // The caller retains the raw HTTP response when it is not JSON.
-            }
+    private void applyServiceAuth(HttpURLConnection conn) {
+        String serviceApiKey = agentConfig.getServiceApiKey();
+        if (serviceApiKey == null || serviceApiKey.trim().isEmpty()) {
+            throw new ChapterClientConfigurationException(
+                    "agent.service-api-key is not configured");
         }
-        return objectMapper.createObjectNode();
+        conn.setRequestProperty("X-Agent-Service-Key", serviceApiKey);
     }
 }

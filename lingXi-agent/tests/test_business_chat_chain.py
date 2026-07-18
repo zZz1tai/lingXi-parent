@@ -16,7 +16,8 @@ from app.chains.business_chat import (
     stream_context_analysis,
 )
 from app.main import app
-from app.schemas.request import ChatMode, ChatRequest, SmartQuestionHistoryItem
+from app.schemas.request import ChatMode, ChatRequest, LLMConfig, SmartQuestionHistoryItem
+from app.utils.exceptions import InputValidationError
 
 
 class CapturingModel:
@@ -80,6 +81,21 @@ class BusinessChatChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(response.data)
         self.assertEqual("库存数据正常", response.data.response)
         self.assertEqual("offline-request", response.data.request_id)
+
+    async def test_chat_endpoint_preserves_outbound_url_validation_error(self) -> None:
+        request = ChatRequest(
+            message="分析数据",
+            mode=ChatMode.CONTEXT_ANALYSIS,
+            context_data={"inventory": []},
+            llm_config=LLMConfig(
+                api_key="test-secret",
+                model="test-model",
+                base_url="https://provider.invalid/v1",
+            ),
+        )
+
+        with self.assertRaises(InputValidationError):
+            await chat_api.chat_invoke(request, request_id="offline-request")
 
     async def test_context_stream_reports_model_initialization_error_as_sse(self) -> None:
         request = ChatRequest(

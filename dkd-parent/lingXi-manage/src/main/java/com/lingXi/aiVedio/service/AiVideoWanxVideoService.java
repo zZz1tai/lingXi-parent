@@ -65,7 +65,8 @@ public class AiVideoWanxVideoService
                 video.getNegativePromptText(),
                 referenceUrl,
                 dashScopeConfig.getVideoResolution(),
-                video.getDurationMs());
+                video.getDurationMs(),
+                task.getIdempotencyKey());
         
         if (!result.success())
         {

@@ -1,6 +1,6 @@
-# LingXi Agent
+# LingXi Agent（LangChain v1）
 
-灵犀系统统一的 Python AI 执行层。所有模型调用、Prompt 构造、结构化输出解析、模型能力规则都在这里实现；Java 后端只负责权限、业务数据、任务状态、数据库事务、资产关系、人工确认和 HTTP 数据搬运。
+灵犀系统统一的 Python AI 执行层，基于 LangChain v1 / LangGraph v1。所有模型调用、Prompt 构造、结构化输出解析、短期记忆和模型能力规则都在这里实现；Java 后端负责用户权限、业务数据、任务状态、数据库事务、资产关系、人工确认和 HTTP 数据搬运。
 
 ## 职责边界
 
@@ -25,11 +25,15 @@
 5. 用户查看/修改图片 Prompt 后手动生成。Java 搬运资产数据和参考图 URL，Python 调用 Qwen Image。
 6. 关键帧图片完成并经用户批准后，Java 才允许创建/修改视频草稿并手动提交。Python 按 Wanx 模型归一化参数并返回任务 ID，Java 负责持久化和轮询状态。
 
-## LangChain 结构
+## LangChain v1 结构
 
 ```text
 app/
-├── agents/                    # 普通对话 LangGraph Agent 与动态系统 Prompt
+├── agents/
+│   ├── builder.py             # create_agent、ToolStrategy / ProviderStrategy
+│   ├── middleware.py          # 动态 Prompt、模型路由、工具错误与摘要预算
+│   ├── state.py               # AgentState 与不可变请求 Context
+│   └── checkpoints.py         # InMemory / AsyncPostgresSaver 生命周期
 ├── chains/
 │   ├── chapter_analysis.py    # 章节分析、JSON 解析及一次修复
 │   └── business_chat.py       # 看板分析与快捷问题 LCEL 链
@@ -50,6 +54,8 @@ app/
 | POST | `/api/v1/chat/invoke` | 普通对话；`mode=context_analysis` 时由 Python 分析结构化业务数据 |
 | POST | `/api/v1/chat/stream` | 对话或看板分析 SSE |
 | POST | `/api/v1/chat/smart-questions` | 根据结构化对话历史返回严格 3 条快捷问题 |
+| DELETE | `/api/v1/chat/thread` | 按 `{user_id, thread_id}` 永久删除会话 checkpoint |
+| POST | `/api/v1/extract` | 显式 ToolStrategy / ProviderStrategy 结构化提取 |
 | POST | `/api/v1/video/analyze-chapter` | 章节 LCEL 分析、严格校验及一次修复 |
 | POST | `/api/v1/video/generate-image` | Qwen Image 生成；参考图完整保序 |
 | POST | `/api/v1/video/submit-video` | Wanx 图生视频提交与参数归一化 |
@@ -57,16 +63,51 @@ app/
 
 `submission_uncertain=true` 表示供应商可能已经受理但没有返回任务 ID。Java 必须进入人工核对状态，不能自动重复提交。
 
+除 `/health`、`/livez`、`/readyz` 外，全部接口都必须携带
+`X-Agent-Service-Key`。它必须与 Java 服务的 `AGENT_SERVICE_API_KEY`
+一致；Java `AgentConfig` 会在未设置 `agent.service-api-key` 时显式读取该
+环境变量。请求中的 OpenAI-compatible `base_url` 只能使用
+`OUTBOUND_ALLOWED_HOSTS` 明确列出的 HTTPS 目标。
+
+对话请求应同时传递 `user_id` 和 `thread_id`（兼容别名 `session_id`）。
+前者用于用户隔离，后者才是会话标识；服务端会生成无歧义的 checkpoint
+命名空间，禁止不同用户或会话共享短期记忆。SSE 使用 LangChain v1 的
+`messages`、`updates`、`custom` 多模式流，并发送心跳、`done` 和最终
+`[DONE]` 标记；`AGENT_STREAM_MAX_SECONDS` 与
+`AGENT_STREAM_MAX_TEXT_CHARS` 分别限制总时长和累计文本输出。
+
+## 短期记忆
+
+本地与测试默认使用进程内存：
+
+```dotenv
+AGENT_CHECKPOINTER_BACKEND=memory
+```
+
+生产环境使用 PostgreSQL 持久化 checkpoint：
+
+```dotenv
+AGENT_CHECKPOINTER_BACKEND=postgres
+AGENT_POSTGRES_DSN=postgresql://agent_user:password@postgres:5432/lingxi_agent
+```
+
+这两个配置统一由 Pydantic Settings 从进程环境或项目 `.env` 加载；DSN
+使用 `SecretStr` 保存，不会出现在配置 repr 或日志中。进程启动时会初始化
+`AsyncPostgresSaver` 所需表，并在退出时关闭连接。
+
 ## 本地运行
 
 ```powershell
 cd lingXi-agent
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 5000
+Copy-Item .env.example .env
+# 修改 .env，至少设置 OPENAI_API_KEY 与 AGENT_SERVICE_API_KEY
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 5000
 ```
 
-Swagger：`http://localhost:5000/docs`
+Swagger 默认关闭；仅在受控开发环境设置 `DOCS_ENABLED=true` 后访问
+`http://localhost:5000/docs`。
 
 ## 离线验证
 
@@ -74,6 +115,8 @@ Swagger：`http://localhost:5000/docs`
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m pip check
 ```
 
 Java 侧编译：

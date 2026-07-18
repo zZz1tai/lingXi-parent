@@ -21,10 +21,12 @@ class AgentError(Exception):
         message: str,
         code: str = "AGENT_ERROR",
         status_code: int = 500,
+        public_message: str | None = None,
     ) -> None:
         self.message = message
         self.code = code
         self.status_code = status_code
+        self.public_message = public_message or message
         super().__init__(message)
 
 
@@ -34,14 +36,24 @@ class ConfigurationError(AgentError):
     """Raised when required configuration is missing or invalid."""
 
     def __init__(self, message: str) -> None:
-        super().__init__(message, code="CONFIG_ERROR", status_code=500)
+        super().__init__(
+            message,
+            code="CONFIG_ERROR",
+            status_code=500,
+            public_message="Agent service configuration is invalid",
+        )
 
 
 class SearchError(AgentError):
     """Raised when the web search tool fails."""
 
     def __init__(self, message: str) -> None:
-        super().__init__(message, code="SEARCH_ERROR", status_code=502)
+        super().__init__(
+            message,
+            code="SEARCH_ERROR",
+            status_code=502,
+            public_message="The upstream search service failed",
+        )
 
 
 class AgentTimeoutError(AgentError):
@@ -62,7 +74,12 @@ class ModelNotAvailableError(AgentError):
     """Raised when the LLM model is unreachable."""
 
     def __init__(self, message: str) -> None:
-        super().__init__(message, code="MODEL_UNAVAILABLE", status_code=503)
+        super().__init__(
+            message,
+            code="MODEL_UNAVAILABLE",
+            status_code=503,
+            public_message="The configured model is temporarily unavailable",
+        )
 
 
 # ── Global Error Handlers ──────────────────────────────────────────────────
@@ -75,17 +92,20 @@ async def agent_error_handler(_request: Request, exc: AgentError) -> JSONRespons
             "success": False,
             "error": {
                 "code": exc.code,
-                "message": exc.message,
+                "message": exc.public_message,
             },
+            "request_id": _request_id(),
         },
     )
 
 
 async def generic_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Catch-all handler — hides internal details from the client."""
-    import traceback
     from app.utils.logger import logger
-    logger.error("Unhandled exception: %s\n%s", str(exc), traceback.format_exc())
+    # Provider exceptions can embed response bodies, headers, or credentials in
+    # their rendered traceback. Keep production logs useful without serializing
+    # attacker/provider-controlled exception text.
+    logger.error("Unhandled exception | error_type=%s", type(exc).__name__)
     return JSONResponse(
         status_code=500,
         content={
@@ -94,6 +114,7 @@ async def generic_error_handler(_request: Request, exc: Exception) -> JSONRespon
                 "code": "INTERNAL_ERROR",
                 "message": "An unexpected error occurred. Please try again later.",
             },
+            "request_id": _request_id(),
         },
     )
 
@@ -102,13 +123,32 @@ async def validation_exception_handler(
     _request: Request, exc: Exception
 ) -> JSONResponse:
     """Handle Pydantic / FastAPI validation errors."""
+    details: list[str] = []
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            entries = errors(include_input=False)
+        except TypeError:
+            entries = errors()
+        for entry in entries:
+            location = ".".join(str(part) for part in entry.get("loc", ()))
+            message = str(entry.get("msg", "Invalid value"))
+            details.append(f"{location}: {message}" if location else message)
+
     return JSONResponse(
         status_code=422,
         content={
             "success": False,
             "error": {
                 "code": "VALIDATION_ERROR",
-                "message": str(exc),
+                "message": "; ".join(details) or "Request validation failed",
             },
+            "request_id": _request_id(),
         },
     )
+
+
+def _request_id() -> str:
+    from app.utils.logger import get_request_id
+
+    return get_request_id()

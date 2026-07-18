@@ -1,141 +1,177 @@
-"""
-Pydantic v2 request models for all API endpoints.
-
-Every incoming request body is validated against these schemas
-before reaching the business logic.
-"""
+"""Strict Pydantic v2 request contracts for Agent-facing endpoints."""
 
 from __future__ import annotations
 
+import json
 from enum import Enum
-from typing import Any, Optional
+from typing import Annotated, Any
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
-# ── Chat Endpoints ──────────────────────────────────────────────────────────
+MAX_CHAT_MESSAGE_CHARS = 32_000
+MAX_CONTEXT_JSON_BYTES = 256 * 1024
+MAX_EXTRACT_TEXT_CHARS = 32_000
 
-class LLMConfig(BaseModel):
-    """LLM configuration passed from Java backend."""
 
-    api_key: str = Field(
-        ...,
-        min_length=1,
-        description="API key for the LLM provider",
+class StrictRequestModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        populate_by_name=True,
     )
-    model: str = Field(
-        ...,
-        min_length=1,
-        description="Model name to use",
-    )
-    base_url: Optional[str] = Field(
-        default=None,
-        description="Custom API base URL (for DashScope, Doubao, etc.)",
-    )
-    timeout_seconds: Optional[int] = Field(
-        default=None,
-        ge=1,
-        le=1800,
-        description=(
-            "Provider read timeout in seconds. Long-running workloads such as "
-            "chapter analysis must supply this explicitly."
-        ),
-    )
+
+
+class LLMConfig(StrictRequestModel):
+    """Allowlisted OpenAI-compatible model configuration from the Java service."""
+
+    api_key: str = Field(..., min_length=1, max_length=8192, repr=False)
+    model: str = Field(..., min_length=1, max_length=128)
+    base_url: str | None = Field(default=None, min_length=8, max_length=2048)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=1800)
+
+    @field_validator("api_key", "model")
+    @classmethod
+    def reject_blank_values(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value.strip()
 
 
 class ChatMode(str, Enum):
-    """Explicit chat workflow selected by the Java transport layer."""
-
     CHAT = "chat"
     CONTEXT_ANALYSIS = "context_analysis"
 
 
-class ChatRequest(BaseModel):
-    """Request body for ``POST /api/v1/chat/invoke`` and ``/stream``."""
+class ChatRequest(StrictRequestModel):
+    """Request body for synchronous and streaming chat."""
 
-    message: str = Field(
-        ...,
+    message: str = Field(..., min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
+    mode: ChatMode = ChatMode.CHAT
+    context_data: Any | None = None
+    style: str = Field(default="professional", pattern=r"^(professional|casual)$")
+    user_id: str | None = Field(default=None, min_length=1, max_length=128)
+    thread_id: str | None = Field(
+        default=None,
         min_length=1,
-        max_length=100000,
-        description="User message to send to the agent",
-    )
-    mode: ChatMode = Field(
-        default=ChatMode.CHAT,
-        description="Python-owned prompt workflow to execute",
-    )
-    context_data: Optional[Any] = Field(
-        default=None,
-        description="Structured business data for context_analysis mode",
-    )
-    style: str = Field(
-        default="professional",
-        pattern=r"^(professional|casual)$",
-        description="Response style: 'professional' or 'casual'",
-    )
-    user_id: Optional[str] = Field(
-        default=None,
         max_length=128,
-        description="Optional user identifier for tracking",
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$",
+        validation_alias=AliasChoices("thread_id", "session_id"),
+        description=(
+            "Conversation identifier used by the checkpointer; distinct from user_id"
+        ),
     )
-    business_tag: Optional[str] = Field(
-        default=None,
-        max_length=256,
-        description="Optional business context tag injected into the system prompt",
-    )
-    max_iterations: Optional[int] = Field(
-        default=None,
-        ge=1,
-        le=20,
-        description="Override default max agent iterations for this request",
-    )
-    llm_config: Optional[LLMConfig] = Field(
-        default=None,
-        description="LLM configuration passed from Java backend. If provided, overrides env settings.",
-    )
+    business_tag: str | None = Field(default=None, max_length=128)
+    max_iterations: int | None = Field(default=None, ge=1, le=20)
+    llm_config: LLMConfig | None = None
+
+    @field_validator("message")
+    @classmethod
+    def reject_blank_message(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("message must not be blank")
+        return normalized
+
+    @field_validator("business_tag")
+    @classmethod
+    def validate_business_tag(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if any(character in value for character in ("\r", "\n", "\x00")):
+            raise ValueError("business_tag must be a single-line label")
+        return value
 
     @model_validator(mode="after")
     def validate_mode_payload(self) -> "ChatRequest":
         if self.mode == ChatMode.CONTEXT_ANALYSIS and self.context_data is None:
             raise ValueError("context_data is required for context_analysis mode")
+        if self.context_data is not None:
+            try:
+                encoded = json.dumps(
+                    self.context_data,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            except (TypeError, ValueError) as exc:
+                raise ValueError("context_data must be JSON serializable") from exc
+            if len(encoded) > MAX_CONTEXT_JSON_BYTES:
+                raise ValueError(
+                    f"context_data exceeds {MAX_CONTEXT_JSON_BYTES} encoded bytes"
+                )
         return self
 
 
-class SmartQuestionHistoryItem(BaseModel):
+class DeleteChatThreadRequest(StrictRequestModel):
+    """Trusted Java request to delete durable short-term memory."""
+
+    user_id: str = Field(..., min_length=1, max_length=128)
+    thread_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$",
+        validation_alias=AliasChoices("thread_id", "session_id"),
+    )
+
+
+class SmartQuestionHistoryItem(StrictRequestModel):
     """One conversation item transported from the Java history store."""
 
-    content: str = Field(..., min_length=1, max_length=100000)
-    role: Optional[str] = Field(default=None, pattern=r"^(user|assistant)$")
-    is_user: Optional[bool] = Field(
+    content: str = Field(..., min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
+    role: str | None = Field(default=None, pattern=r"^(user|assistant)$")
+    is_user: bool | None = Field(
         default=None,
         validation_alias=AliasChoices("is_user", "isUser"),
     )
-    message_type: Optional[str] = Field(
+    message_type: str | None = Field(
         default=None,
+        pattern=r"^(user|assistant)$",
         validation_alias=AliasChoices("message_type", "messageType"),
     )
 
+    @model_validator(mode="after")
+    def require_unambiguous_role(self) -> "SmartQuestionHistoryItem":
+        candidates = []
+        if self.role is not None:
+            candidates.append(self.role)
+        if self.is_user is not None:
+            candidates.append("user" if self.is_user else "assistant")
+        if self.message_type is not None:
+            candidates.append(self.message_type)
+        if not candidates:
+            raise ValueError("one role discriminator is required")
+        if len(set(candidates)) > 1:
+            raise ValueError("role discriminators must agree")
+        return self
+
     def resolved_role(self) -> str:
-        if self.role in ("user", "assistant"):
+        if self.role is not None:
             return self.role
         if self.is_user is not None:
             return "user" if self.is_user else "assistant"
-        return "user" if self.message_type == "user" else "assistant"
+        return self.message_type or "user"
 
 
-class SmartQuestionsRequest(BaseModel):
-    """Structured input for the Python-owned smart-question prompt chain."""
-
+class SmartQuestionsRequest(StrictRequestModel):
     chat_history: list[SmartQuestionHistoryItem] = Field(
         ...,
         min_length=1,
         max_length=100,
     )
-    user_id: Optional[str] = Field(default=None, max_length=128)
-    llm_config: Optional[LLMConfig] = None
+    user_id: str | None = Field(default=None, max_length=128)
+    llm_config: LLMConfig | None = None
 
 
 class SmartQuestionsOutput(BaseModel):
-    """Strict structured output produced by the smart-question chain."""
+    model_config = ConfigDict(extra="forbid")
 
     questions: list[str] = Field(..., min_length=3, max_length=3)
 
@@ -145,36 +181,56 @@ class SmartQuestionsOutput(BaseModel):
         normalized = [question.strip() for question in questions]
         if any(not question for question in normalized):
             raise ValueError("questions must not be blank")
+        if any(len(question) > 256 for question in normalized):
+            raise ValueError("questions must not exceed 256 characters")
         if len({question.casefold() for question in normalized}) != len(normalized):
             raise ValueError("questions must be unique")
         return normalized
 
 
-# ── Extract Endpoint ────────────────────────────────────────────────────────
+class ExtractionSchemaName(str, Enum):
+    GENERAL = "general"
+    PERSON = "person"
+    EVENT = "event"
 
-class ExtractRequest(BaseModel):
-    """Request body for ``POST /api/v1/extract``."""
 
-    text: str = Field(
-        ...,
-        min_length=1,
-        max_length=50000,
-        description="Source text to extract structured information from",
-    )
-    schema_name: str = Field(
-        default="general",
-        description="Predefined extraction schema name (e.g. 'general', 'person', 'event')",
-    )
-    strategy: str = Field(
-        default="tool",
-        pattern=r"^(tool|provider)$",
-        description=(
-            "Structured output strategy: "
-            "'tool' = ToolStrategy (agent tool-calling), "
-            "'provider' = ProviderStrategy (LLM native structured output)"
-        ),
-    )
-    custom_fields: Optional[list[str]] = Field(
+class ExtractionStrategy(str, Enum):
+    TOOL = "tool"
+    PROVIDER = "provider"
+
+
+CustomFieldName = Annotated[
+    str,
+    Field(min_length=1, max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$"),
+]
+
+
+class ExtractRequest(StrictRequestModel):
+    text: str = Field(..., min_length=1, max_length=MAX_EXTRACT_TEXT_CHARS)
+    schema_name: ExtractionSchemaName = ExtractionSchemaName.GENERAL
+    strategy: ExtractionStrategy = ExtractionStrategy.TOOL
+    custom_fields: list[CustomFieldName] | None = Field(
         default=None,
-        description="Custom field names to extract (overrides schema_name)",
+        min_length=1,
+        max_length=20,
     )
+
+    @field_validator("text")
+    @classmethod
+    def reject_blank_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("text must not be blank")
+        return normalized
+
+    @field_validator("custom_fields")
+    @classmethod
+    def unique_custom_fields(
+        cls,
+        fields: list[str] | None,
+    ) -> list[str] | None:
+        if fields is None:
+            return None
+        if len(set(fields)) != len(fields):
+            raise ValueError("custom_fields must be unique")
+        return fields

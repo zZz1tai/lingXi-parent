@@ -1,173 +1,118 @@
-"""
-Agent construction module.
-
-Encapsulates the ``create_react_agent`` API from LangGraph to build
-reusable, configurable search agents with custom state, dynamic prompts,
-and structured output support.
-"""
+"""LangChain v1 Agent factories for chat and structured extraction."""
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, Sequence, Type
+from collections.abc import Callable, Sequence
+from typing import Any, Literal
 
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ProviderStrategy, ToolStrategy
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage
+from langchain_core.stores import BaseStore
 from langchain_core.tools import BaseTool
-from langgraph.graph.message import add_messages
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.managed import RemainingSteps
-from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
-from typing_extensions import Annotated, TypedDict
 
-from app.agents.prompts import get_system_prompt
+from app.agents.middleware import build_agent_middleware
+from app.agents.state import AgentContext, RetailAgentState
 from app.agents.tools.web_search import get_default_tools
 from app.config.settings import settings
 from app.utils.logger import logger
 
 
-# ── Custom State Schema ─────────────────────────────────────────────────────
+# Compatibility import for application code that previously used
+# ``builder.AgentState``.  The implementation is now the v1 schema extending
+# ``langchain.agents.AgentState``.
+AgentState = RetailAgentState
 
-class AgentState(TypedDict):
-    """Extended agent state with custom fields.
-
-    Compatible with LangGraph 0.6+ ``create_react_agent`` requirements.
-    Includes the standard ``messages`` channel and ``remaining_steps``
-    managed field, plus application-specific custom fields.
-    """
-
-    # Standard message channel — accumulates all messages via add_messages reducer
-    messages: Annotated[list[BaseMessage], add_messages]
-
-    # LangGraph-managed recursion budget.  This must retain the
-    # ``RemainingSteps`` annotation so the runtime decrements it after every
-    # graph step; a plain ``int`` silently disables that managed behaviour.
-    remaining_steps: RemainingSteps
-
-    # Custom fields — carried as metadata through the graph
-    style: str                  # "professional" | "casual"
-    user_id: str                # Caller-supplied user identifier (may be empty)
-    business_tag: str           # Business context tag (may be empty)
-
-
-# ── Agent Builder ───────────────────────────────────────────────────────────
 
 def build_search_agent(
-    model: Optional[BaseChatModel] = None,
-    tools: Optional[Sequence[BaseTool]] = None,
-    state_schema: Optional[Type] = None,
-    response_format: Optional[Type[BaseModel]] = None,
-    prompt_fn: Optional[Callable] = None,
+    model: BaseChatModel | None = None,
+    tools: Sequence[BaseTool | Callable[..., Any] | dict[str, Any]] | None = None,
+    *,
+    state_schema: type[RetailAgentState] = RetailAgentState,
+    context_schema: type[AgentContext] = AgentContext,
+    response_format: Any | None = None,
+    checkpointer: BaseCheckpointSaver | bool | None = None,
+    store: BaseStore | None = None,
+    middleware: Sequence[Any] | None = None,
 ) -> CompiledStateGraph:
-    """Build a ReAct agent with web search capabilities.
+    """Compile the shared search Agent with v1 middleware and memory."""
 
-    This is the central factory for creating agent instances. It wraps
-    LangGraph's ``create_react_agent`` with sensible defaults and
-    application-specific configuration.
-
-    Args:
-        model: LLM instance. If ``None``, the default model from
-            ``get_llm()`` is used.
-        tools: Tool list. If ``None``, the default web search tool set
-            is used.
-        state_schema: Custom state type. Defaults to ``AgentState``.
-        response_format: Pydantic model for structured output. When
-            provided, the agent will produce responses conforming to
-            this schema via tool-calling strategy.
-        prompt_fn: Callable that generates the system prompt from state.
-            Defaults to the ``get_system_prompt`` dynamic prompt.
-
-    Returns:
-        A compiled LangGraph ``CompiledStateGraph`` ready for invocation.
-    """
-    # Resolve defaults
     if model is None:
         from app.api.dependencies import get_llm
-        model = get_llm()
 
-    if tools is None:
-        tools = get_default_tools()
+        model = get_llm(profile="agent-default")
 
-    if state_schema is None:
-        state_schema = AgentState
-
-    if prompt_fn is None:
-        prompt_fn = get_system_prompt
-
-    # Build agent kwargs
-    agent_kwargs: dict[str, Any] = {
-        "model": model,
-        "tools": tools,
-        "state_schema": state_schema,
-        "prompt": prompt_fn,
-    }
-
-    # Add structured output if requested
-    if response_format is not None:
-        agent_kwargs["response_format"] = response_format
+    resolved_tools = list(get_default_tools() if tools is None else tools)
+    resolved_middleware = list(build_agent_middleware(model))
+    if middleware:
+        resolved_middleware.extend(middleware)
 
     logger.info(
-        "Building search agent | model=%s | tools=%d | structured=%s",
-        getattr(model, "model_name", "unknown"),
-        len(tools),
+        "Building v1 search agent | model=%s | tools=%d | structured=%s | memory=%s",
+        getattr(model, "model_name", getattr(model, "model", "unknown")),
+        len(resolved_tools),
         response_format is not None,
+        checkpointer is not None,
     )
 
-    agent = create_react_agent(**agent_kwargs)
-    return agent
+    return create_agent(
+        model=model,
+        tools=resolved_tools,
+        middleware=resolved_middleware,
+        response_format=response_format,
+        state_schema=state_schema,
+        context_schema=context_schema,
+        checkpointer=checkpointer,
+        store=store,
+        name="lingxi-search-agent",
+    )
 
 
 def build_extraction_agent(
     model: BaseChatModel,
-    response_schema: Type[BaseModel],
-    system_prompt: str = "Extract structured information from the provided text accurately and completely.",
+    response_schema: type[BaseModel],
+    *,
+    strategy: Literal["tool", "provider"] = "tool",
+    system_prompt: str = (
+        "Extract structured information from the provided text accurately and completely."
+    ),
 ) -> CompiledStateGraph:
-    """Build a lightweight agent specialized for structured extraction.
+    """Compile an extraction Agent with an explicit structured-output strategy."""
 
-    Unlike the full search agent, this agent has no tools — it relies
-    purely on the LLM's structured output capability.
-
-    Args:
-        model: LLM instance with structured output support.
-        response_schema: Pydantic model defining the extraction schema.
-        system_prompt: System prompt for the extraction task.
-
-    Returns:
-        A compiled LangGraph agent for extraction.
-    """
-    from langchain_core.messages import SystemMessage
-
-    agent = create_react_agent(
-        model=model,
-        tools=[],
-        prompt=SystemMessage(content=system_prompt),
-        response_format=response_schema,
-    )
+    if strategy == "tool":
+        response_format: Any = ToolStrategy(
+            response_schema,
+            handle_errors=(
+                "The structured output did not match the required schema. "
+                "Correct every validation error and try again."
+            ),
+        )
+    elif strategy == "provider":
+        response_format = ProviderStrategy(response_schema, strict=True)
+    else:  # defensive: the public request schema already validates this
+        raise ValueError(f"Unsupported extraction strategy: {strategy}")
 
     logger.info(
-        "Building extraction agent | model=%s | schema=%s",
-        getattr(model, "model_name", "unknown"),
+        "Building extraction agent | model=%s | schema=%s | strategy=%s",
+        getattr(model, "model_name", getattr(model, "model", "unknown")),
         response_schema.__name__,
+        strategy,
     )
 
-    return agent
+    return create_agent(
+        model=model,
+        tools=[],
+        system_prompt=system_prompt,
+        response_format=response_format,
+        name=f"lingxi-extraction-{strategy}",
+    )
 
 
-# ── Convenience: Build with max_iterations config ───────────────────────────
+def get_recursion_limit(max_iterations: int | None = None) -> int:
+    """Translate the public iteration budget to LangGraph graph steps."""
 
-def get_recursion_limit(max_iterations: Optional[int] = None) -> int:
-    """Calculate the LangGraph recursion limit from max_iterations.
-
-    Each agent iteration consists of ~2 graph steps (agent node + tool
-    node), plus a final response step. We multiply by 2 and add a small
-    buffer.
-
-    Args:
-        max_iterations: Desired max iterations. Falls back to the
-            global setting if ``None``.
-
-    Returns:
-        The recursion limit to pass in the runnable config.
-    """
     iterations = max_iterations or settings.max_iterations
-    return iterations * 2 + 1
+    return iterations * 2 + 3

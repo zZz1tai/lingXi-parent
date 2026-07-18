@@ -10,23 +10,6 @@ public interface IQwenService {
     /**
      * 带会话ID的聊天，会保存对话历史
      * @param sessionId 会话唯一标识
-     * @param userMessage 用户消息
-     * @return 大模型的回复
-     */
-    String chat(String sessionId, String userMessage);
-
-
-    /**
-     * 带会话ID的聊天，会保存对话历史
-     * @param sessionId 会话唯一标识
-     * @param userMessage 用户消息
-     * @return 大模型的回复
-     */
-    String chatWithContext(String sessionId, String userMessage, Object contextData);
-
-    /**
-     * 带会话ID的聊天，会保存对话历史
-     * @param sessionId 会话唯一标识
      * @param userId 用户唯一标识
      * @param userName 用户名称
      * @param userMessage 用户消息
@@ -83,4 +66,11 @@ public interface IQwenService {
      * @return 生成的智能快捷提问列表
      */
     List<String> generateSmartQuestions(String sessionId, String userId, String userName, List<java.util.Map<String, Object>> chatHistory);
+
+    /**
+     * 清理指定用户会话在 Python Agent 中保存的 checkpoint 记忆。
+     * @param sessionId 会话唯一标识
+     * @param userId 用户唯一标识
+     */
+    void clearConversationMemory(String sessionId, String userId);
 }

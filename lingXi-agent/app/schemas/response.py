@@ -49,12 +49,23 @@ class ChatData(BaseModel):
     """Payload for chat responses."""
 
     response: str = Field(..., description="Agent's final answer")
-    tool_calls: list[dict[str, Any]] = Field(
+    tool_calls: list["ToolCallRecord"] = Field(
         default_factory=list,
         description="List of tool invocations made during the agent run",
     )
     iterations: int = Field(default=0, description="Number of agent loop iterations")
     request_id: str = Field(default="", description="Request trace ID")
+    thread_id: str = Field(default="", description="Conversation checkpoint ID")
+
+
+class ToolCallRecord(BaseModel):
+    """Normalized completed tool invocation returned to API clients."""
+
+    tool: str = "unknown"
+    tool_call_id: str = ""
+    output: str = ""
+    artifact: Any | None = None
+    status: str = "success"
 
 
 class ChatResponse(BaseResponse):
@@ -118,7 +129,16 @@ class ErrorResponse(BaseModel):
 class StreamEvent(BaseModel):
     """Schema for a single SSE event payload."""
 
-    type: Literal["token", "tool_start", "tool_end", "done", "error"] = Field(
+    type: Literal[
+        "token",
+        "update",
+        "custom",
+        "heartbeat",
+        "tool_start",
+        "tool_end",
+        "done",
+        "error",
+    ] = Field(
         ...,
         description="Event type: token / tool_start / tool_end / done / error",
     )
@@ -126,4 +146,10 @@ class StreamEvent(BaseModel):
     tool: Optional[str] = Field(default=None, description="Tool name (for tool_start/tool_end)")
     tool_input: Optional[dict[str, Any]] = Field(default=None, description="Tool input params")
     tool_output: Optional[str] = Field(default=None, description="Tool output (for tool_end)")
+    data: Any | None = Field(default=None, description="Structured update/custom payload")
+    content_blocks: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Normalized LangChain v1 content blocks",
+    )
     request_id: Optional[str] = Field(default=None, description="Request trace ID")
+    thread_id: Optional[str] = Field(default=None, description="Conversation checkpoint ID")

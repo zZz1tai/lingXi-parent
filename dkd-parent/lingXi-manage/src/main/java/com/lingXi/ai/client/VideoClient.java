@@ -8,15 +8,12 @@ import com.lingXi.ai.config.VideoConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * HTTP client for calling Python Agent video generation endpoints.
@@ -183,8 +180,9 @@ public class VideoClient {
             return parseImageResponse(response);
 
         } catch (Exception e) {
-            log.error("Failed to generate image: {}", e.getMessage(), e);
-            return new ImageResult(false, null, e.getMessage(), 503,
+            log.error("Failed to generate image, errorType={}",
+                    e.getClass().getSimpleName());
+            return new ImageResult(false, null, "Python Agent image request failed", 503,
                     "AGENT_IMAGE_TRANSPORT_ERROR", true);
         }
     }
@@ -215,6 +213,7 @@ public class VideoClient {
      * @param imageUrl       Public URL of the keyframe image
      * @param resolution     Video resolution (e.g., "720P")
      * @param durationMs     Duration in milliseconds
+     * @param idempotencyKey Stable local task key forwarded to the provider
      * @return VideoSubmitResult with task ID or error
      */
     public VideoSubmitResult submitVideo(
@@ -224,7 +223,8 @@ public class VideoClient {
             String negativePrompt,
             String imageUrl,
             String resolution,
-            int durationMs) {
+            int durationMs,
+            String idempotencyKey) {
 
         try {
             ObjectNode body = objectMapper.createObjectNode();
@@ -238,6 +238,7 @@ public class VideoClient {
             body.put("image_url", imageUrl);
             body.put("resolution", resolution);
             body.put("duration_ms", durationMs);
+            body.put("idempotency_key", idempotencyKey);
 
             String url = config.getBaseUrl() + config.getSubmitVideoUrl();
             int timeout = config.getVideoReadTimeout();
@@ -246,9 +247,10 @@ public class VideoClient {
             return parseVideoSubmitResponse(response);
 
         } catch (Exception e) {
-            log.error("Failed to submit video task: {}", e.getMessage(), e);
+            log.error("Failed to submit video task, errorType={}",
+                    e.getClass().getSimpleName());
             return new VideoSubmitResult(false, null,
-                    "WANX_SUBMISSION_UNCERTAIN: Agent transport error: " + e.getMessage(),
+                    "WANX_SUBMISSION_UNCERTAIN: Python Agent transport failed",
                     503, "WANX_SUBMISSION_UNCERTAIN", false, true, null);
         }
     }
@@ -295,8 +297,10 @@ public class VideoClient {
             return parseVideoQueryResponse(response);
 
         } catch (Exception e) {
-            log.error("Failed to query video task: {}", e.getMessage(), e);
-            return new VideoQueryResult(false, null, null, e.getMessage(), 503,
+            log.error("Failed to query video task, errorType={}",
+                    e.getClass().getSimpleName());
+            return new VideoQueryResult(false, null, null,
+                    "Python Agent video query failed", 503,
                     "AGENT_VIDEO_QUERY_TRANSPORT_ERROR", true);
         }
     }
@@ -335,6 +339,7 @@ public class VideoClient {
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            applyServiceAuth(conn);
             conn.setConnectTimeout(config.getConnectTimeout());
             conn.setReadTimeout(readTimeout);
             conn.setDoOutput(true);
@@ -346,32 +351,41 @@ public class VideoClient {
 
             int statusCode = conn.getResponseCode();
 
-            // Read response
-            String responseBody;
-            try (BufferedReader br = new BufferedReader(
-                    new InputStreamReader(
-                            statusCode >= 200 && statusCode < 300
-                                    ? conn.getInputStream()
-                                    : conn.getErrorStream(),
-                            StandardCharsets.UTF_8))) {
-                responseBody = br.lines().collect(Collectors.joining());
-            }
+            String responseBody = AgentResponseUtil.readResponseBody(conn, statusCode);
 
             if (statusCode < 200 || statusCode >= 300) {
-                log.error("HTTP error | status={} | url={} | body={}", statusCode, urlStr, responseBody);
-                ObjectNode errorResponse = objectMapper.createObjectNode();
-                errorResponse.put("success", false);
-                errorResponse.put("error", "HTTP " + statusCode + ": " + responseBody);
-                errorResponse.put("status_code", statusCode);
-                return errorResponse;
+                log.error("Python Agent media HTTP error | status={}", statusCode);
+                return AgentResponseUtil.normalizeError(
+                        objectMapper,
+                        responseBody,
+                        statusCode,
+                        "AGENT_HTTP_ERROR",
+                        "Python Agent request failed");
             }
 
-            return objectMapper.readTree(responseBody);
+            JsonNode response = AgentResponseUtil.parseSuccess(objectMapper, responseBody);
+            if (!response.path("success").asBoolean(false)) {
+                return AgentResponseUtil.normalizeError(
+                        objectMapper,
+                        responseBody,
+                        statusCode,
+                        "AGENT_REQUEST_FAILED",
+                        "Python Agent request failed");
+            }
+            return response;
 
         } finally {
             if (conn != null) {
                 conn.disconnect();
             }
         }
+    }
+
+    private void applyServiceAuth(HttpURLConnection conn) {
+        String serviceApiKey = agentConfig.getServiceApiKey();
+        if (serviceApiKey == null || serviceApiKey.trim().isEmpty()) {
+            throw new IllegalStateException("agent.service-api-key is not configured");
+        }
+        conn.setRequestProperty("X-Agent-Service-Key", serviceApiKey);
     }
 }

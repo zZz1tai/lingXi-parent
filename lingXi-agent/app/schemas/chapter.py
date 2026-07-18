@@ -11,8 +11,70 @@ from typing import Annotated, Any, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from app.schemas.request import LLMConfig
+
 
 NonBlankText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+ShortText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, max_length=512),
+]
+CharacterText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, max_length=8000),
+]
+
+
+class ChapterProjectCharacter(BaseModel):
+    """Bounded project identity transported from Java for cross-chapter reuse."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    character_code: ShortText = Field(default="", alias="characterCode")
+    name: ShortText = ""
+    aliases: list[ShortText] = Field(default_factory=list, max_length=64)
+    gender: ShortText = ""
+    age_range: ShortText = Field(default="", alias="ageRange")
+    appearance: CharacterText = ""
+    speaking_style: CharacterText = Field(default="", alias="speakingStyle")
+    visual_prompt_base: CharacterText = Field(default="", alias="visualPromptBase")
+
+
+class AnalyzeChapterRequest(BaseModel):
+    """Request body for ``POST /api/v1/video/analyze-chapter``."""
+
+    chapter_title: str = Field(default="", max_length=512)
+    source_text: str = Field(..., min_length=1, max_length=100000)
+    project_characters: Optional[list[ChapterProjectCharacter]] = Field(
+        default=None,
+        max_length=500,
+    )
+    video_model: str = Field(..., min_length=1, max_length=256)
+    llm_config: Optional[LLMConfig] = None
+
+    @model_validator(mode="after")
+    def validate_runtime_config_bounds(self) -> "AnalyzeChapterRequest":
+        if self.llm_config is None:
+            return self
+        if len(self.llm_config.api_key) > 8192:
+            raise ValueError("llm_config.api_key exceeds the service limit")
+        if len(self.llm_config.model) > 256:
+            raise ValueError("llm_config.model exceeds the service limit")
+        if self.llm_config.base_url and len(self.llm_config.base_url) > 4096:
+            raise ValueError("llm_config.base_url exceeds the service limit")
+        return self
+
+
+class AnalyzeChapterResponse(BaseModel):
+    """Slim production response for chapter analysis."""
+
+    success: bool
+    story_bible: Optional[dict[str, Any]] = None
+    repair_count: int = 0
+    request_id: str = ""
+    error: Optional[str] = None
+    error_code: Optional[str] = None
+    retryable: bool = False
 
 
 class ChapterContractModel(BaseModel):
@@ -178,7 +240,10 @@ def validate_story_bible_structure(document: Any) -> dict[str, Any]:
 
 
 __all__ = [
+    "AnalyzeChapterRequest",
+    "AnalyzeChapterResponse",
     "ChapterDialogue",
+    "ChapterProjectCharacter",
     "ChapterStoryBible",
     "validate_story_bible_structure",
 ]

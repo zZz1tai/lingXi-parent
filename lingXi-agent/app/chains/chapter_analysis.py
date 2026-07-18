@@ -15,6 +15,9 @@ from app.schemas.chapter import validate_story_bible_structure
 from app.services.chapter_analysis import SourceUnit, validate_document
 
 
+MAX_CHAPTER_OUTPUT_CHARS = 1_000_000
+
+
 PRIMARY_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
@@ -54,6 +57,10 @@ class ChapterAnalysisChainResult:
 
 class ChapterAnalysisOutputError(ValueError):
     """The model responded, but both initial and repaired output were invalid."""
+
+
+class ChapterAnalysisOutputTooLargeError(ValueError):
+    """The provider stream exceeded the configured in-memory output boundary."""
 
 
 class _ContractValidationError(ValueError):
@@ -135,8 +142,14 @@ class ChapterAnalysisChain:
         stream alive indefinitely therefore cannot exceed the stage budget.
         """
         chunks: list[str] = []
+        total_chars = 0
         async with asyncio.timeout(timeout_seconds):
             async for chunk in chain.astream(input_value, config=config):
+                total_chars += len(chunk)
+                if total_chars > MAX_CHAPTER_OUTPUT_CHARS:
+                    raise ChapterAnalysisOutputTooLargeError(
+                        "章节分析模型输出超过服务端限制"
+                    )
                 chunks.append(chunk)
         return "".join(chunks)
 
@@ -170,5 +183,6 @@ __all__ = [
     "ChapterAnalysisChain",
     "ChapterAnalysisChainResult",
     "ChapterAnalysisOutputError",
+    "ChapterAnalysisOutputTooLargeError",
     "build_chapter_analysis_chain",
 ]

@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import sys
 import unittest
+from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
-from typing import get_type_hints
 from unittest.mock import patch
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.managed import RemainingSteps
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 # The developer workstation intentionally has no project environment yet.
@@ -30,11 +29,16 @@ except ModuleNotFoundError:
     sys.modules["pydantic_settings"] = pydantic_settings_module
 
 from app.agents import builder
-from app.agents.prompts import CASUAL_PROMPT, get_system_prompt
+from app.agents.prompts import CASUAL_PROMPT, compose_system_prompt, get_system_prompt
+from app.agents.state import AgentContext, RetailAgentState
 from app.api import dependencies
 from app.api.v1.chat import _build_agent_input
 from app.schemas.request import ChatRequest, LLMConfig
-from app.utils.exceptions import ModelNotAvailableError
+from app.utils.exceptions import (
+    ConfigurationError,
+    InputValidationError,
+    ModelNotAvailableError,
+)
 
 
 class _FakeChatOpenAI:
@@ -52,11 +56,14 @@ class _FailingChatOpenAI:
         raise RuntimeError(f"provider echoed credential: {self.secret}")
 
 
+_SHARED_HTTP_CLIENT = object()
+
+
 def _settings(**overrides):
     values = {
         "openai_api_key": "env-secret-value",
         "model_name": "env-model",
-        "openai_api_base": "https://env.invalid/v1",
+        "openai_api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "temperature": 0.7,
         "llm_provider": "openai-compatible",
         "max_iterations": 5,
@@ -65,11 +72,22 @@ def _settings(**overrides):
     return SimpleNamespace(**values)
 
 
-def _chat_openai_module(chat_model_type):
-    """Provide the lazy integration import without requiring its package."""
-    module = ModuleType("langchain_openai")
-    module.ChatOpenAI = chat_model_type
-    return patch.dict(sys.modules, {"langchain_openai": module})
+@contextmanager
+def _chat_model_factory(chat_model_type):
+    """Replace init_chat_model without invoking a provider integration."""
+
+    def factory(model, **kwargs):
+        return chat_model_type(model=model, **kwargs)
+
+    with (
+        patch.object(dependencies, "init_chat_model", side_effect=factory) as constructor,
+        patch.object(
+            dependencies,
+            "get_http_client",
+            return_value=_SHARED_HTTP_CLIENT,
+        ),
+    ):
+        yield constructor
 
 
 class LLMFactoryTests(unittest.TestCase):
@@ -82,15 +100,16 @@ class LLMFactoryTests(unittest.TestCase):
 
     def test_request_config_and_runtime_overrides_are_forwarded_without_key_logging(self) -> None:
         secret = "request-secret-value"
+        model_name = "qwen-compatible-model\nFORGED_LOG_LINE"
         config = LLMConfig(
             api_key=secret,
-            model="qwen-compatible-model",
-            base_url="https://provider.invalid/v1",
+            model=model_name,
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
 
         with (
             patch.object(dependencies, "settings", _settings()),
-            _chat_openai_module(_FakeChatOpenAI),
+            _chat_model_factory(_FakeChatOpenAI),
             self.assertLogs(dependencies.logger, level="INFO") as captured,
         ):
             model = dependencies.create_llm(
@@ -103,28 +122,35 @@ class LLMFactoryTests(unittest.TestCase):
             )
 
         self.assertIs(model, _FakeChatOpenAI.created[0])
-        self.assertEqual(model.kwargs["model"], "qwen-compatible-model")
+        self.assertEqual(model.kwargs["model"], model_name)
         self.assertEqual(model.kwargs["api_key"], secret)
-        self.assertEqual(model.kwargs["base_url"], "https://provider.invalid/v1")
+        self.assertEqual(
+            model.kwargs["base_url"],
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+        self.assertEqual(model.kwargs["output_version"], "v1")
+        self.assertIs(model.kwargs["http_async_client"], _SHARED_HTTP_CLIENT)
         self.assertEqual(model.kwargs["timeout"], 300)
         self.assertEqual(model.kwargs["temperature"], 0.1)
         self.assertEqual(model.kwargs["max_retries"], 2)
         self.assertIs(model.kwargs["streaming"], True)
         log_text = "\n".join(captured.output)
         self.assertIn("profile=chapter-analysis", log_text)
+        self.assertIn(f"model_length={len(model_name)}", log_text)
+        self.assertNotIn(model_name, log_text)
         self.assertNotIn(secret, log_text)
 
     def test_request_timeout_is_used_when_runtime_override_is_absent(self) -> None:
         config = LLMConfig(
             api_key="request-secret-value",
             model="qwen-compatible-model",
-            base_url="https://provider.invalid/v1",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             timeout_seconds=417,
         )
 
         with (
             patch.object(dependencies, "settings", _settings()),
-            _chat_openai_module(_FakeChatOpenAI),
+            _chat_model_factory(_FakeChatOpenAI),
         ):
             model = dependencies.create_llm(
                 config,
@@ -135,10 +161,27 @@ class LLMFactoryTests(unittest.TestCase):
         self.assertEqual(model.kwargs["timeout"], 417)
         self.assertIs(model.kwargs["streaming"], True)
 
+    def test_equivalent_request_models_use_the_bounded_cache(self) -> None:
+        config = LLMConfig(
+            api_key="request-secret-value",
+            model="qwen-compatible-model",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+
+        with (
+            patch.object(dependencies, "settings", _settings()),
+            _chat_model_factory(_FakeChatOpenAI) as constructor,
+        ):
+            first = dependencies.create_llm(config, profile="chat-request")
+            second = dependencies.create_llm(config, profile="chat-request")
+
+        self.assertIs(first, second)
+        self.assertEqual(constructor.call_count, 1)
+
     def test_default_environment_model_is_cached_even_with_a_profile_label(self) -> None:
         with (
             patch.object(dependencies, "settings", _settings()),
-            _chat_openai_module(_FakeChatOpenAI),
+            _chat_model_factory(_FakeChatOpenAI),
         ):
             first = dependencies.create_llm(profile="chat")
             second = dependencies.create_llm(profile="chat")
@@ -154,7 +197,7 @@ class LLMFactoryTests(unittest.TestCase):
 
         with (
             patch.object(dependencies, "settings", _settings()),
-            _chat_openai_module(_FailingChatOpenAI),
+            _chat_model_factory(_FailingChatOpenAI),
             self.assertLogs(dependencies.logger, level="ERROR") as captured,
             self.assertRaises(ModelNotAvailableError) as raised,
         ):
@@ -164,42 +207,85 @@ class LLMFactoryTests(unittest.TestCase):
         self.assertNotIn(secret, "\n".join(captured.output))
         self.assertIn("[REDACTED]", str(raised.exception))
 
-
-class AgentStateAndPromptTests(unittest.TestCase):
-    def test_remaining_steps_uses_langgraph_managed_value(self) -> None:
-        annotations = get_type_hints(builder.AgentState, include_extras=True)
-        self.assertEqual(annotations["remaining_steps"], RemainingSteps)
-
-    def test_dynamic_prompt_preserves_existing_messages(self) -> None:
-        human = HumanMessage(content="请分析这个问题")
-        result = get_system_prompt(
-            {
-                "messages": [human],
-                "style": "casual",
-                "business_tag": "库存预警",
-            }
+    def test_request_base_url_rejection_remains_a_validation_error(self) -> None:
+        config = LLMConfig(
+            api_key="request-secret-value",
+            model="qwen-compatible-model",
+            base_url="https://provider.invalid/v1",
         )
 
-        self.assertIsInstance(result[0], SystemMessage)
-        self.assertIn(CASUAL_PROMPT, result[0].content)
-        self.assertIn("库存预警", result[0].content)
-        self.assertEqual(result[1:], [human])
+        with (
+            patch.object(dependencies, "settings", _settings()),
+            patch.object(dependencies, "init_chat_model") as constructor,
+            self.assertRaises(InputValidationError),
+        ):
+            dependencies.create_llm(config, profile="validation-test")
+
+        constructor.assert_not_called()
+
+    def test_model_creation_requires_the_lifespan_http_client(self) -> None:
+        config = LLMConfig(
+            api_key="request-secret-value",
+            model="qwen-compatible-model",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+        with (
+            patch.object(dependencies, "settings", _settings()),
+            patch.object(
+                dependencies,
+                "get_http_client",
+                side_effect=ConfigurationError("Provider HTTP client is not initialized"),
+            ),
+            patch.object(dependencies, "init_chat_model") as constructor,
+            self.assertRaises(ConfigurationError),
+        ):
+            dependencies.create_llm(config, profile="direct-call")
+
+        constructor.assert_not_called()
+
+
+class AgentStateAndPromptTests(unittest.TestCase):
+    def test_state_extends_the_v1_agent_state_contract(self) -> None:
+        self.assertIs(builder.AgentState, RetailAgentState)
+        self.assertIn("messages", RetailAgentState.__annotations__)
+
+    def test_dynamic_prompt_uses_immutable_runtime_context(self) -> None:
+        result = compose_system_prompt(
+            AgentContext(
+                style="casual",
+                business_tag="库存预警",
+            ),
+            search_available=True,
+        )
+
+        self.assertIn(CASUAL_PROMPT, result)
+        self.assertIn("库存预警", result)
+        self.assertNotIn("当前未配置联网搜索工具", result)
 
     def test_builder_passes_the_managed_state_schema_to_langgraph(self) -> None:
         captured = {}
         compiled_graph = object()
 
-        def fake_create_react_agent(**kwargs):
+        def fake_create_agent(**kwargs):
             captured.update(kwargs)
             return compiled_graph
 
         fake_model = SimpleNamespace(model_name="offline-fake")
-        with patch.object(builder, "create_react_agent", fake_create_react_agent):
-            result = builder.build_search_agent(model=fake_model, tools=[])
+        with (
+            patch.object(builder, "create_agent", fake_create_agent),
+            patch.object(builder, "build_agent_middleware", return_value=[get_system_prompt]),
+        ):
+            result = builder.build_search_agent(
+                model=fake_model,
+                tools=[],
+                checkpointer=False,
+            )
 
         self.assertIs(result, compiled_graph)
-        self.assertIs(captured["state_schema"], builder.AgentState)
-        self.assertIs(captured["prompt"], get_system_prompt)
+        self.assertIs(captured["state_schema"], RetailAgentState)
+        self.assertIs(captured["context_schema"], AgentContext)
+        self.assertEqual(captured["middleware"], [get_system_prompt])
+        self.assertIs(captured["checkpointer"], False)
         self.assertEqual(captured["tools"], [])
 
     def test_java_chat_input_contract_does_not_supply_managed_state(self) -> None:
@@ -216,11 +302,10 @@ class AgentStateAndPromptTests(unittest.TestCase):
         self.assertNotIn("remaining_steps", payload)
         self.assertEqual(
             set(payload),
-            {"messages", "style", "user_id", "business_tag"},
+            {"messages"},
         )
         self.assertIsInstance(payload["messages"][0], HumanMessage)
         self.assertEqual(payload["messages"][0].content, "测试消息")
-        self.assertEqual(payload["user_id"], "1002")
 
 
 if __name__ == "__main__":

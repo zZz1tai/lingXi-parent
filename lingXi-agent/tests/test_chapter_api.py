@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
-from openai import APITimeoutError
+from fastapi import Response
+from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 
 from app.api.v1 import chapter
 from app.schemas.request import LLMConfig
@@ -43,6 +45,49 @@ class _WallClockTimeoutChain:
         raise TimeoutError("chapter stage wall-clock deadline exceeded")
 
 
+class _ConnectionFailureChain:
+    async def ainvoke(self, *_args, **_kwargs):
+        request = httpx.Request(
+            "POST",
+            "https://provider.invalid/v1/chat/completions",
+        )
+        raise APIConnectionError(request=request)
+
+
+class _RateLimitChain:
+    async def ainvoke(self, *_args, **_kwargs):
+        request = httpx.Request(
+            "POST",
+            "https://provider.invalid/v1/chat/completions",
+        )
+        response = httpx.Response(429, request=request)
+        raise RateLimitError(
+            "provider rate limit",
+            response=response,
+            body=None,
+        )
+
+
+class _ProviderBodyFailureChain:
+    async def ainvoke(self, *_args, **_kwargs):
+        sentinel = "SENTINEL_PROVIDER_BODY_MUST_NOT_BE_LOGGED"
+        request = httpx.Request(
+            "POST",
+            "https://provider.invalid/v1/chat/completions",
+        )
+        response = httpx.Response(
+            500,
+            request=request,
+            headers={"x-provider-debug": sentinel},
+            json={"error": {"message": sentinel}},
+        )
+        raise APIStatusError(
+            "provider returned sensitive diagnostics",
+            response=response,
+            body={"error": {"message": sentinel}},
+        )
+
+
 class _SuccessChain:
     async def ainvoke(self, *_args, **_kwargs):
         return SimpleNamespace(
@@ -63,7 +108,7 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
             llm_config=LLMConfig(
                 api_key="offline-secret",
                 model="offline-model",
-                base_url="https://provider.invalid/v1",
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
                 timeout_seconds=timeout_seconds,
             ),
         )
@@ -72,6 +117,7 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(chapter, "create_llm") as create_llm:
             response = await chapter.analyze_chapter(
                 self._request(timeout_seconds=None),
+                response=Response(),
                 request_id="offline-request",
             )
 
@@ -90,8 +136,10 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
                 return_value=timeout_chain,
             ),
         ):
+            http_response = Response()
             response = await chapter.analyze_chapter(
                 self._request(timeout_seconds=417),
+                response=http_response,
                 request_id="offline-request",
             )
 
@@ -104,6 +152,7 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("CHAPTER_LLM_TIMEOUT", response.error_code)
         self.assertTrue(response.retryable)
         self.assertNotEqual("Request timed out.", response.error)
+        self.assertEqual(504, http_response.status_code)
 
     async def test_nested_httpx_timeout_is_also_retryable(self) -> None:
         with (
@@ -116,6 +165,7 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
         ):
             response = await chapter.analyze_chapter(
                 self._request(timeout_seconds=417),
+                response=Response(),
                 request_id="offline-request",
             )
 
@@ -133,6 +183,7 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
         ):
             response = await chapter.analyze_chapter(
                 self._request(timeout_seconds=417),
+                response=Response(),
                 request_id="offline-request",
             )
 
@@ -148,8 +199,10 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
                 return_value=_SuccessChain(),
             ),
         ):
+            http_response = Response()
             response = await chapter.analyze_chapter(
                 self._request(timeout_seconds=417),
+                response=http_response,
                 request_id="offline-request",
             )
 
@@ -157,6 +210,112 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, response.repair_count)
         self.assertIsNone(response.error_code)
         self.assertFalse(response.retryable)
+        self.assertEqual(200, http_response.status_code)
+        self.assertNotIn("prompt", response.model_dump())
+        self.assertNotIn("source_units", response.model_dump())
+        self.assertNotIn("raw_llm_response", response.model_dump())
+
+    async def test_connection_failure_is_retryable(self) -> None:
+        with (
+            patch.object(chapter, "create_llm", return_value=object()),
+            patch.object(
+                chapter,
+                "build_chapter_analysis_chain",
+                return_value=_ConnectionFailureChain(),
+            ),
+        ):
+            http_response = Response()
+            result = await chapter.analyze_chapter(
+                self._request(timeout_seconds=417),
+                response=http_response,
+                request_id="offline-request",
+            )
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.retryable)
+        self.assertEqual("CHAPTER_LLM_CONNECTION_ERROR", result.error_code)
+        self.assertEqual(503, http_response.status_code)
+
+    async def test_rate_limit_is_retryable_and_uses_429(self) -> None:
+        with (
+            patch.object(chapter, "create_llm", return_value=object()),
+            patch.object(
+                chapter,
+                "build_chapter_analysis_chain",
+                return_value=_RateLimitChain(),
+            ),
+        ):
+            http_response = Response()
+            result = await chapter.analyze_chapter(
+                self._request(timeout_seconds=417),
+                response=http_response,
+                request_id="offline-request",
+            )
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.retryable)
+        self.assertEqual("CHAPTER_LLM_RATE_LIMITED", result.error_code)
+        self.assertEqual(429, http_response.status_code)
+
+    async def test_capacity_wait_queue_is_bounded(self) -> None:
+        semaphore = asyncio.BoundedSemaphore(1)
+        await semaphore.acquire()
+        try:
+            with (
+                patch.object(chapter, "_chapter_slots", semaphore),
+                patch.object(chapter, "CHAPTER_SLOT_WAIT_SECONDS", 0.01),
+                self.assertRaises(chapter._ChapterCapacityError),
+            ):
+                await chapter._invoke_with_capacity(_SuccessChain(), "prompt", [])
+        finally:
+            semaphore.release()
+
+    async def test_chapter_title_is_not_written_to_logs(self) -> None:
+        sentinel = "SENTINEL_CHAPTER_TITLE\nFORGED_LOG_LINE"
+        request = self._request(timeout_seconds=417).model_copy(
+            update={"chapter_title": sentinel}
+        )
+        with (
+            patch.object(chapter, "create_llm", return_value=object()),
+            patch.object(
+                chapter,
+                "build_chapter_analysis_chain",
+                return_value=_SuccessChain(),
+            ),
+            self.assertLogs(chapter.logger, level="INFO") as captured,
+        ):
+            result = await chapter.analyze_chapter(
+                request,
+                response=Response(),
+                request_id="offline-request",
+            )
+
+        self.assertTrue(result.success)
+        logs = "\n".join(captured.output)
+        self.assertIn(f"title_length={len(sentinel)}", logs)
+        self.assertNotIn(sentinel, logs)
+
+    async def test_provider_body_and_headers_are_not_logged(self) -> None:
+        sentinel = "SENTINEL_PROVIDER_BODY_MUST_NOT_BE_LOGGED"
+        with (
+            patch.object(chapter, "create_llm", return_value=object()),
+            patch.object(
+                chapter,
+                "build_chapter_analysis_chain",
+                return_value=_ProviderBodyFailureChain(),
+            ),
+            self.assertLogs(chapter.logger, level="ERROR") as captured,
+        ):
+            result = await chapter.analyze_chapter(
+                self._request(timeout_seconds=417),
+                response=Response(),
+                request_id="offline-request",
+            )
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.retryable)
+        self.assertEqual("CHAPTER_LLM_PROVIDER_UNAVAILABLE", result.error_code)
+        self.assertNotIn(sentinel, "\n".join(captured.output))
 
 
 if __name__ == "__main__":

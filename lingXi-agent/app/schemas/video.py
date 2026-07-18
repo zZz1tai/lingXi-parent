@@ -7,9 +7,27 @@ Handles text-to-image (QwenImage) and image-to-video (WanxVideo) via DashScope.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+
+ApiKeyText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=8192),
+]
+ModelNameText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=256),
+]
+HttpUrlText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=4096),
+]
+IdentifierText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=256),
+]
 
 
 # ── Enums ────────────────────────────────────────────────────────────────────
@@ -28,6 +46,7 @@ class TaskStatus(str, Enum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     CANCELED = "CANCELED"
+    UNKNOWN = "UNKNOWN"
 
 
 # ── Image Generation ─────────────────────────────────────────────────────────
@@ -35,18 +54,16 @@ class TaskStatus(str, Enum):
 class GenerateImageRequest(BaseModel):
     """Request body for POST /api/v1/video/generate-image."""
 
-    api_key: str = Field(
+    api_key: ApiKeyText = Field(
         ...,
         description="DashScope API key",
     )
-    model: str = Field(
+    model: ModelNameText = Field(
         ...,
-        min_length=1,
         description="Image generation model name",
     )
-    base_url: str = Field(
+    base_url: HttpUrlText = Field(
         ...,
-        min_length=1,
         description="DashScope native API base URL",
     )
     asset_type: Optional[str] = Field(
@@ -69,7 +86,7 @@ class GenerateImageRequest(BaseModel):
         default=None,
         description="Project-requested image aspect ratio; Python applies asset rules",
     )
-    reference_image_urls: Optional[list[str]] = Field(
+    reference_image_urls: Optional[list[HttpUrlText]] = Field(
         default=None,
         max_length=5,
         description=(
@@ -117,18 +134,16 @@ class GenerateImageResponse(BaseModel):
 class SubmitVideoRequest(BaseModel):
     """Request body for POST /api/v1/video/submit-video."""
 
-    api_key: str = Field(
+    api_key: ApiKeyText = Field(
         ...,
         description="DashScope API key",
     )
-    model: str = Field(
+    model: ModelNameText = Field(
         ...,
-        min_length=1,
         description="Video generation model name",
     )
-    base_url: str = Field(
+    base_url: HttpUrlText = Field(
         ...,
-        min_length=1,
         description="DashScope API base URL",
     )
     prompt: str = Field(
@@ -148,7 +163,7 @@ class SubmitVideoRequest(BaseModel):
             "limit immediately before submission."
         ),
     )
-    image_url: str = Field(
+    image_url: HttpUrlText = Field(
         ...,
         description="Public URL of the keyframe image",
     )
@@ -166,6 +181,13 @@ class SubmitVideoRequest(BaseModel):
     prompt_extend: bool = Field(
         default=False,
         description="Whether to let the model extend the prompt",
+    )
+    idempotency_key: Optional[IdentifierText] = Field(
+        default=None,
+        description=(
+            "Stable submission key propagated to the provider gateway so an "
+            "ambiguous response can be reconciled without creating a duplicate task"
+        ),
     )
 
 
@@ -214,16 +236,15 @@ class SubmitVideoResponse(BaseModel):
 class QueryVideoRequest(BaseModel):
     """Request body for POST /api/v1/video/query-video."""
 
-    api_key: str = Field(
+    api_key: ApiKeyText = Field(
         ...,
         description="DashScope API key",
     )
-    base_url: str = Field(
+    base_url: HttpUrlText = Field(
         ...,
-        min_length=1,
         description="DashScope API base URL",
     )
-    task_id: str = Field(
+    task_id: IdentifierText = Field(
         ...,
         description="DashScope task ID to query",
     )
@@ -260,3 +281,72 @@ class QueryVideoResponse(BaseModel):
         default=False,
         description="Whether polling may be retried",
     )
+    provider_status: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Original provider status when it is not part of the known status enum",
+    )
+
+
+# ── Provider Response Contracts ─────────────────────────────────────────────
+
+class ProviderContractModel(BaseModel):
+    """Strict-enough provider DTO that ignores harmless additive metadata."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class ProviderImageContent(ProviderContractModel):
+    image: HttpUrlText
+
+
+class ProviderImageMessage(ProviderContractModel):
+    content: list[ProviderImageContent] = Field(min_length=1)
+
+
+class ProviderImageChoice(ProviderContractModel):
+    message: ProviderImageMessage
+
+
+class ProviderImageOutput(ProviderContractModel):
+    choices: list[ProviderImageChoice] = Field(min_length=1)
+
+
+class GenerateImageProviderResponse(ProviderContractModel):
+    output: ProviderImageOutput
+
+    @property
+    def image_url(self) -> str:
+        return self.output.choices[0].message.content[0].image
+
+
+class SubmitVideoProviderOutput(ProviderContractModel):
+    task_id: IdentifierText
+
+
+class SubmitVideoProviderResponse(ProviderContractModel):
+    output: SubmitVideoProviderOutput
+
+
+class QueryVideoProviderResult(ProviderContractModel):
+    url: Optional[HttpUrlText] = None
+
+
+class QueryVideoProviderOutput(ProviderContractModel):
+    task_status: IdentifierText
+    video_url: Optional[HttpUrlText] = None
+    message: str = Field(default="", max_length=4000)
+    results: list[QueryVideoProviderResult] = Field(default_factory=list)
+
+    @property
+    def resolved_video_url(self) -> Optional[str]:
+        if self.video_url:
+            return self.video_url
+        for result in self.results:
+            if result.url:
+                return result.url
+        return None
+
+
+class QueryVideoProviderResponse(ProviderContractModel):
+    output: QueryVideoProviderOutput

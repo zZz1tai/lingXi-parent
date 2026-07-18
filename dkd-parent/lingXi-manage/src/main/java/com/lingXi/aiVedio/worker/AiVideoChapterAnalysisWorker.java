@@ -162,7 +162,8 @@ public class AiVideoChapterAnalysisWorker
         }
         catch (Exception ex)
         {
-            log.error("AI视频章节解析失败，taskId={}, chapterId={}", taskId, chapterId, ex);
+            log.error("AI视频章节解析失败，taskId={}, chapterId={}, errorType={}",
+                    taskId, chapterId, ex.getClass().getSimpleName());
             String message = ex.getMessage() == null ? "章节解析失败" : ex.getMessage();
             updateTaskStatusWithLockRetry(taskId, "FAILED", 100, "CHAPTER_ANALYSIS_FAILED", abbreviate(message));
             chapterMapper.updateAiVideoChapterAnalysisStatus(chapterId, "FAILED", "FAILED", null, 0);

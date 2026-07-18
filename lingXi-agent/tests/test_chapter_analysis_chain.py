@@ -12,6 +12,7 @@ from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 
 from app.chains.chapter_analysis import (
     ChapterAnalysisOutputError,
+    ChapterAnalysisOutputTooLargeError,
     build_chapter_analysis_chain,
 )
 from tests.chapter_fixtures import cloned_story_bible, source_units
@@ -69,7 +70,7 @@ class StreamingOnlyResponseSequence(Runnable[Any, AIMessageChunk]):
         yield AIMessageChunk(content=response[midpoint:])
 
 
-class EndlessStreamingModel(Runnable[Any, AIMessageChunk]):
+class EndlessStreamingModel(Runnable[Any, str]):
     """Continuously emits chunks until the chain's wall-clock deadline cancels it."""
 
     def __init__(self) -> None:
@@ -80,7 +81,7 @@ class EndlessStreamingModel(Runnable[Any, AIMessageChunk]):
         input: Any,
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> AIMessageChunk:
+    ) -> str:
         raise AssertionError("chapter chain must not use invoke")
 
     async def ainvoke(
@@ -88,7 +89,7 @@ class EndlessStreamingModel(Runnable[Any, AIMessageChunk]):
         input: Any,
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> AIMessageChunk:
+    ) -> str:
         raise AssertionError("chapter chain must not use ainvoke")
 
     async def astream(
@@ -96,11 +97,11 @@ class EndlessStreamingModel(Runnable[Any, AIMessageChunk]):
         input: Any,
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[AIMessageChunk]:
+    ) -> AsyncIterator[str]:
         self.stream_calls += 1
         while True:
             await asyncio.sleep(0.005)
-            yield AIMessageChunk(content=" ")
+            yield " "
 
 
 class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
@@ -111,9 +112,10 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
         started = loop.time()
 
         with self.assertRaises(TimeoutError):
-            await chain.ainvoke(
-                "contract",
-                source_units(),
+            await chain._collect_stream(
+                model,
+                {},
+                config={},
                 timeout_seconds=0.05,
             )
 
@@ -179,6 +181,18 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ChapterAnalysisOutputError):
             await chain.ainvoke("contract", source_units())
         self.assertEqual(2, sequence.calls)
+
+    async def test_stream_output_is_cancelled_when_character_limit_is_exceeded(self) -> None:
+        model = StreamingOnlyResponseSequence("x" * 101)
+        chain = build_chapter_analysis_chain(model)
+
+        with (
+            patch("app.chains.chapter_analysis.MAX_CHAPTER_OUTPUT_CHARS", 100),
+            self.assertRaises(ChapterAnalysisOutputTooLargeError),
+        ):
+            await chain.ainvoke("contract", source_units())
+
+        self.assertEqual(1, model.stream_calls)
 
 
 if __name__ == "__main__":

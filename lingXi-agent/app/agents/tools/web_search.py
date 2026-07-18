@@ -1,98 +1,129 @@
-"""
-Web search tool wrapper.
-
-Encapsulates Tavily Search as a standard LangChain Tool.
-Provides a clean extension point for swapping in alternative
-search providers (e.g. Coze platform search plugin).
-"""
+"""Bounded Tavily search exposed as a LangChain v1 runtime-aware tool."""
 
 from __future__ import annotations
 
+import asyncio
+import json
 from typing import Any
 
+from langchain.tools import ToolRuntime, tool
 from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 
 from app.config.settings import settings
+from app.utils.exceptions import ConfigurationError
 from app.utils.logger import logger
 
 
-# ── Tavily Search Tool ──────────────────────────────────────────────────────
+class WebSearchInput(BaseModel):
+    """Public, model-visible search arguments."""
+
+    query: str = Field(
+        ...,
+        min_length=2,
+        max_length=500,
+        description="A concise public-web search query without secrets or internal data",
+    )
+
+
+def _normalized_results(payload: dict[str, Any]) -> list[dict[str, str]]:
+    results: list[dict[str, str]] = []
+    raw_results = payload.get("results")
+    if not isinstance(raw_results, list):
+        return results
+
+    for item in raw_results[: settings.search_max_results]:
+        if not isinstance(item, dict):
+            continue
+        results.append(
+            {
+                "title": str(item.get("title") or "")[:300],
+                "url": str(item.get("url") or "")[:2_000],
+                "content": str(item.get("content") or "")[:1_500],
+            }
+        )
+    return results
+
 
 def create_tavily_search_tool() -> BaseTool:
-    """Create a Tavily web search tool instance.
-
-    Returns a ``TavilySearchResults`` tool configured with the API key
-    and result count from application settings.
-
-    Raises:
-        ConfigurationError: If ``TAVILY_API_KEY`` is not set.
-    """
-    from langchain_community.tools.tavily_search import TavilySearchResults
+    """Create a timeout-bounded Tavily tool with custom progress streaming."""
 
     if not settings.tavily_api_key:
-        logger.warning(
-            "TAVILY_API_KEY is not configured. "
-            "Web search will not be available until it is set."
-        )
+        raise ConfigurationError("TAVILY_API_KEY is not configured")
 
-    return TavilySearchResults(
-        max_results=settings.search_max_results,
-        tavily_api_key=settings.tavily_api_key or None,
-        name="web_search",
+    @tool(
+        "web_search",
+        args_schema=WebSearchInput,
+        response_format="content_and_artifact",
         description=(
-            "Search the web for current information. "
-            "Use this tool for factual questions, recent events, "
-            "or any query that requires up-to-date information. "
-            "Input should be a clear search query string."
+            "Search public web sources for recent or externally verifiable facts. "
+            "Never include credentials, customer data, or internal business details "
+            "in the query."
         ),
     )
+    async def web_search(
+        query: str,
+        runtime: ToolRuntime,
+    ) -> tuple[str, dict[str, Any]]:
+        from tavily import AsyncTavilyClient
 
+        runtime.stream_writer(
+            {"type": "tool_progress", "tool": "web_search", "status": "started"}
+        )
+        client = AsyncTavilyClient(api_key=settings.tavily_api_key)
+        try:
+            async with asyncio.timeout(settings.tool_timeout):
+                payload = await client.search(
+                    query=query,
+                    max_results=settings.search_max_results,
+                    search_depth="basic",
+                    include_answer=False,
+                    include_raw_content=False,
+                    timeout=float(settings.tool_timeout),
+                )
+        finally:
+            await client.close()
 
-# ── Tool Registry ───────────────────────────────────────────────────────────
+        results = _normalized_results(payload)
+        runtime.stream_writer(
+            {
+                "type": "tool_progress",
+                "tool": "web_search",
+                "status": "completed",
+                "result_count": len(results),
+            }
+        )
+
+        model_content = json.dumps(
+            {"query": query, "results": results},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        artifact = {
+            "provider": "tavily",
+            "query": query,
+            "results": results,
+        }
+        return model_content, artifact
+
+    return web_search
+
 
 def get_default_tools() -> list[BaseTool]:
-    """Return the default set of tools for the search agent.
+    """Return configured tools, explicitly degrading when search is disabled."""
 
-    This is the single place to add/remove tools.  To swap in a
-    different search provider, replace the implementation here.
+    if not settings.tavily_api_key:
+        logger.warning("TAVILY_API_KEY is not configured; search tool disabled")
+        return []
 
-    Returns:
-        List of LangChain ``BaseTool`` instances.
-    """
-    tools: list[BaseTool] = []
-
-    # Primary search tool
     try:
         search_tool = create_tavily_search_tool()
-        tools.append(search_tool)
-        logger.info("Web search tool (Tavily) initialized successfully")
     except Exception as exc:
-        logger.error("Failed to initialize Tavily search tool: %s", exc)
+        logger.error(
+            "Failed to initialize Tavily search tool | error_type=%s",
+            type(exc).__name__,
+        )
+        return []
 
-    return tools
-
-
-# ── Extension Point ─────────────────────────────────────────────────────────
-
-def create_coze_search_tool() -> BaseTool:
-    """Placeholder for Coze platform web search plugin integration.
-
-    To use Coze's official search plugin instead of Tavily:
-    1. Obtain the Coze plugin endpoint and auth credentials
-    2. Implement the search logic using ``@tool`` decorator
-    3. Replace ``create_tavily_search_tool()`` in ``get_default_tools()``
-
-    Example::
-
-        from langchain_core.tools import tool
-
-        @tool
-        def coze_web_search(query: str) -> str:
-            \"\"\"Search the web using Coze platform plugin.\"\"\"
-            # Call Coze plugin API here
-            ...
-    """
-    raise NotImplementedError(
-        "Coze search plugin integration is not yet implemented. "
-        "Use Tavily search or implement this function."
-    )
+    logger.info("Web search tool initialized | provider=tavily")
+    return [search_tool]

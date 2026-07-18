@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from typing import Any
 
 import httpx
+from fastapi import Response
 from pydantic import ValidationError
 
 from app.api.v1 import video
@@ -18,47 +19,72 @@ PROVIDER_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
 class _FakeResponse:
-    status_code = 200
-    text = ""
-
-    @staticmethod
-    def json() -> dict:
-        return {
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        payload: Any = None,
+        text: str = "",
+        json_error: Exception | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.text = text
+        self._payload = payload if payload is not None else {
             "output": {
                 "choices": [
                     {"message": {"content": [{"image": "https://result.invalid/image.png"}]}}
                 ]
             }
         }
+        self._json_error = json_error
+
+    def json(self) -> Any:
+        if self._json_error is not None:
+            raise self._json_error
+        return self._payload
 
 
 class _FakeAsyncClient:
-    def __init__(self) -> None:
+    def __init__(self, response: _FakeResponse | None = None) -> None:
         self.url = ""
         self.json_body: dict = {}
         self.headers: dict = {}
+        self.response = response or _FakeResponse()
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, _exc_type, _exc, _traceback) -> None:
-        return None
-
-    async def post(self, url: str, *, json: dict, headers: dict) -> _FakeResponse:
+    async def post(
+        self,
+        url: str,
+        *,
+        json: dict,
+        headers: dict,
+        timeout: httpx.Timeout,
+    ) -> _FakeResponse:
         self.url = url
         self.json_body = json
         self.headers = headers
-        return _FakeResponse()
+        return self.response
+
+    async def get(
+        self,
+        url: str,
+        *,
+        headers: dict,
+        timeout: httpx.Timeout,
+    ) -> _FakeResponse:
+        self.url = url
+        self.headers = headers
+        return self.response
 
 
 class _TimeoutAsyncClient:
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, _exc_type, _exc, _traceback) -> None:
-        return None
-
-    async def post(self, _url: str, *, json: dict, headers: dict):
+    async def post(
+        self,
+        _url: str,
+        *,
+        json: dict,
+        headers: dict,
+        timeout: httpx.Timeout,
+    ):
         raise httpx.ReadTimeout("provider response timed out")
 
 
@@ -103,6 +129,19 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
                 reference_image_urls=five_urls + ["https://assets.invalid/5.png"],
             )
 
+    def test_video_transport_identifiers_are_bounded(self) -> None:
+        with self.assertRaises(ValidationError):
+            SubmitVideoRequest(
+                api_key="offline-key",
+                model=VIDEO_MODEL,
+                base_url=PROVIDER_BASE_URL,
+                prompt="test prompt",
+                image_url="https://assets.invalid/keyframe.png",
+                resolution="720P",
+                duration_ms=4000,
+                idempotency_key="x" * 257,
+            )
+
     async def test_all_five_references_are_sent_in_order_without_truncation(self) -> None:
         references = [
             "https://assets.invalid/character-1.png",
@@ -120,8 +159,11 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
         )
         fake_client = _FakeAsyncClient()
 
-        with patch.object(video.httpx, "AsyncClient", return_value=fake_client):
-            result = await video.generate_image(request)
+        result = await video.generate_image(
+            request,
+            response=Response(),
+            client=fake_client,
+        )
 
         self.assertTrue(result.success)
         content = fake_client.json_body["input"]["messages"][0]["content"]
@@ -138,11 +180,17 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
             prompt="x" * (video.IMAGE_PROMPT_LIMIT + 1),
         )
 
-        result = await video.generate_image(request)
+        http_response = Response()
+        result = await video.generate_image(
+            request,
+            response=http_response,
+            client=_FakeAsyncClient(),
+        )
 
         self.assertFalse(result.success)
         self.assertEqual(400, result.status_code)
         self.assertEqual("IMAGE_PROMPT_TOO_LONG", result.error_code)
+        self.assertEqual(400, http_response.status_code)
 
     async def test_character_reference_layout_rule_lives_in_python(self) -> None:
         request = GenerateImageRequest(
@@ -155,8 +203,11 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
         )
         fake_client = _FakeAsyncClient()
 
-        with patch.object(video.httpx, "AsyncClient", return_value=fake_client):
-            result = await video.generate_image(request)
+        result = await video.generate_image(
+            request,
+            response=Response(),
+            client=fake_client,
+        )
 
         self.assertTrue(result.success)
         self.assertEqual("1280*720", fake_client.json_body["parameters"]["size"])
@@ -172,17 +223,18 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
             duration_ms=4000,
         )
 
-        with patch.object(
-            video.httpx,
-            "AsyncClient",
-            return_value=_TimeoutAsyncClient(),
-        ):
-            result = await video.submit_video(request)
+        http_response = Response()
+        result = await video.submit_video(
+            request,
+            response=http_response,
+            client=_TimeoutAsyncClient(),
+        )
 
         self.assertFalse(result.success)
         self.assertTrue(result.submission_uncertain)
         self.assertEqual("WANX_SUBMISSION_UNCERTAIN", result.error_code)
         self.assertEqual(504, result.status_code)
+        self.assertEqual(202, http_response.status_code)
 
     async def test_video_prompt_over_model_limit_is_rejected_without_truncation(self) -> None:
         limit = video._get_prompt_limit(VIDEO_MODEL)
@@ -196,12 +248,177 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
             duration_ms=4000,
         )
 
-        result = await video.submit_video(request)
+        http_response = Response()
+        result = await video.submit_video(
+            request,
+            response=http_response,
+            client=_FakeAsyncClient(),
+        )
 
         self.assertFalse(result.success)
         self.assertEqual(400, result.status_code)
         self.assertEqual("VIDEO_PROMPT_TOO_LONG", result.error_code)
         self.assertFalse(result.submission_uncertain)
+        self.assertEqual(400, http_response.status_code)
+
+    async def test_http_408_submission_is_uncertain_and_not_retryable(self) -> None:
+        request = SubmitVideoRequest(
+            api_key="offline-key",
+            model=VIDEO_MODEL,
+            base_url=PROVIDER_BASE_URL,
+            prompt="slow camera push",
+            image_url="https://assets.invalid/keyframe.png",
+            resolution="720P",
+            duration_ms=4000,
+        )
+        client = _FakeAsyncClient(_FakeResponse(status_code=408, text="request timeout"))
+        http_response = Response()
+
+        result = await video.submit_video(
+            request,
+            response=http_response,
+            client=client,
+        )
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.submission_uncertain)
+        self.assertFalse(result.retryable)
+        self.assertEqual("WANX_SUBMISSION_UNCERTAIN", result.error_code)
+        self.assertEqual(202, http_response.status_code)
+
+    async def test_invalid_success_payload_submission_is_uncertain(self) -> None:
+        request = SubmitVideoRequest(
+            api_key="offline-key",
+            model=VIDEO_MODEL,
+            base_url=PROVIDER_BASE_URL,
+            prompt="slow camera push",
+            image_url="https://assets.invalid/keyframe.png",
+            resolution="720P",
+            duration_ms=4000,
+        )
+        client = _FakeAsyncClient(
+            _FakeResponse(json_error=ValueError("provider returned invalid JSON"))
+        )
+        http_response = Response()
+
+        result = await video.submit_video(
+            request,
+            response=http_response,
+            client=client,
+        )
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.submission_uncertain)
+        self.assertEqual("WANX_SUBMISSION_UNCERTAIN", result.error_code)
+        self.assertEqual(202, http_response.status_code)
+
+    async def test_success_payload_without_task_id_is_uncertain(self) -> None:
+        request = SubmitVideoRequest(
+            api_key="offline-key",
+            model=VIDEO_MODEL,
+            base_url=PROVIDER_BASE_URL,
+            prompt="slow camera push",
+            image_url="https://assets.invalid/keyframe.png",
+            resolution="720P",
+            duration_ms=4000,
+        )
+        client = _FakeAsyncClient(_FakeResponse(payload={"output": {}}))
+        http_response = Response()
+
+        result = await video.submit_video(
+            request,
+            response=http_response,
+            client=client,
+        )
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.submission_uncertain)
+        self.assertEqual("WANX_SUBMISSION_UNCERTAIN", result.error_code)
+        self.assertEqual(202, http_response.status_code)
+
+    async def test_idempotency_key_is_forwarded_to_provider(self) -> None:
+        request = SubmitVideoRequest(
+            api_key="offline-key",
+            model=VIDEO_MODEL,
+            base_url=PROVIDER_BASE_URL,
+            prompt="slow camera push",
+            image_url="https://assets.invalid/keyframe.png",
+            resolution="720P",
+            duration_ms=4000,
+            idempotency_key="wanx-video-asset-42-v3",
+        )
+        client = _FakeAsyncClient(
+            _FakeResponse(payload={"output": {"task_id": "provider-task-1"}})
+        )
+
+        result = await video.submit_video(
+            request,
+            response=Response(),
+            client=client,
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            "wanx-video-asset-42-v3",
+            client.headers["Idempotency-Key"],
+        )
+
+    async def test_provider_task_id_is_not_written_to_logs(self) -> None:
+        sentinel = "SENTINEL_TASK_ID\nFORGED_LOG_LINE"
+        request = SubmitVideoRequest(
+            api_key="offline-key",
+            model=VIDEO_MODEL,
+            base_url=PROVIDER_BASE_URL,
+            prompt="slow camera push",
+            image_url="https://assets.invalid/keyframe.png",
+            resolution="720P",
+            duration_ms=4000,
+        )
+        client = _FakeAsyncClient(
+            _FakeResponse(payload={"output": {"task_id": sentinel}})
+        )
+
+        with self.assertLogs(video.logger, level="INFO") as captured:
+            result = await video.submit_video(
+                request,
+                response=Response(),
+                client=client,
+            )
+
+        self.assertTrue(result.success)
+        logs = "\n".join(captured.output)
+        self.assertIn(f"task_id_length={len(sentinel)}", logs)
+        self.assertNotIn(sentinel, logs)
+
+    async def test_unknown_query_status_is_preserved_as_unknown(self) -> None:
+        from app.schemas.video import QueryVideoRequest, TaskStatus
+
+        task_id = "SENTINEL_QUERY_TASK_ID"
+        provider_status = "SENTINEL_STATUS\nFORGED_LOG_LINE"
+        request = QueryVideoRequest(
+            api_key="offline-key",
+            base_url=PROVIDER_BASE_URL,
+            task_id=task_id,
+        )
+        client = _FakeAsyncClient(
+            _FakeResponse(payload={"output": {"task_status": provider_status}})
+        )
+
+        with self.assertLogs(video.logger, level="INFO") as captured:
+            result = await video.query_video(
+                request,
+                response=Response(),
+                client=client,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(TaskStatus.UNKNOWN, result.status)
+        self.assertEqual(provider_status, result.provider_status)
+        logs = "\n".join(captured.output)
+        self.assertIn(f"task_id_length={len(task_id)}", logs)
+        self.assertIn(f"status_length={len(provider_status)}", logs)
+        self.assertNotIn(task_id, logs)
+        self.assertNotIn(provider_status, logs)
 
 
 if __name__ == "__main__":

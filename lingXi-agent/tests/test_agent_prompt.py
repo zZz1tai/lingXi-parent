@@ -1,19 +1,12 @@
-from langchain_core.messages import HumanMessage, SystemMessage
+from app.agents.prompts import compose_system_prompt
+from app.agents.state import AgentContext
 
-from app.agents.prompts import get_system_prompt
 
-
-def test_dynamic_prompt_keeps_user_messages() -> None:
-    user_message = HumanMessage(content="只回复：服务正常")
-
-    messages = get_system_prompt(
-        {
-            "messages": [user_message],
-            "style": "professional",
-            "business_tag": "",
-        }
+def test_dynamic_prompt_uses_context_without_rewriting_messages() -> None:
+    prompt = compose_system_prompt(
+        AgentContext(style="professional", business_tag=""),
+        search_available=False,
     )
 
-    assert isinstance(messages[0], SystemMessage)
-    assert messages[1] is user_message
-    assert messages[1].content == "只回复：服务正常"
+    assert "灵犀智能零售终端管理系统" in prompt
+    assert "当前未配置联网搜索工具" in prompt

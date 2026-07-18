@@ -1,127 +1,245 @@
-"""
-Chat API endpoints — synchronous invoke and SSE streaming.
-
-Provides:
-- ``POST /api/v1/chat/invoke`` — Full response after agent completes
-- ``POST /api/v1/chat/stream`` — Real-time SSE stream of agent execution
-"""
+"""LangChain v1 synchronous chat and multi-mode SSE streaming endpoints."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import suppress
+from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    ToolMessage,
+)
+from langgraph.errors import GraphRecursionError
 
 from app.agents.builder import get_recursion_limit
-from app.api.dependencies import create_llm, get_agent, get_request_id
+from app.api.dependencies import (
+    create_agent_context,
+    create_llm,
+    delete_agent_thread,
+    get_agent,
+    get_request_id,
+)
+from app.agents.state import checkpoint_thread_id
 from app.chains.business_chat import (
     analyze_context,
     generate_smart_questions,
     stream_context_analysis,
 )
 from app.config.settings import settings
-from app.schemas.request import ChatMode, ChatRequest, SmartQuestionsRequest
+from app.schemas.request import (
+    ChatMode,
+    ChatRequest,
+    DeleteChatThreadRequest,
+    SmartQuestionsRequest,
+)
 from app.schemas.response import (
+    BaseResponse,
     ChatData,
     ChatResponse,
     SmartQuestionsData,
     SmartQuestionsResponse,
     StreamEvent,
+    ToolCallRecord,
 )
-from app.utils.exceptions import AgentTimeoutError, SearchError
+from app.utils.exceptions import AgentError, AgentTimeoutError, SearchError
 from app.utils.logger import logger
 
+
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+_SSE_HEARTBEAT_SECONDS = 15.0
 
 
-# ── Helper Functions ────────────────────────────────────────────────────────
+class _StreamBudgetExceeded(Exception):
+    pass
+
+
+class MemoryDeleteError(AgentError):
+    """Durable conversation memory could not be deleted safely."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Conversation memory could not be deleted",
+            code="MEMORY_DELETE_FAILED",
+            status_code=503,
+        )
+
+
+def _add_stream_text(current: int, text: str) -> int:
+    updated = current + len(text)
+    if updated > settings.agent_stream_max_text_chars:
+        raise _StreamBudgetExceeded
+    return updated
+
+
+async def _aclose_source(source: Any) -> None:
+    close = getattr(source, "aclose", None)
+    if callable(close):
+        try:
+            await close()
+        except Exception as exc:
+            logger.warning(
+                "Failed to close async stream source | error_type=%s",
+                type(exc).__name__,
+            )
+
 
 def _build_agent_input(request: ChatRequest) -> dict[str, Any]:
-    """Construct the input state dict for the agent from a chat request."""
-    messages = [HumanMessage(content=request.message)]
-    logger.info(
-        "Building agent input | messages=%d | message_length=%d",
-        len(messages),
-        len(request.message),
-    )
-    
-    # 打印当前使用的 style
-    logger.info("Using style=%s for prompt", request.style)
-    
+    """Only messages are mutable/checkpointed; metadata lives in context."""
+
+    logger.info("Building agent input | message_length=%d", len(request.message))
+    return {"messages": [HumanMessage(content=request.message)]}
+
+
+def _public_thread_id(request: ChatRequest, request_id: str) -> str:
+    """Use an explicit conversation ID or an isolated one-shot fallback."""
+
+    return request.thread_id or request_id
+
+
+def _build_agent_config(
+    request: ChatRequest,
+    *,
+    request_id: str,
+) -> dict[str, Any]:
+    """Build recursion and trusted user/thread checkpoint namespaces."""
+
+    public_thread_id = _public_thread_id(request, request_id)
+    user_namespace = request.user_id or "anonymous"
+    internal_thread_id = checkpoint_thread_id(user_namespace, public_thread_id)
     return {
-        "messages": messages,
-        "style": request.style,
-        "user_id": request.user_id or "",
-        "business_tag": request.business_tag or "",
+        "recursion_limit": get_recursion_limit(request.max_iterations),
+        "configurable": {"thread_id": internal_thread_id},
+        "metadata": {
+            "request_id": request_id,
+            "checkpoint_namespace": internal_thread_id,
+            "user_id_length": len(request.user_id or ""),
+            "thread_id_length": len(public_thread_id),
+        },
     }
 
 
-def _extract_tool_calls(messages: list) -> list[dict[str, Any]]:
-    """Extract tool call records from the agent's message history."""
-    tool_calls: list[dict[str, Any]] = []
+def _normalize_content_blocks(message: Any) -> list[dict[str, Any]]:
+    """Return model-neutral text blocks without exposing reasoning blocks."""
 
-    for msg in messages:
-        if isinstance(msg, ToolMessage):
-            tool_calls.append({
-                "tool": msg.name or "unknown",
-                "tool_call_id": msg.tool_call_id or "",
-                "output": msg.content[:500] if msg.content else "",  # Truncate long outputs
-            })
+    blocks = getattr(message, "content_blocks", None)
+    if callable(blocks):
+        blocks = blocks()
+    if not isinstance(blocks, list):
+        content = getattr(message, "content", None)
+        blocks = content if isinstance(content, list) else []
 
-    return tool_calls
+    normalized: list[dict[str, Any]] = []
+    for block in blocks:
+        if hasattr(block, "model_dump"):
+            block = block.model_dump()
+        if not isinstance(block, dict):
+            continue
+        block_type = str(block.get("type") or "")
+        if block_type not in {"text", "text_delta"}:
+            continue
+        text = block.get("text")
+        if isinstance(text, str) and text:
+            normalized.append({"type": "text", "text": text})
+    return normalized
 
 
-def _count_iterations(messages: list) -> int:
-    """Count the number of agent iterations (AI messages with tool calls)."""
-    count = 0
-    for msg in messages:
-        if isinstance(msg, AIMessage) and msg.tool_calls:
-            count += 1
-    return count
+def _message_text(message: Any) -> str:
+    """Extract display text from legacy strings or v1 standard content blocks."""
+
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    return "".join(block["text"] for block in _normalize_content_blocks(message))
 
 
-# ── Synchronous Invoke ──────────────────────────────────────────────────────
+def _extract_tool_calls(messages: list[BaseMessage]) -> list[ToolCallRecord]:
+    records: list[ToolCallRecord] = []
+    for message in messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        records.append(
+            ToolCallRecord(
+                tool=message.name or "unknown",
+                tool_call_id=message.tool_call_id or "",
+                output=_message_text(message)[:1_000],
+                artifact=getattr(message, "artifact", None),
+                status=getattr(message, "status", "success") or "success",
+            )
+        )
+    return records
+
+
+def _count_iterations(messages: list[BaseMessage]) -> int:
+    return sum(
+        1
+        for message in messages
+        if isinstance(message, AIMessage) and bool(message.tool_calls)
+    )
+
+
+def _final_ai_response(messages: list[BaseMessage]) -> str:
+    for message in reversed(messages):
+        if isinstance(message, AIMessage) and not message.tool_calls:
+            text = _message_text(message).strip()
+            if text:
+                return text
+    return ""
+
+
+@router.delete(
+    "/thread",
+    response_model=BaseResponse,
+    summary="Delete checkpointed chat memory",
+)
+async def delete_chat_thread(
+    request: DeleteChatThreadRequest,
+    request_id: str = Depends(get_request_id),
+) -> BaseResponse:
+    try:
+        await delete_agent_thread(
+            user_id=request.user_id,
+            thread_id=request.thread_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "Checkpoint deletion failed | request_id=%s | error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        raise MemoryDeleteError() from exc
+    logger.info(
+        "Checkpoint deleted | request_id=%s | user_id_length=%d | thread_id_length=%d",
+        request_id,
+        len(request.user_id),
+        len(request.thread_id),
+    )
+    return BaseResponse(success=True, message="deleted")
+
 
 @router.post("/invoke", response_model=ChatResponse, summary="Synchronous chat")
 async def chat_invoke(
     request: ChatRequest,
     request_id: str = Depends(get_request_id),
 ) -> ChatResponse:
-    """Process a chat message synchronously and return the complete response.
-
-    The agent will:
-    1. Analyze the user's message
-    2. Decide whether web search is needed
-    3. Execute search if necessary
-    4. Generate a final response
-
-    The agent is bounded by ``max_iterations`` to prevent infinite loops.
-    """
-    start_time = time.time()
+    start_time = time.perf_counter()
+    public_thread_id = _public_thread_id(request, request_id)
 
     if request.mode == ChatMode.CONTEXT_ANALYSIS:
-        logger.info(
-            "Context analysis | request_id=%s | message_length=%d",
-            request_id,
-            len(request.message),
-        )
         try:
-            llm = create_llm(request.llm_config)
+            llm = create_llm(request.llm_config, profile="context-analysis")
             final_response = await analyze_context(
                 llm,
                 request.message,
                 request.context_data,
-            )
-            elapsed = time.time() - start_time
-            logger.info(
-                "Context analysis completed | request_id=%s | elapsed=%.2fs | response_length=%d",
-                request_id,
-                elapsed,
-                len(final_response),
             )
             return ChatResponse(
                 success=True,
@@ -131,52 +249,45 @@ async def chat_invoke(
                     tool_calls=[],
                     iterations=0,
                     request_id=request_id,
+                    thread_id=public_thread_id,
                 ),
             )
+        except AgentError:
+            raise
         except Exception as exc:
             logger.error(
-                "Context analysis failed | request_id=%s | error=%s",
+                "Context analysis failed | request_id=%s | error_type=%s",
                 request_id,
-                str(exc),
+                type(exc).__name__,
             )
-            raise SearchError(f"Context analysis failed: {exc}") from exc
-
-    logger.info(
-        "Chat invoke | request_id=%s | style=%s | message_length=%d",
-        request_id,
-        request.style,
-        len(request.message),
-    )
+            raise SearchError("Context analysis failed") from exc
 
     try:
-        # 普通对话：使用 Agent
-        agent = get_agent(llm_config=request.llm_config)
-        input_data = _build_agent_input(request)
-        config = {
-            "recursion_limit": get_recursion_limit(request.max_iterations),
-            "metadata": {"request_id": request_id},
-        }
+        agent = get_agent(checkpointed=request.thread_id is not None)
+        context = create_agent_context(
+            llm_config=request.llm_config,
+            user_id=request.user_id or "",
+            thread_id=public_thread_id,
+            style=request.style,
+            business_tag=request.business_tag or "",
+        )
+        result = await agent.ainvoke(
+            _build_agent_input(request),
+            config=_build_agent_config(request, request_id=request_id),
+            context=context,
+        )
+        messages = list(result.get("messages") or [])
+        final_response = _final_ai_response(messages)
+        if not final_response:
+            raise SearchError("Agent returned no displayable answer")
 
-        result = await agent.ainvoke(input_data, config=config)
-
-        # Extract the final AI response
-        messages = result.get("messages", [])
-        final_response = ""
-        for msg in reversed(messages):
-            if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
-                final_response = msg.content
-                break
-
-        elapsed = time.time() - start_time
         logger.info(
             "Chat invoke completed | request_id=%s | elapsed=%.2fs | iterations=%d | response_length=%d",
             request_id,
-            elapsed,
+            time.perf_counter() - start_time,
             _count_iterations(messages),
             len(final_response),
         )
-        logger.info("LLM response: %s", final_response[:200] if final_response else "empty")
-
         return ChatResponse(
             success=True,
             message="ok",
@@ -185,26 +296,23 @@ async def chat_invoke(
                 tool_calls=_extract_tool_calls(messages),
                 iterations=_count_iterations(messages),
                 request_id=request_id,
+                thread_id=public_thread_id,
             ),
         )
-
+    except GraphRecursionError as exc:
+        raise AgentTimeoutError(
+            f"Agent exceeded maximum iterations ({request.max_iterations or settings.max_iterations})"
+        ) from exc
+    except AgentError:
+        raise
     except Exception as exc:
-        import traceback
-        elapsed = time.time() - start_time
         logger.error(
-            "Chat invoke failed | request_id=%s | elapsed=%.2fs | error=%s\n%s",
+            "Chat invoke failed | request_id=%s | elapsed=%.2fs | error_type=%s",
             request_id,
-            elapsed,
-            str(exc),
-            traceback.format_exc(),
+            time.perf_counter() - start_time,
+            type(exc).__name__,
         )
-
-        if "recursion_limit" in str(exc).lower() or "max_iterations" in str(exc).lower():
-            raise AgentTimeoutError(
-                f"Agent exceeded maximum iterations ({request.max_iterations or settings.max_iterations})"
-            ) from exc
-
-        raise SearchError(f"Agent execution failed: {exc}") from exc
+        raise SearchError("Agent execution failed") from exc
 
 
 @router.post(
@@ -216,8 +324,6 @@ async def smart_questions(
     request: SmartQuestionsRequest,
     request_id: str = Depends(get_request_id),
 ) -> SmartQuestionsResponse:
-    """Generate exactly three questions from transported conversation data."""
-
     try:
         llm = create_llm(
             request.llm_config,
@@ -229,156 +335,354 @@ async def smart_questions(
         return SmartQuestionsResponse(
             success=True,
             message="ok",
-            data=SmartQuestionsData(
-                questions=questions,
-                request_id=request_id,
-            ),
+            data=SmartQuestionsData(questions=questions, request_id=request_id),
         )
+    except AgentError:
+        raise
     except Exception as exc:
         logger.error(
-            "Smart questions failed | request_id=%s | error=%s",
+            "Smart questions failed | request_id=%s | error_type=%s",
             request_id,
-            str(exc),
+            type(exc).__name__,
         )
-        raise SearchError(f"Smart questions failed: {exc}") from exc
+        raise SearchError("Smart question generation failed") from exc
 
-
-# ── SSE Streaming ───────────────────────────────────────────────────────────
 
 def _format_sse_event(event: StreamEvent) -> str:
-    """Format a StreamEvent as an SSE data line."""
-    data = event.model_dump(exclude_none=True)
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+    data = event.model_dump(mode="json", exclude_none=True)
+    return f"data: {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
 async def _stream_context_analysis(
     request: ChatRequest,
     request_id: str,
 ) -> AsyncGenerator[str, None]:
-    """Stream the explicit Python-owned context-analysis chain."""
-    full_response = ""
-
+    public_thread_id = _public_thread_id(request, request_id)
+    emitted_text = False
+    emitted_characters = 0
+    context_stream: Any = None
     try:
-        llm = create_llm(request.llm_config)
-        async for content in stream_context_analysis(
+        llm = create_llm(request.llm_config, profile="context-analysis-stream")
+        context_stream = stream_context_analysis(
             llm,
             request.message,
             request.context_data,
-        ):
-            full_response += content
-            yield _format_sse_event(StreamEvent(
-                type="token",
-                content=content,
+        )
+        async for content in context_stream:
+            if not content:
+                continue
+            emitted_characters = _add_stream_text(emitted_characters, content)
+            emitted_text = True
+            yield _format_sse_event(
+                StreamEvent(
+                    type="token",
+                    content=content,
+                    content_blocks=[{"type": "text", "text": content}],
+                    request_id=request_id,
+                    thread_id=public_thread_id,
+                )
+            )
+        yield _format_sse_event(
+            StreamEvent(
+                type="done",
+                content=None if emitted_text else "",
                 request_id=request_id,
-            ))
-
-        yield _format_sse_event(StreamEvent(
-            type="done",
-            content=full_response,
-            request_id=request_id,
-        ))
-
+                thread_id=public_thread_id,
+            )
+        )
+    except _StreamBudgetExceeded:
+        yield _format_sse_event(
+            StreamEvent(
+                type="error",
+                content="Stream output limit exceeded",
+                request_id=request_id,
+                thread_id=public_thread_id,
+            )
+        )
     except Exception as exc:
         logger.error(
-            "Context analysis stream error | request_id=%s | error=%s",
+            "Context stream failed | request_id=%s | error_type=%s",
             request_id,
-            str(exc),
+            type(exc).__name__,
         )
-        yield _format_sse_event(StreamEvent(
-            type="error",
-            content=str(exc),
-            request_id=request_id,
-        ))
+        yield _format_sse_event(
+            StreamEvent(
+                type="error",
+                content="Context analysis stream failed",
+                request_id=request_id,
+                thread_id=public_thread_id,
+            )
+        )
+    finally:
+        await _aclose_source(context_stream)
+
+
+def _messages_from_update(update: Any) -> list[BaseMessage]:
+    messages: list[BaseMessage] = []
+    if not isinstance(update, dict):
+        return messages
+    for node_update in update.values():
+        if not isinstance(node_update, dict):
+            continue
+        value = node_update.get("messages")
+        if isinstance(value, BaseMessage):
+            messages.append(value)
+        elif isinstance(value, list):
+            messages.extend(item for item in value if isinstance(item, BaseMessage))
+    return messages
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return str(value)[:2_000]
 
 
 async def _stream_agent_events(
     request: ChatRequest,
     request_id: str,
 ) -> AsyncGenerator[str, None]:
-    """Generate SSE events from the agent's execution stream.
+    """Translate LangChain v1 messages/updates/custom modes into SSE."""
 
-    Uses ``astream_events`` (v2) for granular token-level streaming.
-    Supports both ``values`` and ``messages`` stream modes internally.
-    """
-    full_response = ""
-
+    public_thread_id = _public_thread_id(request, request_id)
+    emitted_text = False
+    emitted_characters = 0
+    final_response = ""
+    agent_stream: Any = None
     try:
-        agent = get_agent(llm_config=request.llm_config)
-        input_data = _build_agent_input(request)
-        config = {
-            "recursion_limit": get_recursion_limit(request.max_iterations),
-            "metadata": {"request_id": request_id},
-        }
-        async for event in agent.astream_events(
-            input_data,
-            config=config,
-            version="v2",
-        ):
-            event_kind = event.get("event", "")
+        agent = get_agent(checkpointed=request.thread_id is not None)
+        context = create_agent_context(
+            llm_config=request.llm_config,
+            user_id=request.user_id or "",
+            thread_id=public_thread_id,
+            style=request.style,
+            business_tag=request.business_tag or "",
+        )
+        agent_stream = agent.astream(
+            _build_agent_input(request),
+            config=_build_agent_config(request, request_id=request_id),
+            context=context,
+            stream_mode=["messages", "updates", "custom"],
+        )
+        async for stream_mode, chunk in agent_stream:
+            if stream_mode == "messages":
+                if not isinstance(chunk, tuple) or len(chunk) != 2:
+                    continue
+                message, metadata = chunk
+                if not isinstance(message, (AIMessage, AIMessageChunk)):
+                    continue
+                text = _message_text(message)
+                if not text:
+                    continue
+                emitted_characters = _add_stream_text(emitted_characters, text)
+                emitted_text = True
+                yield _format_sse_event(
+                    StreamEvent(
+                        type="token",
+                        content=text,
+                        content_blocks=_normalize_content_blocks(message) or [
+                            {"type": "text", "text": text}
+                        ],
+                        data={
+                            "node": str(metadata.get("langgraph_node") or "model")
+                            if isinstance(metadata, dict)
+                            else "model"
+                        },
+                        request_id=request_id,
+                        thread_id=public_thread_id,
+                    )
+                )
+                continue
 
-            # ── Token-level streaming (LLM output) ──
-            if event_kind == "on_chat_model_stream":
-                chunk = event.get("data", {}).get("chunk")
-                if chunk and hasattr(chunk, "content") and chunk.content:
-                    content = chunk.content
-                    if isinstance(content, str):
-                        full_response += content
-                        yield _format_sse_event(StreamEvent(
-                            type="token",
-                            content=content,
+            if stream_mode == "custom":
+                yield _format_sse_event(
+                    StreamEvent(
+                        type="custom",
+                        data=_json_safe(chunk),
+                        request_id=request_id,
+                        thread_id=public_thread_id,
+                    )
+                )
+                continue
+
+            if stream_mode != "updates":
+                continue
+
+            update_messages = _messages_from_update(chunk)
+            for message in update_messages:
+                if isinstance(message, AIMessage) and message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        yield _format_sse_event(
+                            StreamEvent(
+                                type="tool_start",
+                                tool=str(tool_call.get("name") or "unknown"),
+                                tool_input=tool_call.get("args")
+                                if isinstance(tool_call.get("args"), dict)
+                                else {},
+                                request_id=request_id,
+                                thread_id=public_thread_id,
+                            )
+                        )
+                elif isinstance(message, ToolMessage):
+                    yield _format_sse_event(
+                        StreamEvent(
+                            type="tool_end",
+                            tool=message.name or "unknown",
+                            tool_output=_message_text(message)[:1_000],
+                            data={
+                                "status": getattr(message, "status", "success"),
+                                "artifact": _json_safe(getattr(message, "artifact", None)),
+                            },
                             request_id=request_id,
-                        ))
+                            thread_id=public_thread_id,
+                        )
+                    )
+                elif isinstance(message, AIMessage) and not message.tool_calls:
+                    candidate = _message_text(message).strip()
+                    if candidate:
+                        final_response = candidate
 
-            # ── Tool invocation start ──
-            elif event_kind == "on_tool_start":
-                tool_name = event.get("name", "unknown")
-                tool_input = event.get("data", {}).get("input", {})
-                logger.info(
-                    "Tool start | request_id=%s | tool=%s",
-                    request_id,
-                    tool_name,
-                )
-                yield _format_sse_event(StreamEvent(
-                    type="tool_start",
-                    tool=tool_name,
-                    tool_input=tool_input if isinstance(tool_input, dict) else {"query": str(tool_input)},
+            nodes = list(chunk) if isinstance(chunk, dict) else []
+            yield _format_sse_event(
+                StreamEvent(
+                    type="update",
+                    data={"nodes": nodes},
                     request_id=request_id,
-                ))
-
-            # ── Tool invocation end ──
-            elif event_kind == "on_tool_end":
-                tool_name = event.get("name", "unknown")
-                tool_output = event.get("data", {}).get("output", "")
-                logger.info(
-                    "Tool end | request_id=%s | tool=%s",
-                    request_id,
-                    tool_name,
+                    thread_id=public_thread_id,
                 )
-                yield _format_sse_event(StreamEvent(
-                    type="tool_end",
-                    tool=tool_name,
-                    tool_output=str(tool_output)[:1000] if tool_output else "",
-                    request_id=request_id,
-                ))
+            )
 
-        # ── Stream complete ──
-        yield _format_sse_event(StreamEvent(
-            type="done",
-            content=full_response,
-            request_id=request_id,
-        ))
-
+        if not emitted_text and final_response:
+            _add_stream_text(0, final_response)
+        yield _format_sse_event(
+            StreamEvent(
+                type="done",
+                # Token events already carried text.  Avoid appending the same
+                # answer a second time in clients that concatenate all content.
+                content=None if emitted_text else final_response,
+                request_id=request_id,
+                thread_id=public_thread_id,
+            )
+        )
+    except _StreamBudgetExceeded:
+        yield _format_sse_event(
+            StreamEvent(
+                type="error",
+                content="Stream output limit exceeded",
+                request_id=request_id,
+                thread_id=public_thread_id,
+            )
+        )
+    except GraphRecursionError:
+        yield _format_sse_event(
+            StreamEvent(
+                type="error",
+                content="Agent exceeded the configured iteration limit",
+                request_id=request_id,
+                thread_id=public_thread_id,
+            )
+        )
     except Exception as exc:
         logger.error(
-            "Stream error | request_id=%s | error=%s",
+            "Agent stream failed | request_id=%s | error_type=%s",
             request_id,
-            str(exc),
+            type(exc).__name__,
         )
-        yield _format_sse_event(StreamEvent(
-            type="error",
-            content=str(exc),
-            request_id=request_id,
-        ))
+        yield _format_sse_event(
+            StreamEvent(
+                type="error",
+                content="Agent stream failed",
+                request_id=request_id,
+                thread_id=public_thread_id,
+            )
+        )
+    finally:
+        await _aclose_source(agent_stream)
+
+
+async def _with_heartbeats(
+    source: AsyncIterator[str],
+    *,
+    http_request: Request,
+    request_id: str,
+    thread_id: str,
+) -> AsyncGenerator[str, None]:
+    """Cancel Agent work on disconnect and keep idle SSE connections alive."""
+
+    queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=16)
+
+    async def produce() -> None:
+        try:
+            async for event in source:
+                await queue.put(event)
+        finally:
+            # Never block cleanup on a full queue.  If the sentinel cannot be
+            # inserted, the consumer also observes ``producer.done()`` after
+            # draining the queued events.
+            with suppress(asyncio.QueueFull):
+                queue.put_nowait(None)
+
+    producer = asyncio.create_task(produce())
+    deadline = asyncio.get_running_loop().time() + settings.agent_stream_max_seconds
+    try:
+        while True:
+            if await http_request.is_disconnected():
+                producer.cancel()
+                return
+            if producer.done() and queue.empty():
+                return
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                producer.cancel()
+                yield _format_sse_event(
+                    StreamEvent(
+                        type="error",
+                        content="Stream time limit exceeded",
+                        request_id=request_id,
+                        thread_id=thread_id,
+                    )
+                )
+                return
+            try:
+                event = await asyncio.wait_for(
+                    queue.get(),
+                    timeout=min(_SSE_HEARTBEAT_SECONDS, remaining),
+                )
+            except TimeoutError:
+                if asyncio.get_running_loop().time() >= deadline:
+                    producer.cancel()
+                    yield _format_sse_event(
+                        StreamEvent(
+                            type="error",
+                            content="Stream time limit exceeded",
+                            request_id=request_id,
+                            thread_id=thread_id,
+                        )
+                    )
+                    return
+                yield _format_sse_event(
+                    StreamEvent(
+                        type="heartbeat",
+                        request_id=request_id,
+                        thread_id=thread_id,
+                    )
+                )
+                continue
+            if event is None:
+                return
+            yield event
+    finally:
+        producer.cancel()
+        try:
+            with suppress(asyncio.CancelledError):
+                await producer
+        finally:
+            # ``async for`` does not close its iterator when cancellation lands
+            # while ``produce`` is blocked on ``queue.put``.  Close explicitly
+            # so LangGraph/provider streams are released deterministically.
+            await _aclose_source(source)
 
 
 @router.post(
@@ -387,53 +691,46 @@ async def _stream_agent_events(
     response_class=StreamingResponse,
     responses={
         200: {
-            "description": "Server-Sent Events stream terminated by data: [DONE]",
-            "content": {
-                "text/event-stream": {
-                    "schema": {"type": "string"},
-                }
-            },
+            "description": "LangChain v1 message/update/custom event stream",
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
         }
     },
 )
 async def chat_stream(
     request: ChatRequest,
+    http_request: Request,
     request_id: str = Depends(get_request_id),
 ) -> StreamingResponse:
-    """Stream agent execution in real-time via Server-Sent Events.
-
-    Event types:
-    - ``token``: Individual text token from the LLM
-    - ``tool_start``: A tool is about to be invoked
-    - ``tool_end``: A tool has completed execution
-    - ``done``: Agent execution complete, includes full response
-    - ``error``: An error occurred during execution
-
-    The stream ends with a ``[DONE]`` sentinel event.
-    """
-    logger.info(
-        "Chat stream | request_id=%s | style=%s | mode=%s",
-        request_id,
-        request.style,
-        request.mode.value,
-    )
+    public_thread_id = _public_thread_id(request, request_id)
+    # Validate and cache a request-selected model before the SSE response is
+    # started so an outbound URL policy failure remains a normal HTTP 422.
+    if request.llm_config is not None:
+        create_llm(request.llm_config, profile="chat-stream-preflight")
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        source: AsyncIterator[str]
         if request.mode == ChatMode.CONTEXT_ANALYSIS:
-            async for event in _stream_context_analysis(request, request_id):
-                yield event
+            source = _stream_context_analysis(request, request_id)
         else:
-            async for event in _stream_agent_events(request, request_id):
-                yield event
-        # SSE termination sentinel
-        yield "data: [DONE]\n\n"
+            source = _stream_agent_events(request, request_id)
+
+        async for event in _with_heartbeats(
+            source,
+            http_request=http_request,
+            request_id=request_id,
+            thread_id=public_thread_id,
+        ):
+            yield event
+
+        if not await http_request.is_disconnected():
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-Accel-Buffering": "no",
         },
     )

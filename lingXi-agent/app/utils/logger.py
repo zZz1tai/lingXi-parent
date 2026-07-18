@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import logging
 import sys
+from contextvars import ContextVar, Token
 from uuid import uuid4
 
 
 _LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | [%(request_id)s] %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+_request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
 
 
 class _RequestIdFilter(logging.Filter):
@@ -25,8 +27,8 @@ class _RequestIdFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
-        if not hasattr(record, "request_id"):
-            record.request_id = "-"  # type: ignore[attr-defined]
+        if not hasattr(record, "request_id") or record.request_id == "-":  # type: ignore[attr-defined]
+            record.request_id = _request_id_context.get()  # type: ignore[attr-defined]
         return True
 
 
@@ -59,6 +61,21 @@ def generate_request_id() -> str:
     return uuid4().hex[:12]
 
 
+def set_request_id(request_id: str) -> Token[str]:
+    """Bind a request ID to the current async execution context."""
+    return _request_id_context.set(request_id)
+
+
+def reset_request_id(token: Token[str]) -> None:
+    """Restore the request ID context after a request completes."""
+    _request_id_context.reset(token)
+
+
+def get_request_id() -> str:
+    """Return the request ID bound to the current execution context."""
+    return _request_id_context.get()
+
+
 def bind_request_id(log_record: logging.LogRecord, request_id: str) -> None:
-    """Attach a request ID to a log record (convenience helper)."""
+    """Backward-compatible helper for explicitly constructed log records."""
     log_record.request_id = request_id  # type: ignore[attr-defined]

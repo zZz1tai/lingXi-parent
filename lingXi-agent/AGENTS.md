@@ -7,7 +7,7 @@
 ## 技术栈
 
 - Python 3.12 + FastAPI
-- LangChain 0.3+ / LangGraph 0.2.60+
+- LangChain 1.x / LangGraph 1.x
 - Pydantic v2 + pydantic-settings
 - Tavily Search (可替换)
 
@@ -30,8 +30,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 |------|---------|------|
 | FastAPI 入口 | `app/main.py` | 路由注册、全局异常处理、生命周期 |
 | 配置管理 | `app/config/settings.py` | 环境变量加载，所有敏感配置 |
-| Agent 构建 | `app/agents/builder.py` | `create_react_agent` 封装，自定义状态 |
-| 动态提示词 | `app/agents/prompts.py` | `@dynamic_prompt` 装饰器，提示词模板 |
+| Agent 构建 | `app/agents/builder.py` | `langchain.agents.create_agent`、结构化输出策略 |
+| Agent 中间件 | `app/agents/middleware.py` | 动态提示词、模型路由、摘要和工具错误处理 |
+| Agent 状态 | `app/agents/state.py` | v1 AgentState 与不可变 Context |
+| 短期记忆 | `app/agents/checkpoints.py` | InMemory / AsyncPostgresSaver 生命周期 |
+| 动态提示词 | `app/agents/prompts.py` | v1 `@dynamic_prompt` 提示词模板 |
 | 搜索工具 | `app/agents/tools/web_search.py` | Tavily 封装，替换扩展点 |
 | 对话接口 | `app/api/v1/chat.py` | `/invoke` 同步 + `/stream` SSE 流式 |
 | 提取接口 | `app/api/v1/extract.py` | ToolStrategy / ProviderStrategy |
@@ -57,3 +60,5 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 - 统一 JSON 错误信封 `{success, error: {code, message}}`
 - 日志包含 request_id 用于链路追踪
 - 配置与代码分离，敏感信息走环境变量
+- 不使用 `langgraph.prebuilt.create_react_agent` 等旧版兼容 API
+- 用户身份放 Context，会话身份放 `thread_id`，两者不得混用
