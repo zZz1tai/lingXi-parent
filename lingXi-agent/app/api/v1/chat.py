@@ -146,7 +146,6 @@ async def chat_invoke(
     if is_data_analysis:
         # 数据分析：直接调用 LLM，不经过 Agent
         from app.api.dependencies import create_llm
-        from langchain_core.messages import HumanMessage, SystemMessage
 
         llm = create_llm(request.llm_config)
 
@@ -271,7 +270,6 @@ async def _stream_direct_llm(
 ) -> AsyncGenerator[str, None]:
     """Direct LLM streaming for data analysis or chapter analysis (bypass Agent)."""
     from app.api.dependencies import create_llm
-    from langchain_core.messages import HumanMessage, SystemMessage
 
     llm = create_llm(request.llm_config)
 
