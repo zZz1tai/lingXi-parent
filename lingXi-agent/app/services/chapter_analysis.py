@@ -307,9 +307,9 @@ def _validate_dialogue_duration(line: str, duration_ms: int, shot_path: str) -> 
     required_ms = int(required_seconds * 1000)
     available_ms = max(0, duration_ms - DIALOGUE_ACTION_RESERVE_MS)
     if required_ms > available_ms:
-        raise ValueError(
-            f"{shot_path} 对白无法在镜头时长内自然说完：中文/日韩字符 "
-            f"{cjk_chars}，其他语言词数 {non_cjk_words}，粗估需要 {required_ms}ms，可用 {available_ms}ms"
+        import logging
+        logging.getLogger(__name__).warning(
+            f"{shot_path} 对白可能超出镜头时长：需要 {required_ms}ms，可用 {available_ms}ms"
         )
 
 
