@@ -117,7 +117,7 @@ async def analyze_chapter(
             len(prompt),
         )
 
-        # Step 3: Call LLM (with extended timeout for chapter analysis)
+        # Step 3: Call LLM (with streaming for long responses)
         from langchain_openai import ChatOpenAI
 
         llm_config = request.llm_config
@@ -125,7 +125,8 @@ async def analyze_chapter(
             "model": llm_config.model if llm_config else "qwen-max",
             "api_key": llm_config.api_key if llm_config else None,
             "timeout": 300,  # 5 minutes for chapter analysis
-            "max_retries": 1,
+            "max_retries": 2,
+            "streaming": True,  # Use streaming to prevent server timeout
         }
         if llm_config and llm_config.base_url:
             llm_kwargs["base_url"] = llm_config.base_url
@@ -135,9 +136,16 @@ async def analyze_chapter(
 
         messages = [HumanMessage(content=prompt)]
 
-        logger.info("Calling LLM | request_id=%s", request_id)
-        result = await llm.ainvoke(messages)
-        raw_response = result.content if hasattr(result, "content") else str(result)
+        logger.info("Calling LLM (streaming) | request_id=%s", request_id)
+        
+        # Collect streaming response
+        raw_response = ""
+        async for chunk in llm.astream(messages):
+            if hasattr(chunk, "content") and chunk.content:
+                content = chunk.content
+                if isinstance(content, str):
+                    raw_response += content
+        
         logger.info(
             "LLM response received | request_id=%s | response_length=%d",
             request_id,
