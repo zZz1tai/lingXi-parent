@@ -83,6 +83,9 @@ async def agent_error_handler(_request: Request, exc: AgentError) -> JSONRespons
 
 async def generic_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Catch-all handler — hides internal details from the client."""
+    import traceback
+    from app.utils.logger import logger
+    logger.error("Unhandled exception: %s\n%s", str(exc), traceback.format_exc())
     return JSONResponse(
         status_code=500,
         content={

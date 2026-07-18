@@ -98,16 +98,17 @@ async def chat_invoke(
         # 章节分析：直接调用 LLM，不经过 Agent
         from app.api.dependencies import create_llm
 
+        logger.info(
+            "Chapter analysis (direct LLM) | request_id=%s | message_length=%d | has_llm_config=%s",
+            request_id,
+            len(request.message),
+            request.llm_config is not None,
+        )
+
         llm = create_llm(request.llm_config)
 
         # 构建消息列表（保留原始 system prompt + user message）
         messages = [HumanMessage(content=request.message)]
-
-        logger.info(
-            "Chapter analysis (direct LLM) | request_id=%s | message_length=%d",
-            request_id,
-            len(request.message),
-        )
 
         try:
             result = await llm.ainvoke(messages)
@@ -132,7 +133,8 @@ async def chat_invoke(
                 ),
             )
         except Exception as exc:
-            logger.error("Chapter analysis failed | request_id=%s | error=%s", request_id, str(exc))
+            import traceback
+            logger.error("Chapter analysis failed | request_id=%s | error=%s\n%s", request_id, str(exc), traceback.format_exc())
             raise SearchError(f"Chapter analysis failed: {exc}") from exc
 
     # 检测是否是数据分析请求（消息中包含数据看板信息或工单统计等）

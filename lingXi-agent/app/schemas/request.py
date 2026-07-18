@@ -37,7 +37,7 @@ class ChatRequest(BaseModel):
     message: str = Field(
         ...,
         min_length=1,
-        max_length=10000,
+        max_length=100000,
         description="User message to send to the agent",
     )
     style: str = Field(
