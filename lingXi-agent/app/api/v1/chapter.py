@@ -117,8 +117,20 @@ async def analyze_chapter(
             len(prompt),
         )
 
-        # Step 3: Call LLM
-        llm = create_llm(request.llm_config)
+        # Step 3: Call LLM (with extended timeout for chapter analysis)
+        from langchain_openai import ChatOpenAI
+
+        llm_config = request.llm_config
+        llm_kwargs = {
+            "model": llm_config.model if llm_config else "qwen-max",
+            "api_key": llm_config.api_key if llm_config else None,
+            "timeout": 300,  # 5 minutes for chapter analysis
+            "max_retries": 1,
+        }
+        if llm_config and llm_config.base_url:
+            llm_kwargs["base_url"] = llm_config.base_url
+        llm = ChatOpenAI(**llm_kwargs)
+
         from langchain_core.messages import HumanMessage
 
         messages = [HumanMessage(content=prompt)]
