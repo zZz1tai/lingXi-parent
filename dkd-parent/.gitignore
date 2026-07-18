@@ -43,6 +43,7 @@ nbdist/
 *.swp
 *.yml
 !**/application.yml
+!**/application-druid.yml
 !*/build/*.java
 !*/build/*.html
 !*/build/*.xml
