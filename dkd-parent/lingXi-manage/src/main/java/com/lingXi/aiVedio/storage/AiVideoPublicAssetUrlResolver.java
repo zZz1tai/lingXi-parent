@@ -5,7 +5,7 @@ import org.springframework.stereotype.Component;
 import com.lingXi.aiVedio.config.AiVideoStorageProperties;
 import com.lingXi.common.exception.ServiceException;
 
-/** 将本地资源路径转换为 Wanx 可访问的公网 URL。 */
+/** 将本地资源路径转换为视频生成供应商可访问的公网 URL。 */
 @Component
 public class AiVideoPublicAssetUrlResolver
 {
@@ -25,7 +25,7 @@ public class AiVideoPublicAssetUrlResolver
         String baseUrl = properties.getPublicAssetBaseUrl();
         if (baseUrl == null || baseUrl.trim().isEmpty())
         {
-            throw new ServiceException("请配置 aivideo.public-asset-base-url，使 Wanx 能访问关键帧图片");
+            throw new ServiceException("请配置 aivideo.public-asset-base-url，使视频供应商能访问参考图片");
         }
         return baseUrl.replaceAll("/$", "") + (assetPath.startsWith("/") ? assetPath : "/" + assetPath);
     }

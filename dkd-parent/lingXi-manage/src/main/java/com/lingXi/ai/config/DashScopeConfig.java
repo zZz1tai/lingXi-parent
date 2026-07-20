@@ -13,8 +13,4 @@ public class DashScopeConfig {
     private String apiKey;
     /** 搬运给 Python Agent 的文生图模型。 */
     private String imageModel;
-    /** 搬运给 Python Agent 的图生视频模型。 */
-    private String videoModel;
-    /** 搬运给 Python Agent 的视频输出清晰度。 */
-    private String videoResolution;
 }

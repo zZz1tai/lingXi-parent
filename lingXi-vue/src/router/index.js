@@ -135,6 +135,20 @@ export const constantRoutes = [
 // 动态路由，基于用户权限动态去加载
 export const dynamicRoutes = [
   {
+    path: '/aiVedio/model-config',
+    component: Layout,
+    hidden: true,
+    permissions: ['aivideo:project:edit'],
+    children: [
+      {
+        path: 'index',
+        component: () => import('@/views/aiVedio/modelConfig/index'),
+        name: 'AiVedioModelConfig',
+        meta: { title: 'AI模型配置', activeMenu: '/aiVedio/project' }
+      }
+    ]
+  },
+  {
     path: '/system/user-auth',
     component: Layout,
     hidden: true,

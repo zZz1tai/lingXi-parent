@@ -204,6 +204,22 @@ def _project_character_canon(project_characters: list[dict] | None) -> str:
     return json.dumps(canon, ensure_ascii=False)
 
 
+def build_planning_context(
+    chapter_title: str,
+    source_units: list[SourceUnit],
+    project_characters: list[dict] | None = None,
+) -> str:
+    """Build conflict-free reference data for the chapter-skeleton model stage."""
+
+    return (
+        "PROJECT CHARACTER CANON (reference data):\n"
+        f"{_project_character_canon(project_characters)}\n\n"
+        f"CHAPTER TITLE: {chapter_title or ''}\n\n"
+        "SOURCE UNITS (preserve IDs and order):\n"
+        f"{_numbered_source_units(source_units)}"
+    )
+
+
 def build_prompt(
     chapter_title: str,
     source_units: list[SourceUnit],

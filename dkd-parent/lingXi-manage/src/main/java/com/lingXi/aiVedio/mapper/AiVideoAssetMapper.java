@@ -14,6 +14,13 @@ public interface AiVideoAssetMapper
 
     AiVideoAsset selectLatestEditableVideoDraftBySourceAssetId(Long sourceAssetId);
 
+    AiVideoAsset selectLatestReferenceAssetVersion(@Param("projectId") Long projectId,
+            @Param("assetType") String assetType, @Param("sceneId") Long sceneId,
+            @Param("characterId") Long characterId, @Param("assetCode") String assetCode);
+
+    List<AiVideoAsset> selectKeyframeVersionsByShotId(@Param("projectId") Long projectId,
+            @Param("shotId") Long shotId);
+
     AiVideoAsset selectProjectCharacterReferenceForUpdate(@Param("projectId") Long projectId,
             @Param("characterId") Long characterId, @Param("characterCode") String characterCode);
 
@@ -37,6 +44,16 @@ public interface AiVideoAssetMapper
             @Param("negativePromptText") String negativePromptText,
             @Param("durationMs") Integer durationMs,
             @Param("generationParamsJson") String generationParamsJson,
+            @Param("updateBy") String updateBy);
+
+    int updateAiVideoAssetReferenceBinding(@Param("assetId") Long assetId,
+            @Param("sourceAssetId") Long sourceAssetId,
+            @Param("metadataJson") String metadataJson,
+            @Param("updateBy") String updateBy);
+
+    int updateVideoSourceBinding(@Param("assetId") Long assetId,
+            @Param("sourceAssetId") Long sourceAssetId,
+            @Param("metadataJson") String metadataJson,
             @Param("updateBy") String updateBy);
 
     int markDraftAiVideoAssetGenerating(@Param("assetId") Long assetId,

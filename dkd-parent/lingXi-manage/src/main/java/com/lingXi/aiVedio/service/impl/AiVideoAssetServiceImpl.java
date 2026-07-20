@@ -13,7 +13,8 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lingXi.ai.config.DashScopeConfig;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.common.utils.SecurityUtils;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
@@ -23,6 +24,9 @@ import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.AiVideoProject;
 import com.lingXi.aiVedio.domain.AiVideoShot;
 import com.lingXi.aiVedio.domain.dto.AiVideoAssetRegenerationDraftRequest;
+import com.lingXi.aiVedio.domain.dto.AiVideoKeyframeReferenceBindingRequest;
+import com.lingXi.aiVedio.domain.dto.AiVideoVideoSourceBindingRequest;
+import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoAssetRelationMapper;
 import com.lingXi.aiVedio.mapper.AiVideoChapterMapper;
@@ -30,7 +34,7 @@ import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.mapper.AiVideoShotMapper;
 import com.lingXi.aiVedio.service.IAiVideoAssetService;
 import com.lingXi.aiVedio.service.IAiVideoProjectService;
-import com.lingXi.aiVedio.service.AiVideoWanxVideoService;
+import com.lingXi.aiVedio.service.AiVideoGenerationService;
 import com.lingXi.aiVedio.service.AiVideoImageReferenceService;
 import com.lingXi.aiVedio.service.AiVideoImageReferenceService.ResolvedImageReferences;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
@@ -40,6 +44,7 @@ import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage;
 public class AiVideoAssetServiceImpl implements IAiVideoAssetService
 {
     private static final Logger log = LoggerFactory.getLogger(AiVideoAssetServiceImpl.class);
+    private static final int MAX_CHARACTER_REFERENCE_IMAGES = 4;
 
     @Autowired
     private AiVideoAssetMapper assetMapper;
@@ -60,7 +65,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     private IAiVideoProjectService projectService;
 
     @Autowired
-    private AiVideoWanxVideoService wanxVideoService;
+    private AiVideoGenerationService videoGenerationService;
 
     @Autowired
     private AiVideoImageReferenceService imageReferenceService;
@@ -69,7 +74,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     private AiVideoLocalAssetStorage assetStorage;
 
     @Autowired
-    private DashScopeConfig dashScopeConfig;
+    private AiVideoModelConfigService modelConfigService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -143,7 +148,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         String requestJson = buildImageRequestJson(asset, references.getAssetIds());
         String generationParamsJson = buildImageGenerationParamsJson(asset);
         if (taskMapper.resetFailedImageTaskForRetry(
-                task.getTaskId(), requestJson, dashScopeConfig.getImageModel()) != 1)
+                task.getTaskId(), requestJson, modelConfigService.getConfig().getImageModel()) != 1)
         {
             throw new ServiceException("图片任务状态已变化，请刷新后重试");
         }
@@ -231,8 +236,10 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         draft.setNegativePromptText(videoNegativePrompt);
         draft.setGenerationParamsJson(buildVideoGenerationParamsJson(durationMs));
         Integer analysisVersion = AiVideoJsonMetadata.analysisVersion(keyframe.getMetadataJson());
-        draft.setMetadataJson(AiVideoJsonMetadata.withAnalysisVersion(shot.getPromptContextJson(),
-                analysisVersion == null ? shot.getVersionNo() : analysisVersion));
+        String metadataJson = AiVideoJsonMetadata.withAnalysisVersion(shot.getPromptContextJson(),
+                analysisVersion == null ? shot.getVersionNo() : analysisVersion);
+        draft.setMetadataJson(AiVideoJsonMetadata.withVideoSourceBinding(
+                metadataJson, keyframe.getAssetId(), keyframe.getVersionNo(), "AUTO"));
         draft.setCreateBy(username);
         if (assetMapper.insertAiVideoAsset(draft) != 1)
         {
@@ -313,14 +320,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         if ("VIDEO_CLIP".equals(source.getAssetType()))
         {
             validateVideoDuration(source.getDurationMs());
-            newSourceAssetId = source.getSourceAssetId();
+            Long requestedKeyframeAssetId = request == null ? null : request.getKeyframeAssetId();
+            newSourceAssetId = requestedKeyframeAssetId == null
+                    ? source.getSourceAssetId() : requestedKeyframeAssetId;
             AiVideoAsset keyframe = newSourceAssetId == null
                     ? null : assetMapper.selectAiVideoAssetByAssetIdForUpdate(newSourceAssetId);
-            if (keyframe == null || !"SHOT_KEYFRAME".equals(keyframe.getAssetType())
-                    || !source.getProjectId().equals(keyframe.getProjectId()))
-            {
-                throw new ServiceException("视频资产未关联有效的原始关键帧，无法创建新版本");
-            }
+            validateVideoSourceKeyframe(source, keyframe);
         }
         else if ("SHOT_KEYFRAME".equals(source.getAssetType()))
         {
@@ -364,8 +369,17 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             {
                 characterReferenceAssetIds.add(characterReference.getAssetId());
             }
-            regenerationMetadata = AiVideoJsonMetadata.withImageReferenceIds(regenerationMetadata,
-                    referenceOverride.getSceneReference().getAssetId(), characterReferenceAssetIds);
+            regenerationMetadata = AiVideoJsonMetadata.withImageReferenceBinding(regenerationMetadata,
+                    referenceOverride.getSceneReference().getAssetId(), characterReferenceAssetIds, "MANUAL");
+        }
+        if ("VIDEO_CLIP".equals(source.getAssetType()))
+        {
+            AiVideoAsset keyframe = assetMapper.selectAiVideoAssetByAssetId(newSourceAssetId);
+            boolean manuallySelected = request != null && request.getKeyframeAssetId() != null;
+            regenerationMetadata = AiVideoJsonMetadata.withVideoSourceBinding(regenerationMetadata,
+                    newSourceAssetId, keyframe == null ? null : keyframe.getVersionNo(),
+                    manuallySelected ? "MANUAL"
+                            : metadataMode(source.getMetadataJson(), "sourceBindingMode", "AUTO"));
         }
         draft.setMetadataJson(regenerationMetadata);
         draft.setCreateBy(username);
@@ -391,6 +405,126 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             throw new ServiceException("新版本草稿创建后读取失败");
         }
         return created;
+    }
+
+    @Override
+    public JsonNode getKeyframeReferenceBinding(Long assetId)
+    {
+        AiVideoAsset keyframe = selectAiVideoAssetByAssetId(assetId);
+        validateKeyframeBindingTarget(keyframe);
+        return buildKeyframeReferenceBinding(keyframe);
+    }
+
+    @Override
+    @Transactional
+    public AiVideoAsset updateKeyframeReferenceBinding(Long assetId,
+            AiVideoKeyframeReferenceBindingRequest request)
+    {
+        AiVideoAsset keyframe = lockBindingAsset(assetId);
+        validateKeyframeBindingTarget(keyframe);
+        validateBindingChangeAllowed(keyframe);
+        if (request == null)
+        {
+            throw new ServiceException("关键帧参考版本不能为空");
+        }
+        if (request.getMode() != null && !"MANUAL".equalsIgnoreCase(request.getMode().trim()))
+        {
+            throw new ServiceException("人工修改关键帧参考版本时 mode 只能是 MANUAL");
+        }
+        AiVideoAssetRegenerationDraftRequest regenerationRequest = new AiVideoAssetRegenerationDraftRequest();
+        regenerationRequest.setSceneReferenceAssetId(request.getSceneReferenceAssetId());
+        regenerationRequest.setCharacterReferenceAssetIds(request.getCharacterReferenceAssetIds());
+        KeyframeReferenceOverride binding = resolveKeyframeReferenceOverride(keyframe, regenerationRequest);
+        if (isEditableBindingStatus(keyframe.getStatus()))
+        {
+            applyKeyframeReferenceBinding(keyframe, binding, "MANUAL");
+            return selectAiVideoAssetByAssetId(keyframe.getAssetId());
+        }
+        return createRegenerationDraft(keyframe.getAssetId(), regenerationRequest);
+    }
+
+    @Override
+    @Transactional
+    public AiVideoAsset resetKeyframeReferenceBinding(Long assetId)
+    {
+        AiVideoAsset keyframe = lockBindingAsset(assetId);
+        validateKeyframeBindingTarget(keyframe);
+        validateBindingChangeAllowed(keyframe);
+        KeyframeReferenceOverride binding = resolveAutomaticKeyframeReferences(keyframe);
+        if (isEditableBindingStatus(keyframe.getStatus()))
+        {
+            applyKeyframeReferenceBinding(keyframe, binding, "AUTO");
+            return selectAiVideoAssetByAssetId(keyframe.getAssetId());
+        }
+
+        AiVideoAssetRegenerationDraftRequest request = toRegenerationRequest(binding);
+        AiVideoAsset draft = createRegenerationDraft(keyframe.getAssetId(), request);
+        String metadataJson = keyframeBindingMetadata(draft.getMetadataJson(), binding, "AUTO");
+        if (assetMapper.updateAiVideoAssetReferenceBinding(draft.getAssetId(),
+                binding.getSceneReference().getAssetId(), metadataJson, SecurityUtils.getUsername()) != 1)
+        {
+            throw new ServiceException("关键帧自动绑定状态已变化，请刷新后重试");
+        }
+        return selectAiVideoAssetByAssetId(draft.getAssetId());
+    }
+
+    @Override
+    public JsonNode getVideoSourceBinding(Long videoAssetId)
+    {
+        AiVideoAsset video = selectAiVideoAssetByAssetId(videoAssetId);
+        validateVideoBindingTarget(video);
+        return buildVideoSourceBinding(video);
+    }
+
+    @Override
+    @Transactional
+    public AiVideoAsset updateVideoSourceBinding(Long videoAssetId,
+            AiVideoVideoSourceBindingRequest request)
+    {
+        AiVideoAsset video = lockBindingAsset(videoAssetId);
+        validateVideoBindingTarget(video);
+        validateBindingChangeAllowed(video);
+        if (request == null || request.getKeyframeAssetId() == null)
+        {
+            throw new ServiceException("请选择要绑定的关键帧版本");
+        }
+        AiVideoAsset keyframe = assetMapper.selectAiVideoAssetByAssetIdForUpdate(request.getKeyframeAssetId());
+        validateVideoSourceKeyframe(video, keyframe);
+        if (isEditableBindingStatus(video.getStatus()))
+        {
+            applyVideoSourceBinding(video, keyframe, "MANUAL");
+            return selectAiVideoAssetByAssetId(video.getAssetId());
+        }
+        AiVideoAssetRegenerationDraftRequest regenerationRequest = new AiVideoAssetRegenerationDraftRequest();
+        regenerationRequest.setKeyframeAssetId(keyframe.getAssetId());
+        return createRegenerationDraft(video.getAssetId(), regenerationRequest);
+    }
+
+    @Override
+    @Transactional
+    public AiVideoAsset resetVideoSourceBinding(Long videoAssetId)
+    {
+        AiVideoAsset video = lockBindingAsset(videoAssetId);
+        validateVideoBindingTarget(video);
+        validateBindingChangeAllowed(video);
+        AiVideoAsset keyframe = resolveAutomaticVideoKeyframe(video);
+        if (isEditableBindingStatus(video.getStatus()))
+        {
+            applyVideoSourceBinding(video, keyframe, "AUTO");
+            return selectAiVideoAssetByAssetId(video.getAssetId());
+        }
+
+        AiVideoAssetRegenerationDraftRequest request = new AiVideoAssetRegenerationDraftRequest();
+        request.setKeyframeAssetId(keyframe.getAssetId());
+        AiVideoAsset draft = createRegenerationDraft(video.getAssetId(), request);
+        String metadataJson = AiVideoJsonMetadata.withVideoSourceBinding(draft.getMetadataJson(),
+                keyframe.getAssetId(), keyframe.getVersionNo(), "AUTO");
+        if (assetMapper.updateVideoSourceBinding(draft.getAssetId(), keyframe.getAssetId(),
+                metadataJson, SecurityUtils.getUsername()) != 1)
+        {
+            throw new ServiceException("视频自动绑定状态已变化，请刷新后重试");
+        }
+        return selectAiVideoAssetByAssetId(draft.getAssetId());
     }
 
     @Override
@@ -465,12 +599,15 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         task.setPriority(100);
         task.setIdempotencyKey("qwen-image-" + asset.getAssetCode() + "-" + asset.getVersionNo());
         task.setProviderCode("dashscope");
-        task.setModelCode(dashScopeConfig.getImageModel());
+        task.setModelCode(modelConfigService.getConfig().getImageModel());
         task.setProgress(5);
         task.setMaxRetry(0);
         task.setRequestJson(buildImageRequestJson(asset, references.getAssetIds()));
         task.setCreateBy(username);
-        taskMapper.insertAiVideoGenerationTask(task);
+        if (taskMapper.insertAiVideoGenerationTask(task) != 1 || task.getTaskId() == null)
+        {
+            throw new ServiceException("图片生成任务创建失败");
+        }
 
         return task.getTaskId();
     }
@@ -498,22 +635,27 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             throw new ServiceException("视频草稿与来源关键帧不属于同一项目");
         }
         validateVideoPrompt(video.getPromptText(), video.getDurationMs());
-        return wanxVideoService.submit(video, keyframe, SecurityUtils.getUsername());
+        // 视频任务继续使用关键帧已锁定的精确人物/场景版本；提交前再次校验引用可访问性。
+        imageReferenceService.resolveAndValidate(keyframe);
+        List<AiVideoAsset> boundReferences = assetRelationMapper
+                .selectActiveReferenceAssetsByTargetAssetId(keyframe.getAssetId());
+        return videoGenerationService.submit(video, keyframe, boundReferences,
+                SecurityUtils.getUsername());
     }
 
     @Override
     @Transactional
-    public void resolveWanxSubmission(Long videoAssetId, String action, String providerTaskId)
+    public void resolveVideoSubmission(Long videoAssetId, String action, String providerTaskId)
     {
         AiVideoAsset video = selectAiVideoAssetByAssetId(videoAssetId);
         if (!"VIDEO_CLIP".equals(video.getAssetType()) || !"GENERATING".equals(video.getStatus()))
         {
             throw new ServiceException("只有提交结果待核对的视频资产可以执行此操作");
         }
-        AiVideoGenerationTask task = taskMapper.selectLatestNeedsReviewWanxTaskByAssetId(videoAssetId);
+        AiVideoGenerationTask task = taskMapper.selectLatestNeedsReviewVideoTaskByAssetId(videoAssetId);
         if (task == null)
         {
-            throw new ServiceException("未找到待人工核对的 Wanx 视频任务");
+            throw new ServiceException("未找到待人工核对的视频供应商任务");
         }
         String normalizedAction = action == null ? "" : action.trim().toUpperCase(java.util.Locale.ROOT);
         String username = SecurityUtils.getUsername();
@@ -527,12 +669,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             if (resolvedTaskId.length() < 8 || resolvedTaskId.length() > 255
                     || !resolvedTaskId.matches("[A-Za-z0-9_-]+"))
             {
-                throw new ServiceException("请填写有效的 DashScope Wanx 任务ID");
+                throw new ServiceException("请填写有效的视频供应商任务ID");
             }
-            if (taskMapper.resolveNeedsReviewWanxTaskWithProviderId(
+            if (taskMapper.resolveNeedsReviewVideoTaskWithProviderId(
                     task.getTaskId(), resolvedTaskId, username) != 1)
             {
-                throw new ServiceException("Wanx 待核对任务状态已变化，请刷新后重试");
+                throw new ServiceException("视频供应商待核对任务状态已变化，请刷新后重试");
             }
             return;
         }
@@ -540,19 +682,19 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         {
             if (task.getProviderTaskId() != null && !task.getProviderTaskId().trim().isEmpty())
             {
-                throw new ServiceException("该任务已有 Wanx 任务ID，不能标记为未提交，请恢复轮询");
+                throw new ServiceException("该任务已有供应商任务ID，不能标记为未提交，请恢复轮询");
             }
             video.setMetadataJson(AiVideoJsonMetadata.generationFailure(video.getMetadataJson(),
-                    "人工核对确认 Wanx 未受理，草稿已解锁"));
+                    "人工核对确认视频供应商未受理，草稿已解锁"));
             video.setUpdateBy(username);
             if (assetMapper.markAiVideoAssetFailed(video) != 1
-                    || taskMapper.resolveNeedsReviewWanxTaskAsNotSubmitted(task.getTaskId(), username) != 1)
+                    || taskMapper.resolveNeedsReviewVideoTaskAsNotSubmitted(task.getTaskId(), username) != 1)
             {
-                throw new ServiceException("Wanx 待核对任务状态已变化，请刷新后重试");
+                throw new ServiceException("视频供应商待核对任务状态已变化，请刷新后重试");
             }
             return;
         }
-        throw new ServiceException("不支持的 Wanx 核对操作");
+        throw new ServiceException("不支持的视频供应商核对操作");
     }
 
     private void validateApprovedKeyframe(AiVideoAsset keyframe)
@@ -582,6 +724,260 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
                 || (assetType != null && assetType.endsWith("_REFERENCE"));
     }
 
+    private AiVideoAsset lockBindingAsset(Long assetId)
+    {
+        AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetIdForUpdate(assetId);
+        if (asset == null)
+        {
+            throw new ServiceException("资产不存在或已删除");
+        }
+        projectService.checkProjectOwner(asset.getProjectId());
+        return asset;
+    }
+
+    private void validateKeyframeBindingTarget(AiVideoAsset asset)
+    {
+        if (asset == null || !"SHOT_KEYFRAME".equals(asset.getAssetType()))
+        {
+            throw new ServiceException("只有分镜关键帧可以绑定人物和场景参考版本");
+        }
+    }
+
+    private void validateVideoBindingTarget(AiVideoAsset asset)
+    {
+        if (asset == null || !"VIDEO_CLIP".equals(asset.getAssetType()))
+        {
+            throw new ServiceException("只有视频资产可以绑定来源关键帧版本");
+        }
+    }
+
+    private void validateBindingChangeAllowed(AiVideoAsset asset)
+    {
+        if (isActiveAssetStatus(asset.getStatus())
+                || taskMapper.countActiveAiVideoGenerationTasksByAssetId(asset.getAssetId()) > 0)
+        {
+            throw new ServiceException("资产正在生成或处理中，请等待任务结束后再修改绑定");
+        }
+    }
+
+    private boolean isEditableBindingStatus(String status)
+    {
+        return "DRAFT".equals(status) || "REJECTED".equals(status);
+    }
+
+    private ObjectNode buildKeyframeReferenceBinding(AiVideoAsset keyframe)
+    {
+        List<AiVideoAsset> references = assetRelationMapper
+                .selectActiveReferenceAssetsByTargetAssetId(keyframe.getAssetId());
+        AiVideoAsset sceneReference = null;
+        ArrayNode characterReferences = objectMapper.createArrayNode();
+        for (AiVideoAsset reference : references)
+        {
+            if ("SCENE_REFERENCE".equals(reference.getAssetType()))
+            {
+                sceneReference = reference;
+            }
+            else if ("CHARACTER_REFERENCE".equals(reference.getAssetType()))
+            {
+                characterReferences.add(objectMapper.valueToTree(reference));
+            }
+        }
+        ObjectNode detail = objectMapper.createObjectNode();
+        detail.set("asset", objectMapper.valueToTree(keyframe));
+        detail.put("bindingMode", metadataMode(
+                keyframe.getMetadataJson(), "referenceBindingMode", "AUTO"));
+        detail.put("editableInPlace", isEditableBindingStatus(keyframe.getStatus()));
+        if (sceneReference == null)
+        {
+            detail.putNull("sceneReference");
+        }
+        else
+        {
+            detail.set("sceneReference", objectMapper.valueToTree(sceneReference));
+        }
+        detail.set("characterReferences", characterReferences);
+        return detail;
+    }
+
+    private ObjectNode buildVideoSourceBinding(AiVideoAsset video)
+    {
+        AiVideoAsset keyframe = video.getSourceAssetId() == null
+                ? null : assetMapper.selectAiVideoAssetByAssetId(video.getSourceAssetId());
+        ObjectNode detail = objectMapper.createObjectNode();
+        detail.set("asset", objectMapper.valueToTree(video));
+        detail.put("bindingMode", metadataMode(video.getMetadataJson(), "sourceBindingMode", "AUTO"));
+        detail.put("editableInPlace", isEditableBindingStatus(video.getStatus()));
+        if (keyframe == null)
+        {
+            detail.putNull("sourceKeyframe");
+            detail.putNull("inheritedReferences");
+        }
+        else
+        {
+            detail.set("sourceKeyframe", objectMapper.valueToTree(keyframe));
+            detail.set("inheritedReferences", buildKeyframeReferenceBinding(keyframe));
+        }
+        ArrayNode availableKeyframes = detail.putArray("availableKeyframes");
+        if (video.getShotId() != null)
+        {
+            for (AiVideoAsset candidate : assetMapper.selectKeyframeVersionsByShotId(
+                    video.getProjectId(), video.getShotId()))
+            {
+                if ("APPROVED".equals(candidate.getStatus())
+                        && candidate.getObjectKey() != null && !candidate.getObjectKey().trim().isEmpty())
+                {
+                    availableKeyframes.add(objectMapper.valueToTree(candidate));
+                }
+            }
+        }
+        return detail;
+    }
+
+    private void applyKeyframeReferenceBinding(AiVideoAsset keyframe,
+            KeyframeReferenceOverride binding, String mode)
+    {
+        assetRelationMapper.deleteIncomingReferenceRelations(
+                keyframe.getProjectId(), keyframe.getAssetId());
+        insertKeyframeReferenceOverride(keyframe, binding);
+        String metadataJson = keyframeBindingMetadata(keyframe.getMetadataJson(), binding, mode);
+        if (assetMapper.updateAiVideoAssetReferenceBinding(keyframe.getAssetId(),
+                binding.getSceneReference().getAssetId(), metadataJson, SecurityUtils.getUsername()) != 1)
+        {
+            throw new ServiceException("关键帧绑定状态已变化，请刷新后重试");
+        }
+    }
+
+    private void applyVideoSourceBinding(AiVideoAsset video, AiVideoAsset keyframe, String mode)
+    {
+        String metadataJson = AiVideoJsonMetadata.withVideoSourceBinding(video.getMetadataJson(),
+                keyframe.getAssetId(), keyframe.getVersionNo(), mode);
+        if (assetMapper.updateVideoSourceBinding(video.getAssetId(), keyframe.getAssetId(),
+                metadataJson, SecurityUtils.getUsername()) != 1)
+        {
+            throw new ServiceException("视频来源关键帧状态已变化，请刷新后重试");
+        }
+    }
+
+    private String keyframeBindingMetadata(String metadataJson,
+            KeyframeReferenceOverride binding, String mode)
+    {
+        List<Long> characterAssetIds = new ArrayList<>();
+        for (AiVideoAsset characterReference : binding.getCharacterReferences())
+        {
+            characterAssetIds.add(characterReference.getAssetId());
+        }
+        return AiVideoJsonMetadata.withImageReferenceBinding(metadataJson,
+                binding.getSceneReference().getAssetId(), characterAssetIds, mode);
+    }
+
+    private AiVideoAssetRegenerationDraftRequest toRegenerationRequest(
+            KeyframeReferenceOverride binding)
+    {
+        AiVideoAssetRegenerationDraftRequest request = new AiVideoAssetRegenerationDraftRequest();
+        request.setSceneReferenceAssetId(binding.getSceneReference().getAssetId());
+        List<Long> characterAssetIds = new ArrayList<>();
+        for (AiVideoAsset characterReference : binding.getCharacterReferences())
+        {
+            characterAssetIds.add(characterReference.getAssetId());
+        }
+        request.setCharacterReferenceAssetIds(characterAssetIds);
+        return request;
+    }
+
+    private KeyframeReferenceOverride resolveAutomaticKeyframeReferences(AiVideoAsset keyframe)
+    {
+        List<AiVideoAsset> currentReferences = assetRelationMapper
+                .selectActiveReferenceAssetsByTargetAssetId(keyframe.getAssetId());
+        AiVideoAsset currentScene = null;
+        List<AiVideoAsset> currentCharacters = new ArrayList<>();
+        for (AiVideoAsset reference : currentReferences)
+        {
+            if ("SCENE_REFERENCE".equals(reference.getAssetType())) currentScene = reference;
+            if ("CHARACTER_REFERENCE".equals(reference.getAssetType())) currentCharacters.add(reference);
+        }
+        Long sceneId = keyframe.getSceneId() != null
+                ? keyframe.getSceneId() : currentScene == null ? null : currentScene.getSceneId();
+        String sceneAssetCode = sceneId == null && currentScene != null
+                ? currentScene.getAssetCode() : null;
+        if (sceneId == null && (sceneAssetCode == null || sceneAssetCode.trim().isEmpty()))
+        {
+            throw new ServiceException("关键帧缺少场景身份，无法恢复自动匹配");
+        }
+        AiVideoAsset latestScene = assetMapper.selectLatestReferenceAssetVersion(
+                keyframe.getProjectId(), "SCENE_REFERENCE", sceneId, null, sceneAssetCode);
+        if (latestScene == null)
+        {
+            throw new ServiceException("当前场景没有可用的已批准参考图版本");
+        }
+        if (currentCharacters.size() > MAX_CHARACTER_REFERENCE_IMAGES)
+        {
+            throw new ServiceException("当前关键帧人物引用超过 " + MAX_CHARACTER_REFERENCE_IMAGES + " 张");
+        }
+        List<AiVideoAsset> latestCharacters = new ArrayList<>();
+        for (AiVideoAsset currentCharacter : currentCharacters)
+        {
+            String assetCode = currentCharacter.getCharacterId() == null
+                    ? currentCharacter.getAssetCode() : null;
+            AiVideoAsset latestCharacter = assetMapper.selectLatestReferenceAssetVersion(
+                    keyframe.getProjectId(), "CHARACTER_REFERENCE", null,
+                    currentCharacter.getCharacterId(), assetCode);
+            if (latestCharacter == null)
+            {
+                throw new ServiceException("人物“" + currentCharacter.getAssetName()
+                        + "”没有可用的已批准参考图版本");
+            }
+            latestCharacters.add(latestCharacter);
+        }
+        return new KeyframeReferenceOverride(latestScene, latestCharacters);
+    }
+
+    private AiVideoAsset resolveAutomaticVideoKeyframe(AiVideoAsset video)
+    {
+        if (video.getShotId() == null)
+        {
+            throw new ServiceException("视频未关联分镜，无法恢复自动匹配");
+        }
+        for (AiVideoAsset candidate : assetMapper.selectKeyframeVersionsByShotId(
+                video.getProjectId(), video.getShotId()))
+        {
+            if ("APPROVED".equals(candidate.getStatus())
+                    && candidate.getObjectKey() != null && !candidate.getObjectKey().trim().isEmpty())
+            {
+                return candidate;
+            }
+        }
+        throw new ServiceException("当前分镜没有可用的已批准关键帧版本");
+    }
+
+    private void validateVideoSourceKeyframe(AiVideoAsset video, AiVideoAsset keyframe)
+    {
+        if (keyframe == null || !"SHOT_KEYFRAME".equals(keyframe.getAssetType()))
+        {
+            throw new ServiceException("所选来源关键帧不存在或类型不正确");
+        }
+        if (!video.getProjectId().equals(keyframe.getProjectId())
+                || video.getShotId() == null || !video.getShotId().equals(keyframe.getShotId()))
+        {
+            throw new ServiceException("视频只能绑定同一项目、同一分镜的关键帧版本");
+        }
+        validateApprovedKeyframe(keyframe);
+    }
+
+    private String metadataMode(String metadataJson, String fieldName, String defaultMode)
+    {
+        if (metadataJson == null || metadataJson.trim().isEmpty()) return defaultMode;
+        try
+        {
+            String mode = objectMapper.readTree(metadataJson).path(fieldName).asText("")
+                    .trim().toUpperCase(java.util.Locale.ROOT);
+            return "MANUAL".equals(mode) || "AUTO".equals(mode) ? mode : defaultMode;
+        }
+        catch (Exception ignored)
+        {
+            return defaultMode;
+        }
+    }
+
     private KeyframeReferenceOverride resolveKeyframeReferenceOverride(AiVideoAsset source,
             AiVideoAssetRegenerationDraftRequest request)
     {
@@ -603,6 +999,11 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
 
         List<Long> characterAssetIds = request.getCharacterReferenceAssetIds();
         int characterCount = characterAssetIds == null ? 0 : characterAssetIds.size();
+        if (characterCount > MAX_CHARACTER_REFERENCE_IMAGES)
+        {
+            throw new ServiceException("关键帧人物参考图最多选择 "
+                    + MAX_CHARACTER_REFERENCE_IMAGES + " 张");
+        }
         Set<Long> uniqueReferenceIds = new LinkedHashSet<>();
         Long sceneAssetId = request.getSceneReferenceAssetId();
         uniqueReferenceIds.add(sceneAssetId);
@@ -626,7 +1027,59 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
                         source, characterAssetId, "CHARACTER_REFERENCE", "人物"));
             }
         }
-        return new KeyframeReferenceOverride(sceneReference, characterReferences);
+        KeyframeReferenceOverride override = new KeyframeReferenceOverride(
+                sceneReference, characterReferences);
+        validateReferenceVersionIdentities(source, override);
+        return override;
+    }
+
+    private void validateReferenceVersionIdentities(AiVideoAsset keyframe,
+            KeyframeReferenceOverride binding)
+    {
+        if (keyframe.getSceneId() == null
+                || !keyframe.getSceneId().equals(binding.getSceneReference().getSceneId()))
+        {
+            throw new ServiceException("场景参考图必须属于当前分镜的同一场景");
+        }
+        List<AiVideoAsset> currentCharacters = new ArrayList<>();
+        for (AiVideoAsset current : assetRelationMapper
+                .selectActiveReferenceAssetsByTargetAssetId(keyframe.getAssetId()))
+        {
+            if ("CHARACTER_REFERENCE".equals(current.getAssetType())) currentCharacters.add(current);
+        }
+        if (binding.getCharacterReferences().size() != currentCharacters.size())
+        {
+            throw new ServiceException("只能为当前分镜中的人物切换图片版本，不能增删人物");
+        }
+        List<AiVideoAsset> unmatchedCharacters = new ArrayList<>(currentCharacters);
+        for (AiVideoAsset selected : binding.getCharacterReferences())
+        {
+            int matchedIndex = -1;
+            for (int i = 0; i < unmatchedCharacters.size(); i++)
+            {
+                if (sameCharacterIdentity(unmatchedCharacters.get(i), selected))
+                {
+                    matchedIndex = i;
+                    break;
+                }
+            }
+            if (matchedIndex < 0)
+            {
+                throw new ServiceException("人物参考图只能切换为同一人物的其他版本");
+            }
+            unmatchedCharacters.remove(matchedIndex);
+        }
+    }
+
+    private boolean sameCharacterIdentity(AiVideoAsset current, AiVideoAsset selected)
+    {
+        if (current.getCharacterId() != null || selected.getCharacterId() != null)
+        {
+            return current.getCharacterId() != null
+                    && current.getCharacterId().equals(selected.getCharacterId());
+        }
+        return current.getAssetCode() != null
+                && current.getAssetCode().equals(selected.getAssetCode());
     }
 
     private AiVideoAsset lockAndValidateOverrideReference(AiVideoAsset target,
@@ -855,22 +1308,23 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
 
     private String buildVideoGenerationParamsJson(Integer durationMs)
     {
-        return AiVideoJsonMetadata.videoGenerationParameters("wanx", dashScopeConfig.getVideoModel(),
-                durationMs, null);
+        return AiVideoJsonMetadata.videoGenerationParameters(videoGenerationService.providerCode(),
+                videoGenerationService.modelCode(), durationMs, null);
     }
 
     private String buildImageRequestJson(AiVideoAsset asset, List<Long> referenceAssetIds)
     {
         String aspectRatio = resolveImageAspectRatio(asset);
         return AiVideoJsonMetadata.imageGenerationRequest(asset.getPromptText(), asset.getNegativePromptText(),
-                dashScopeConfig.getImageModel(), asset.getAssetType(), aspectRatio,
+                modelConfigService.getConfig().getImageModel(), asset.getAssetType(), aspectRatio,
                 referenceAssetIds);
     }
 
     private String buildImageGenerationParamsJson(AiVideoAsset asset)
     {
         String aspectRatio = resolveImageAspectRatio(asset);
-        return AiVideoJsonMetadata.generationParameters("dashscope", dashScopeConfig.getImageModel(),
+        return AiVideoJsonMetadata.generationParameters("dashscope",
+                modelConfigService.getConfig().getImageModel(),
                 aspectRatio);
     }
 

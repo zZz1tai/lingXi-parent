@@ -15,6 +15,7 @@ from app.schemas.request import LLMConfig
 
 
 NonBlankText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+MAX_SCENE_SOURCE_UNITS = 12
 ShortText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, max_length=512),
@@ -232,6 +233,43 @@ class ChapterStoryBible(ChapterContractModel):
     scenes: list[ChapterScene] = Field(min_length=1)
 
 
+class ChapterScenePlan(ChapterContractModel):
+    """Small scene boundary produced before expensive shot generation."""
+
+    scene_no: Optional[int] = Field(default=None, alias="sceneNo")
+    title: NonBlankText
+    time: NonBlankText
+    location: NonBlankText
+    atmosphere: NonBlankText
+    dramatic_goal: NonBlankText = Field(alias="dramaticGoal")
+    characters: list[Any] = Field(default_factory=list)
+    source_unit_ids: list[NonBlankText] = Field(
+        alias="sourceUnitIds",
+        min_length=1,
+        max_length=MAX_SCENE_SOURCE_UNITS,
+    )
+
+
+class ChapterAnalysisPlan(ChapterContractModel):
+    """Validated chapter skeleton used to generate one bounded scene at a time."""
+
+    summary: NonBlankText
+    world_setting: NonBlankText = Field(alias="worldSetting")
+    timeline: list[Any]
+    relationships: list[Any]
+    immutable_facts: list[Any] = Field(alias="immutableFacts")
+    segmentation_rationale: NonBlankText = Field(alias="segmentationRationale")
+    characters: list[ChapterCharacter]
+    scenes: list[ChapterScenePlan] = Field(min_length=1)
+
+
+def validate_chapter_plan_structure(document: Any) -> dict[str, Any]:
+    """Validate a provider chapter skeleton and return mutable camelCase data."""
+
+    model = ChapterAnalysisPlan.model_validate(document)
+    return model.model_dump(by_alias=True, exclude_none=True)
+
+
 def validate_story_bible_structure(document: Any) -> dict[str, Any]:
     """Validate provider JSON and return a mutable camelCase dictionary."""
 
@@ -242,8 +280,12 @@ def validate_story_bible_structure(document: Any) -> dict[str, Any]:
 __all__ = [
     "AnalyzeChapterRequest",
     "AnalyzeChapterResponse",
+    "ChapterAnalysisPlan",
     "ChapterDialogue",
     "ChapterProjectCharacter",
+    "ChapterScene",
     "ChapterStoryBible",
+    "MAX_SCENE_SOURCE_UNITS",
+    "validate_chapter_plan_structure",
     "validate_story_bible_structure",
 ]

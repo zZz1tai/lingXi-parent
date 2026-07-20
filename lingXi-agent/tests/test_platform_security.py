@@ -76,6 +76,26 @@ class OutboundDestinationTests(unittest.TestCase):
                 )
                 self.assertEqual(result, candidate)
 
+    def test_explicit_wildcard_allows_workspace_subdomain_only(self) -> None:
+        allowed = {"*.cn-beijing.maas.aliyuncs.com"}
+        candidate = (
+            "https://workspace-123.cn-beijing.maas.aliyuncs.com/"
+            "api/v1/tasks/task-1"
+        )
+        self.assertEqual(
+            validate_outbound_http_url(candidate, allowed_hosts=allowed),
+            candidate,
+        )
+        rejected = (
+            "https://cn-beijing.maas.aliyuncs.com/api/v1/tasks/task-1",
+            "https://workspace-123.cn-beijing.maas.aliyuncs.com.evil.invalid/api/v1/tasks/task-1",
+            "https://workspace-123.cn-beijing.maas.aliyuncs.com:8443/api/v1/tasks/task-1",
+        )
+        for url in rejected:
+            with self.subTest(url=url):
+                with self.assertRaises(InputValidationError):
+                    validate_outbound_http_url(url, allowed_hosts=allowed)
+
 
 class ProviderClientSecurityTests(unittest.IsolatedAsyncioTestCase):
     async def test_shared_provider_client_never_follows_redirects(self) -> None:

@@ -145,9 +145,6 @@ dromara:
 dashscope:
   api-key: sk-fcb8548e57ff4eb68237b7d092e5f1b1  #千问api
   image-model: qwen-image-2.0-pro-2026-06-22
-  video-model: wanx2.1-i2v-turbo
-  video-resolution: 720P
-  # 草稿已是完整提示词，关闭供应商二次改写，确保人工确认内容与实际请求一致
 
 # LingXi-Agent 配置
 agent:
@@ -165,7 +162,7 @@ agent:
   # LLM 配置 (传递给 Python Agent, 复用 dashscope 配置)
   llm-api-key: ${dashscope.api-key}
   llm-model: deepseek-v4-flash
-  llm-base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  llm-base-url: https://llm-pjxe58t9bydrpkqj.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
 
 # Video Generation API 配置 (调用 Python Agent)
 video:
@@ -174,18 +171,28 @@ video:
   submit-video-url: /api/v1/video/submit-video
   query-video-url: /api/v1/video/query-video
   analyze-chapter-url: /api/v1/video/analyze-chapter
+  analyze-chapter-stream-url: /api/v1/video/analyze-chapter/stream
   connect-timeout: 5000
   image-read-timeout: 200000
   # Python 每次章节 LLM 请求最多等待 7 分钟；会随 llm_config.timeout_seconds 搬运
   chapter-provider-read-timeout-seconds: 420
-  # 覆盖首次请求 + 最多一次结构修复请求 + 传输余量（必须大于 2 * 420s + 60s）
-  chapter-read-timeout: 960000
+  # 逐场景生成使用流式进度保持连接；30 分钟读取超时为单次静默等待提供充足余量
+  chapter-read-timeout: 1800000
   video-read-timeout: 60000
 
 # AI 视频图片任务节流配置
 aivideo:
+  video:
+    provider: happyhorse
+    model: happyhorse-1.1-r2v
+    # 业务空间专属域名；Agent 会把 compatible-mode/v1 归一化为原生视频 API 路径。
+    base-url: https://llm-pjxe58t9bydrpkqj.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+    resolution: 720P
+    ratio: 16:9
+    watermark: false
+    poll-interval-ms: 15000
   scheduler:
-    # 图片同步生成不会阻塞 Wanx 视频轮询
+    # 图片同步生成不会阻塞视频供应商任务轮询
     pool-size: 2
   image:
     # Qwen Image 同步生成请求之间的最小间隔
@@ -194,6 +201,3 @@ aivideo:
     sync-read-timeout-ms: 180000
     # 进程中断后恢复未完成图片任务的扫描间隔
     queued-recovery-interval-ms: 10000
-  wanx:
-    # Wanx 图生视频异步任务轮询间隔
-    video-poll-interval-ms: 8000

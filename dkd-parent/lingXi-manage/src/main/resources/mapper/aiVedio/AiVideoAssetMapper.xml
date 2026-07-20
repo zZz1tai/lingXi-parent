@@ -72,6 +72,24 @@
         limit 1
     </select>
 
+    <select id="selectLatestReferenceAssetVersion" resultMap="AiVideoAssetResult">
+        <include refid="selectAiVideoAssetVo"/>
+        where project_id = #{projectId} and asset_type = #{assetType}
+          and status = 'APPROVED' and object_key is not null and del_flag = '0'
+          <if test="sceneId != null">and scene_id = #{sceneId}</if>
+          <if test="characterId != null">and character_id = #{characterId}</if>
+          <if test="assetCode != null and assetCode != ''">and asset_code = #{assetCode}</if>
+        order by version_no desc, asset_id desc
+        limit 1
+    </select>
+
+    <select id="selectKeyframeVersionsByShotId" resultMap="AiVideoAssetResult">
+        <include refid="selectAiVideoAssetVo"/>
+        where project_id = #{projectId} and shot_id = #{shotId}
+          and asset_type = 'SHOT_KEYFRAME' and del_flag = '0'
+        order by version_no desc, asset_id desc
+    </select>
+
     <!-- 兼容新项目级编码、旧 chapter 编码以及旧 metadata.characterCode。 -->
     <select id="selectProjectCharacterReferenceForUpdate" resultMap="AiVideoAssetResult">
         <include refid="selectAiVideoAssetVo"/>
@@ -149,6 +167,22 @@
         update ai_video_asset
         set prompt_text = #{promptText}, negative_prompt_text = #{negativePromptText},
             duration_ms = #{durationMs}, generation_params_json = #{generationParamsJson},
+            update_by = #{updateBy}, update_time = now()
+        where asset_id = #{assetId} and asset_type = 'VIDEO_CLIP'
+          and status in ('DRAFT', 'REJECTED') and del_flag = '0'
+    </update>
+
+    <update id="updateAiVideoAssetReferenceBinding">
+        update ai_video_asset
+        set source_asset_id = #{sourceAssetId}, metadata_json = #{metadataJson},
+            update_by = #{updateBy}, update_time = now()
+        where asset_id = #{assetId} and asset_type = 'SHOT_KEYFRAME'
+          and status in ('DRAFT', 'REJECTED') and del_flag = '0'
+    </update>
+
+    <update id="updateVideoSourceBinding">
+        update ai_video_asset
+        set source_asset_id = #{sourceAssetId}, metadata_json = #{metadataJson},
             update_by = #{updateBy}, update_time = now()
         where asset_id = #{assetId} and asset_type = 'VIDEO_CLIP'
           and status in ('DRAFT', 'REJECTED') and del_flag = '0'

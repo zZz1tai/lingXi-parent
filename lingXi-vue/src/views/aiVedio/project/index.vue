@@ -6,9 +6,14 @@
         <h1>小说视频工作台</h1>
         <p class="subtitle">从章节、人物和场景资产开始组织你的自动化生产流程。</p>
       </div>
-      <el-button type="primary" size="large" :icon="Plus" @click="handleAddProject">
-        新建项目
-      </el-button>
+      <div class="header-actions">
+        <el-button v-hasPermi="['aivideo:project:edit']" size="large" :icon="Connection" @click="router.push('/aiVedio/model-config/index')">
+          模型配置
+        </el-button>
+        <el-button type="primary" size="large" :icon="Plus" @click="handleAddProject">
+          新建项目
+        </el-button>
+      </div>
     </header>
 
     <section class="toolbar">
@@ -126,6 +131,20 @@
                 {{ chapter.chapterTitle || `第 ${chapter.chapterNo} 章` }}
               </button>
               <p>{{ chapter.wordCount || 0 }} 字 · {{ pipelineLabel(chapter.pipelineStatus) }}</p>
+              <div v-if="chapter.parseStatus === 'RUNNING'" class="chapter-analysis-progress">
+                <div class="chapter-analysis-progress__label">
+                  <span>{{ chapter.analysisTask?.stageLabel || '正在启动章节分析' }}</span>
+                  <strong>{{ chapter.analysisTask?.progress || 10 }}%</strong>
+                </div>
+                <el-progress
+                  :percentage="chapter.analysisTask?.progress || 10"
+                  :show-text="false"
+                  :stroke-width="6"
+                />
+              </div>
+              <p v-else-if="chapter.parseStatus === 'FAILED' && chapter.analysisTask?.errorMessage" class="chapter-analysis-error">
+                {{ chapter.analysisTask.errorMessage }}
+              </p>
             </div>
             <el-tag effect="plain" :type="chapter.parseStatus === 'FAILED' ? 'danger' : 'info'">{{ chapter.parseStatus }}</el-tag>
             <div class="chapter-item-actions">
@@ -161,7 +180,7 @@
       <div class="chapter-video-toolbar">
         <el-alert
           title="这里汇总本章的场景图、分镜关键帧和全部视频版本"
-          description="打开工作台不会调用模型。图片需先查看提示词并手动生成；关键帧同意后才可准备视频提示词，最终仍需二次确认才会调用 Wanx。"
+          description="打开工作台不会调用模型。图片需先查看提示词并手动生成；关键帧同意后才可准备视频提示词，最终仍需二次确认才会调用视频生成服务。"
           type="info"
           :closable="false"
           show-icon
@@ -186,7 +205,7 @@
         <el-alert
           v-if="chapterVideoDrawer.preparing"
           :title="chapterVideoDrawer.prepareTotal ? `正在准备视频提示词草稿（${chapterVideoDrawer.preparedCount}/${chapterVideoDrawer.prepareTotal}）` : '正在检查本章已同意的关键帧'"
-          description="这里只会创建或复用草稿；已有视频版本的镜头会跳过，不会提交 Wanx。"
+          description="这里只会创建或复用草稿；已有视频版本的镜头会跳过，不会提交视频生成任务。"
           type="warning"
           :closable="false"
           show-icon
@@ -389,9 +408,13 @@
                         <el-tag v-if="assetAnalysisVersion(asset)" size="small" type="info" effect="plain">
                           分析 v{{ assetAnalysisVersion(asset) }}{{ isCurrentAnalysisAsset(asset, chapterVideoDrawer.chapter) ? ' · 当前' : ' · 历史' }}
                         </el-tag>
+                        <el-tag size="small" :type="bindingMode(asset, 'referenceBindingMode') === 'MANUAL' ? 'warning' : 'success'" effect="plain">
+                          {{ bindingModeLabel(bindingMode(asset, 'referenceBindingMode')) }}参考
+                        </el-tag>
                       </div>
                       <h4>{{ asset.assetName }}</h4>
                       <p>{{ assetDimensionLabel(asset) }}</p>
+                      <p class="asset-binding-summary">{{ keyframeBindingSummary(asset) }}</p>
                       <div class="asset-prompt-preview chapter-material-prompt">
                         <strong>关键帧提示词</strong>
                         <p>{{ asset.promptText || '尚未填写提示词' }}</p>
@@ -450,7 +473,7 @@
                           :loading="regeneratingAssetId === asset.assetId"
                           :disabled="isAssetBusy(asset, chapterVideoDrawer.taskByAssetId[asset.assetId])"
                           @click="createRegenerationDraft(asset)"
-                        >重新生成</el-button>
+                        >编辑参考绑定 / 新版本</el-button>
                         <el-button
                           v-if="!isAssetBusy(asset, chapterVideoDrawer.taskByAssetId[asset.assetId])"
                           size="small"
@@ -508,9 +531,14 @@
                       分析 v{{ assetAnalysisVersion(asset) }}{{ isCurrentAnalysisAsset(asset, chapterVideoDrawer.chapter) ? ' · 当前' : ' · 历史' }}
                     </el-tag>
                     <el-tag v-if="asset.canonicalFlag === 1" size="small" type="success" effect="plain">规范资产</el-tag>
+                    <el-tag size="small" :type="bindingMode(asset, 'sourceBindingMode') === 'MANUAL' ? 'warning' : 'success'" effect="plain">
+                      {{ bindingModeLabel(bindingMode(asset, 'sourceBindingMode')) }}关键帧
+                    </el-tag>
                   </div>
                   <h4>{{ asset.assetName }}</h4>
                   <p>{{ assetDimensionLabel(asset) }}</p>
+                  <p class="asset-binding-summary">{{ videoBindingSummary(asset) }}</p>
+                  <p class="asset-binding-summary inherited">{{ videoInheritedReferenceSummary(asset) }}</p>
                   <div class="asset-prompt-preview chapter-video-prompt-preview">
                     <strong>视频提示词</strong>
                     <p>{{ asset.promptText || '尚未填写提示词' }}</p>
@@ -536,7 +564,7 @@
                     class="video-action"
                     size="small"
                     type="warning"
-                    @click="resumeWanxSubmission(asset, chapterVideoDrawer)"
+                    @click="resumeVideoSubmission(asset, chapterVideoDrawer)"
                   >填写任务ID并恢复轮询</el-button>
                   <el-button
                     v-if="chapterVideoDrawer.taskByAssetId[asset.assetId]?.status === 'NEEDS_REVIEW' && !chapterVideoDrawer.taskByAssetId[asset.assetId]?.providerTaskId"
@@ -544,7 +572,7 @@
                     size="small"
                     type="danger"
                     plain
-                    @click="confirmWanxNotSubmitted(asset)"
+                    @click="confirmVideoNotSubmitted(asset)"
                   >确认未提交并解锁</el-button>
 
                   <div class="asset-version-actions">
@@ -553,7 +581,7 @@
                       :loading="regeneratingAssetId === asset.assetId"
                       :disabled="isAssetBusy(asset, chapterVideoDrawer.taskByAssetId[asset.assetId])"
                       @click="createRegenerationDraft(asset)"
-                    >重新生成</el-button>
+                    >更换关键帧 / 新版本</el-button>
                     <el-button
                       v-if="!isAssetBusy(asset, chapterVideoDrawer.taskByAssetId[asset.assetId])"
                       size="small"
@@ -706,7 +734,7 @@
               class="video-action"
               size="small"
               type="warning"
-              @click="resumeWanxSubmission(asset)"
+              @click="resumeVideoSubmission(asset)"
             >填写任务ID并恢复轮询</el-button>
             <el-button
               v-if="asset.assetType === 'VIDEO_CLIP' && assetDrawer.taskByAssetId[asset.assetId]?.status === 'NEEDS_REVIEW' && !assetDrawer.taskByAssetId[asset.assetId]?.providerTaskId"
@@ -714,15 +742,15 @@
               size="small"
               type="danger"
               plain
-              @click="confirmWanxNotSubmitted(asset)"
+              @click="confirmVideoNotSubmitted(asset)"
             >确认未提交并解锁</el-button>
             <div class="asset-version-actions">
               <el-button
                 size="small"
                 :loading="regeneratingAssetId === asset.assetId"
-                :disabled="isAssetBusy(asset, assetDrawer.taskByAssetId[asset.assetId])"
-                @click="createRegenerationDraft(asset)"
-              >重新生成</el-button>
+              :disabled="isAssetBusy(asset, assetDrawer.taskByAssetId[asset.assetId])"
+              @click="createRegenerationDraft(asset)"
+              >{{ asset.assetType === 'SHOT_KEYFRAME' ? '编辑参考绑定 / 新版本' : (asset.assetType === 'VIDEO_CLIP' ? '更换关键帧 / 新版本' : '重新生成') }}</el-button>
               <el-button
                 v-if="!isAssetBusy(asset, assetDrawer.taskByAssetId[asset.assetId])"
                 size="small"
@@ -794,12 +822,17 @@
       :show-close="!regenerationDialog.submitting"
     >
       <el-alert
-        title="这里只创建关键帧新版本草稿，不会调用 Qwen Image"
-        description="新版本会使用你选择的已批准参考图；原关键帧和旧参考资产会继续保留，可在资产库中手动删除。"
+        :title="regenerationDialog.editableInPlace ? '当前是草稿/失败版本，保存后直接更新绑定' : '当前版本已有生成结果，保存时会创建关键帧新版本草稿'"
+        description="这里只修改人物与场景参考图的具体版本，不会调用 Qwen Image。已生成版本保持不可变。"
         type="info"
         :closable="false"
         show-icon
       />
+      <div class="binding-dialog-status">
+        <el-tag :type="regenerationDialog.bindingMode === 'MANUAL' ? 'warning' : 'success'" effect="plain">
+          当前：{{ bindingModeLabel(regenerationDialog.bindingMode) }}绑定
+        </el-tag>
+      </div>
       <el-alert
         v-if="regenerationDialog.loadError"
         class="regeneration-reference-alert"
@@ -837,7 +870,7 @@
             </el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="人物三视图（可选，最多 4 张）">
+        <el-form-item :label="`人物三视图（当前分镜固定 ${regenerationDialog.requiredCharacterCount} 人）`">
           <el-select
             v-model="regenerationDialog.characterReferenceAssetIds"
             multiple
@@ -859,17 +892,82 @@
               </div>
             </el-option>
           </el-select>
-          <small class="regeneration-reference-help">默认预选当前 metadata 中的精确引用；你可以切换到同一人物或场景的新版本。</small>
+          <small class="regeneration-reference-help">只能切换当前分镜中同一人物、同一场景的其他已批准版本，不能在这里增删人物。</small>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button :disabled="regenerationDialog.submitting" @click="regenerationDialog.open = false">取消</el-button>
         <el-button
+          :loading="regenerationDialog.submitting"
+          :disabled="regenerationDialog.loading || !!regenerationDialog.loadError"
+          @click="resetKeyframeBindingToAuto"
+        >恢复自动匹配</el-button>
+        <el-button
           type="primary"
           :loading="regenerationDialog.submitting"
           :disabled="regenerationDialog.loading || !!regenerationDialog.loadError || !regenerationDialog.sceneReferenceAssetId"
           @click="submitKeyframeRegenerationDraft"
-        >创建新版本草稿</el-button>
+        >{{ regenerationDialog.editableInPlace ? '保存人工绑定' : '创建新版本并绑定' }}</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="videoBindingDialog.open"
+      :title="videoBindingDialog.assetName + ' · 来源关键帧版本'"
+      width="720px"
+      append-to-body
+      :close-on-click-modal="!videoBindingDialog.submitting"
+      :close-on-press-escape="!videoBindingDialog.submitting"
+      :show-close="!videoBindingDialog.submitting"
+    >
+      <el-alert
+        :title="videoBindingDialog.editableInPlace ? '当前是草稿/失败视频，保存后直接切换关键帧' : '当前视频已有结果，保存时会创建视频新版本草稿'"
+        description="视频生成任务会携带所选关键帧、人物三视图和场景参考图；具体供应商由适配器转换。此操作本身不会提交模型。"
+        type="info"
+        :closable="false"
+        show-icon
+      />
+      <el-alert v-if="videoBindingDialog.loadError" class="regeneration-reference-alert" :title="videoBindingDialog.loadError" type="error" :closable="false" show-icon />
+      <div class="binding-dialog-status">
+        <el-tag :type="videoBindingDialog.bindingMode === 'MANUAL' ? 'warning' : 'success'" effect="plain">
+          当前：{{ bindingModeLabel(videoBindingDialog.bindingMode) }}绑定
+        </el-tag>
+      </div>
+      <el-form v-loading="videoBindingDialog.loading" label-position="top" class="prompt-form regeneration-reference-form">
+        <el-form-item label="来源关键帧（同一分镜的已批准版本）">
+          <el-select
+            v-model="videoBindingDialog.keyframeAssetId"
+            filterable
+            placeholder="请选择关键帧版本"
+            :disabled="videoBindingDialog.loading || videoBindingDialog.submitting"
+            @change="syncVideoBindingSelection"
+          >
+            <el-option
+              v-for="asset in videoBindingDialog.availableKeyframes"
+              :key="asset.assetId"
+              :label="referenceOptionLabel(asset)"
+              :value="asset.assetId"
+            />
+          </el-select>
+        </el-form-item>
+        <div v-if="videoBindingDialog.sourceKeyframe" class="video-binding-inheritance">
+          <strong>将绑定：{{ referenceOptionLabel(videoBindingDialog.sourceKeyframe) }}</strong>
+          <span>{{ bindingReferenceDetailSummary(videoBindingDialog.inheritedReferences) }}</span>
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button :disabled="videoBindingDialog.submitting" @click="videoBindingDialog.open = false">取消</el-button>
+        <el-button
+          :loading="videoBindingDialog.submitting"
+          :disabled="videoBindingDialog.loading || !!videoBindingDialog.loadError"
+          @click="resetVideoBindingToAuto"
+        >恢复自动匹配</el-button>
+        <el-button
+          type="primary"
+          :loading="videoBindingDialog.submitting"
+          :disabled="videoBindingDialog.loading || !!videoBindingDialog.loadError || !videoBindingDialog.keyframeAssetId"
+          @click="submitVideoSourceBinding"
+        >{{ videoBindingDialog.editableInPlace ? '保存人工绑定' : '创建视频新版本并绑定' }}</el-button>
       </template>
     </el-dialog>
 
@@ -884,8 +982,8 @@
     >
       <el-alert
         v-if="videoPromptDialog.editable"
-        title="这一步只准备视频提示词，不会自动调用 Wanx"
-        description="提示词由章节分镜、关键帧、人物与场景一致性约束自动提炼。当前 Wanx 2.1 正向词最多 800 字、负向词最多 500 字、时长支持 3/4/5 秒；只有点击“保存并生成视频”且再次确认后，才会提交并产生费用。"
+        title="这一步只准备视频提示词，不会自动调用视频生成服务"
+        description="提示词由章节分镜、关键帧、人物与场景一致性约束自动提炼。模型限制由当前供应商适配器校验；只有点击“保存并生成视频”且再次确认后，才会提交并产生费用。"
         type="info"
         :closable="false"
         show-icon
@@ -893,7 +991,7 @@
       <el-alert
         v-else
         title="这是已确认的视频提示词，只读不可修改"
-        :description="videoPromptDialog.status === 'GENERATED' ? '该提示词对应的视频已经生成并保存。' : '该提示词已经进入 Wanx 提交流程；为保证审计一致性，提交后不能修改。'"
+        :description="videoPromptDialog.status === 'GENERATED' ? '该提示词对应的视频已经生成并保存。' : '该提示词已经进入视频供应商提交流程；为保证审计一致性，提交后不能修改。'"
         type="warning"
         :closable="false"
         show-icon
@@ -964,14 +1062,14 @@
             <el-input-number
               v-model="videoPromptDialog.durationSeconds"
               :min="3"
-              :max="5"
+              :max="15"
               :step="1"
               :precision="0"
               :disabled="!videoPromptDialog.editable || videoPromptDialog.submitting"
               controls-position="right"
             />
             <span>秒</span>
-            <small>将以 {{ Math.round(videoPromptDialog.durationSeconds * 1000) }} ms 保存</small>
+            <small>将以 {{ Math.round(videoPromptDialog.durationSeconds * 1000) }} ms 保存，最终时长由供应商适配器校验</small>
           </div>
         </el-form-item>
       </el-form>
@@ -1006,7 +1104,7 @@
 </template>
 
 <script setup name="AiVedioProject">
-import { Delete, MoreFilled, Plus, Refresh, Search, VideoPlay } from '@element-plus/icons-vue'
+import { Connection, Delete, MoreFilled, Plus, Refresh, Search, VideoPlay } from '@element-plus/icons-vue'
 import {
   addAiVideoChapter,
   addAiVideoProject,
@@ -1021,18 +1119,25 @@ import {
   getAiVideoStoryBible,
   generateAiVideoAssetImage,
   generateAiVideoAssetVideo,
+  getAiVideoKeyframeReferenceBinding,
+  getAiVideoVideoSourceBinding,
   listAiVideoChapter,
   listAiVideoAsset,
   listAiVideoTask,
   listAiVideoProject,
   retryAiVideoAssetImage,
-  resolveAiVideoAssetWanxSubmission,
+  resetAiVideoKeyframeReferenceBinding,
+  resetAiVideoVideoSourceBinding,
+  resolveAiVideoAssetSubmission,
   updateAiVideoAssetPrompt,
   updateAiVideoAssetVideoPrompt,
+  updateAiVideoKeyframeReferenceBinding,
+  updateAiVideoVideoSourceBinding,
   updateAiVideoProject
 } from '@/api/aiVedio/project'
 
 const { proxy } = getCurrentInstance()
+const router = useRouter()
 const loading = ref(false)
 const projectList = ref([])
 const total = ref(0)
@@ -1086,8 +1191,27 @@ const regenerationDialog = reactive({
   characterReferenceAssetIds: [],
   sceneAssets: [],
   characterAssets: [],
+  currentCharacterReferences: [],
+  requiredCharacterCount: 0,
+  editableInPlace: false,
+  bindingMode: 'AUTO',
   loadError: '',
   selectionMessage: ''
+})
+const videoBindingDialog = reactive({
+  open: false,
+  loading: false,
+  submitting: false,
+  assetId: null,
+  assetName: '',
+  status: '',
+  editableInPlace: false,
+  bindingMode: 'AUTO',
+  keyframeAssetId: null,
+  sourceKeyframe: null,
+  availableKeyframes: [],
+  inheritedReferences: null,
+  loadError: ''
 })
 const videoPromptDialog = reactive({
   open: false,
@@ -1140,6 +1264,8 @@ let chapterVideoPollTimer = null
 let assetLoadRequestId = 0
 let chapterVideoLoadRequestId = 0
 let regenerationLoadRequestId = 0
+let videoBindingLoadRequestId = 0
+let videoBindingSelectionRequestId = 0
 const projectForm = reactive({})
 const chapterForm = reactive({})
 const projectRules = { projectName: [{ required: true, message: '请输入项目名称', trigger: 'blur' }] }
@@ -1226,11 +1352,50 @@ function openChapterDrawer(project) {
 
 function loadChapters() {
   if (!chapterDrawer.project) return
+  const projectId = chapterDrawer.project.projectId
   chapterDrawer.loading = true
-  listAiVideoChapter(chapterDrawer.project.projectId).then(response => {
-    chapterDrawer.chapters = response.data || []
+  Promise.allSettled([
+    listAiVideoChapter(projectId),
+    listAiVideoTask(projectId)
+  ]).then(([chapterResult, taskResult]) => {
+    if (chapterResult.status !== 'fulfilled') throw chapterResult.reason
+    const tasks = taskResult.status === 'fulfilled' ? (taskResult.value.data || []) : []
+    const latestTaskByChapter = new Map()
+    tasks.forEach(task => {
+      if (task.taskType !== 'STORY_BIBLE' || !task.chapterId || latestTaskByChapter.has(task.chapterId)) return
+      latestTaskByChapter.set(task.chapterId, normalizeChapterAnalysisTask(task))
+    })
+    chapterDrawer.chapters = (chapterResult.value.data || []).map(chapter => ({
+      ...chapter,
+      analysisTask: latestTaskByChapter.get(chapter.chapterId) || null
+    }))
     scheduleChapterPolling()
   }).finally(() => { chapterDrawer.loading = false })
+}
+
+function normalizeChapterAnalysisTask(task) {
+  let stage = {}
+  if (task.requestJson) {
+    try {
+      stage = typeof task.requestJson === 'string' ? JSON.parse(task.requestJson) : task.requestJson
+    } catch (error) {
+      stage = {}
+    }
+  }
+  return {
+    ...task,
+    progress: Math.max(0, Math.min(100, Number(task.progress) || 0)),
+    stageCode: stage.stageCode || '',
+    stageLabel: stage.stageLabel || chapterStageFallback(task.status),
+    errorMessage: String(task.errorMessage || '').replace(/^retryable=(true|false)\s*\|\s*/i, '')
+  }
+}
+
+function chapterStageFallback(status) {
+  if (status === 'QUEUED') return '等待分析任务执行'
+  if (status === 'SUCCEEDED') return '章节分析已完成'
+  if (status === 'FAILED') return '章节分析失败'
+  return '章节分析进行中'
 }
 
 function openChapterDialog() {
@@ -1353,7 +1518,7 @@ function prepareChapterVideoWorkspace(chapter) {
   }).then(() => {
     if (!chapterVideoDrawer.prepareTotal) return
     if (chapterVideoDrawer.preparedCount) {
-      proxy.$modal.msgSuccess(`已准备 ${chapterVideoDrawer.preparedCount} 个视频提示词草稿，尚未调用 Wanx`)
+      proxy.$modal.msgSuccess(`已准备 ${chapterVideoDrawer.preparedCount} 个视频提示词草稿，尚未调用视频生成服务`)
     }
     if (chapterVideoDrawer.prepareErrorCount) {
       proxy.$modal.msgWarning(`${chapterVideoDrawer.prepareErrorCount} 个镜头未能创建草稿，请按接口提示检查后重试`)
@@ -1912,6 +2077,10 @@ function createRegenerationDraft(asset) {
     openKeyframeRegenerationDialog(asset)
     return
   }
+  if (asset.assetType === 'VIDEO_CLIP') {
+    openVideoBindingDialog(asset)
+    return
+  }
   submitRegenerationDraft(asset)
 }
 
@@ -1926,6 +2095,69 @@ function currentKeyframeReferenceSelection(asset) {
       || normalizeReferenceAssetId(asset?.sourceAssetId),
     characterReferenceAssetIds: referenceAssetIds(metadata.characterReferenceAssetIds)
   }
+}
+
+function bindingMode(asset, fieldName) {
+  const mode = String(parseJsonObject(asset?.metadataJson)?.[fieldName] || 'AUTO').toUpperCase()
+  return mode === 'MANUAL' ? 'MANUAL' : 'AUTO'
+}
+
+function bindingModeLabel(mode) {
+  return String(mode || '').toUpperCase() === 'MANUAL' ? '人工' : '自动'
+}
+
+function loadedBindingAssets() {
+  const assets = [
+    ...(chapterVideoDrawer.allAssets || []),
+    ...(chapterVideoDrawer.keyframeAssets || []),
+    ...(assetDrawer.assets || [])
+  ]
+  return Array.from(assets.reduce((result, asset) => {
+    if (asset?.assetId) result.set(String(asset.assetId), asset)
+    return result
+  }, new Map()).values())
+}
+
+function compactAssetVersion(asset, fallbackId) {
+  return asset
+    ? `${asset.assetName || `资产 #${asset.assetId}`} v${asset.versionNo || 1}`
+    : `资产 #${fallbackId}`
+}
+
+function keyframeBindingSummary(asset) {
+  const selection = currentKeyframeReferenceSelection(asset)
+  const loadedAssets = loadedBindingAssets()
+  const scene = findReferenceAssetById(loadedAssets, selection.sceneReferenceAssetId)
+  const characters = selection.characterReferenceAssetIds.map(assetId =>
+    compactAssetVersion(findReferenceAssetById(loadedAssets, assetId), assetId))
+  const sceneText = selection.sceneReferenceAssetId
+    ? compactAssetVersion(scene, selection.sceneReferenceAssetId)
+    : '未绑定'
+  return `场景：${sceneText} · 人物：${characters.length ? characters.join('、') : '无'}`
+}
+
+function videoBindingSummary(asset) {
+  const metadata = parseJsonObject(asset?.metadataJson)
+  const keyframeId = asset?.sourceAssetId || metadata.sourceKeyframeAssetId
+  const keyframe = findReferenceAssetById(loadedBindingAssets(), keyframeId)
+  const fallbackVersion = metadata.sourceKeyframeVersionNo
+  return keyframe
+    ? `来源关键帧：${compactAssetVersion(keyframe, keyframeId)}`
+    : `来源关键帧：#${keyframeId || '未绑定'}${fallbackVersion ? ` v${fallbackVersion}` : ''}`
+}
+
+function videoInheritedReferenceSummary(asset) {
+  const keyframe = findReferenceAssetById(loadedBindingAssets(), asset?.sourceAssetId)
+  return keyframe ? `继承参考：${keyframeBindingSummary(keyframe)}` : '继承参考：等待读取来源关键帧'
+}
+
+function bindingReferenceDetailSummary(detail) {
+  if (!detail) return '正在读取该关键帧继承的人物与场景版本…'
+  const scene = detail.sceneReference
+  const characters = Array.isArray(detail.characterReferences) ? detail.characterReferences : []
+  return `场景：${scene ? compactAssetVersion(scene, scene.assetId) : '未绑定'} · 人物：${characters.length
+    ? characters.map(item => compactAssetVersion(item, item.assetId)).join('、')
+    : '无'}`
 }
 
 function referenceOptionById(assets, assetId) {
@@ -1947,7 +2179,6 @@ function openKeyframeRegenerationDialog(asset) {
     proxy.$modal.msgError('项目ID缺失，无法加载参考资产')
     return
   }
-  const currentSelection = currentKeyframeReferenceSelection(asset)
   const requestId = ++regenerationLoadRequestId
   Object.assign(regenerationDialog, {
     open: true,
@@ -1959,28 +2190,36 @@ function openKeyframeRegenerationDialog(asset) {
     characterReferenceAssetIds: [],
     sceneAssets: [],
     characterAssets: [],
+    currentCharacterReferences: [],
+    requiredCharacterCount: 0,
+    editableInPlace: asset.status === 'DRAFT' || asset.status === 'REJECTED',
+    bindingMode: bindingMode(asset, 'referenceBindingMode'),
     loadError: '',
     selectionMessage: ''
   })
   Promise.all([
+    getAiVideoKeyframeReferenceBinding(asset.assetId),
     fetchAllAiVideoAssets({ projectId, assetType: 'SCENE_REFERENCE', status: 'APPROVED' }),
     fetchAllAiVideoAssets({ projectId, assetType: 'CHARACTER_REFERENCE', status: 'APPROVED' })
-  ]).then(([sceneAssets, characterAssets]) => {
+  ]).then(([bindingResponse, sceneAssets, characterAssets]) => {
     if (requestId !== regenerationLoadRequestId || regenerationDialog.assetId !== asset.assetId) return
-    regenerationDialog.sceneAssets = sortReferenceOptions(sceneAssets)
-    regenerationDialog.characterAssets = sortReferenceOptions(characterAssets)
-    const currentScene = referenceOptionById(sceneAssets, currentSelection.sceneReferenceAssetId)
-    const currentCharacters = currentSelection.characterReferenceAssetIds
-      .map(assetId => referenceOptionById(characterAssets, assetId))
-      .filter(Boolean)
+    const detail = bindingResponse?.data || {}
+    const currentScene = detail.sceneReference || null
+    const currentCharacters = Array.isArray(detail.characterReferences) ? detail.characterReferences : []
+    const sceneIdentity = detail.asset?.sceneId ?? currentScene?.sceneId
+    regenerationDialog.sceneAssets = sortReferenceOptions(sceneAssets.filter(item =>
+      sceneIdentity !== null && sceneIdentity !== undefined && String(item.sceneId) === String(sceneIdentity)
+    ))
+    regenerationDialog.characterAssets = sortReferenceOptions(characterAssets.filter(candidate =>
+      currentCharacters.some(current => sameCharacterReferenceIdentity(current, candidate))
+    ))
     regenerationDialog.sceneReferenceAssetId = currentScene?.assetId || null
     regenerationDialog.characterReferenceAssetIds = currentCharacters.map(item => item.assetId)
-    const unavailableCount = currentSelection.characterReferenceAssetIds.length - currentCharacters.length
-    if (!currentScene && currentSelection.sceneReferenceAssetId) {
-      regenerationDialog.selectionMessage = '当前场景参考版本已删除或不再是 APPROVED，请重新选择一个可用版本'
-    } else if (unavailableCount > 0) {
-      regenerationDialog.selectionMessage = `${unavailableCount} 张当前人物参考版本已删除或不再是 APPROVED，请重新选择`
-    }
+    regenerationDialog.currentCharacterReferences = currentCharacters
+    regenerationDialog.requiredCharacterCount = currentCharacters.length
+    regenerationDialog.editableInPlace = detail.editableInPlace === true
+    regenerationDialog.bindingMode = detail.bindingMode || 'AUTO'
+    if (!currentScene) regenerationDialog.selectionMessage = '后端关系表中缺少当前场景引用，无法安全切换版本'
   }).catch(() => {
     if (requestId === regenerationLoadRequestId && regenerationDialog.assetId === asset.assetId) {
       regenerationDialog.loadError = '同项目 APPROVED 参考资产加载失败，请检查服务状态后重试'
@@ -2007,24 +2246,173 @@ function submitKeyframeRegenerationDraft() {
     proxy.$modal.msgWarning(`人物参考图必须是 0 至 ${MAX_CHARACTER_REFERENCE_IMAGES} 张同项目且已 APPROVED 的人物三视图`)
     return
   }
+  if (characterReferences.length !== regenerationDialog.requiredCharacterCount) {
+    proxy.$modal.msgWarning(`当前分镜固定需要 ${regenerationDialog.requiredCharacterCount} 个人物参考，只能换版本，不能增删人物`)
+    return
+  }
+  const identitySelectionValid = regenerationDialog.currentCharacterReferences.every(current =>
+    characterReferences.filter(selected => sameCharacterReferenceIdentity(current, selected)).length === 1
+  )
+  if (!identitySelectionValid) {
+    proxy.$modal.msgWarning('每个当前人物必须且只能选择一个对应版本，不能重复选择同一人物的多个版本')
+    return
+  }
   const payload = {
+    mode: 'MANUAL',
     sceneReferenceAssetId: sceneReference.assetId,
     characterReferenceAssetIds: characterReferences.map(asset => asset.assetId)
   }
   regenerationDialog.submitting = true
   regeneratingAssetId.value = assetId
-  createAiVideoAssetRegenerationDraft(assetId, payload).then(response => {
+  updateAiVideoKeyframeReferenceBinding(assetId, payload).then(response => {
     const draft = response?.data || response?.asset || null
-    if (!draft?.assetId) throw new Error('新版本草稿响应缺少资产信息')
+    if (!draft?.assetId) throw new Error('绑定更新响应缺少资产信息')
     keyframeReferenceOverrides.set(String(draft.assetId), payload)
     regenerationDialog.open = false
     openPromptDialog(draft)
-    proxy.$modal.msgSuccess(`已创建 ${draft.assetName || regenerationDialog.assetName} v${draft.versionNo || ''} 草稿并绑定所选参考版本；尚未调用任何生成模型`)
+    proxy.$modal.msgSuccess(String(draft.assetId) === String(assetId)
+      ? '已更新当前关键帧草稿的人工参考绑定；尚未调用任何生成模型'
+      : `已创建 ${draft.assetName || regenerationDialog.assetName} v${draft.versionNo || ''} 草稿并绑定所选参考版本；旧版本保持不变`)
     refreshAssetViews()
   }).catch(error => {
-    if (error?.message === '新版本草稿响应缺少资产信息') proxy.$modal.msgError(error.message)
+    if (error?.message === '绑定更新响应缺少资产信息') proxy.$modal.msgError(error.message)
   }).finally(() => {
     regenerationDialog.submitting = false
+    if (regeneratingAssetId.value === assetId) regeneratingAssetId.value = null
+  })
+}
+
+function sameCharacterReferenceIdentity(left, right) {
+  if (left?.characterId !== null && left?.characterId !== undefined
+    || right?.characterId !== null && right?.characterId !== undefined) {
+    return left?.characterId !== null && left?.characterId !== undefined
+      && String(left.characterId) === String(right?.characterId)
+  }
+  return !!left?.assetCode && left.assetCode === right?.assetCode
+}
+
+function resetKeyframeBindingToAuto() {
+  const assetId = regenerationDialog.assetId
+  if (!assetId) return
+  regenerationDialog.submitting = true
+  regeneratingAssetId.value = assetId
+  resetAiVideoKeyframeReferenceBinding(assetId).then(response => {
+    const draft = response?.data || null
+    if (!draft?.assetId) throw new Error('自动绑定响应缺少资产信息')
+    regenerationDialog.open = false
+    proxy.$modal.msgSuccess(String(draft.assetId) === String(assetId)
+      ? '已将当前关键帧草稿恢复为自动匹配的最新可用参考版本'
+      : `已创建关键帧 v${draft.versionNo || ''} 草稿并恢复自动匹配；旧版本保持不变`)
+    refreshAssetViews()
+  }).catch(error => {
+    if (error?.message === '自动绑定响应缺少资产信息') proxy.$modal.msgError(error.message)
+  }).finally(() => {
+    regenerationDialog.submitting = false
+    if (regeneratingAssetId.value === assetId) regeneratingAssetId.value = null
+  })
+}
+
+function openVideoBindingDialog(asset) {
+  const requestId = ++videoBindingLoadRequestId
+  Object.assign(videoBindingDialog, {
+    open: true,
+    loading: true,
+    submitting: false,
+    assetId: asset.assetId,
+    assetName: asset.assetName || '视频片段',
+    status: asset.status,
+    editableInPlace: asset.status === 'DRAFT' || asset.status === 'REJECTED',
+    bindingMode: bindingMode(asset, 'sourceBindingMode'),
+    keyframeAssetId: null,
+    sourceKeyframe: null,
+    availableKeyframes: [],
+    inheritedReferences: null,
+    loadError: ''
+  })
+  getAiVideoVideoSourceBinding(asset.assetId).then(response => {
+    if (requestId !== videoBindingLoadRequestId || videoBindingDialog.assetId !== asset.assetId) return
+    const detail = response?.data || {}
+    videoBindingDialog.editableInPlace = detail.editableInPlace === true
+    videoBindingDialog.bindingMode = detail.bindingMode || 'AUTO'
+    videoBindingDialog.sourceKeyframe = detail.sourceKeyframe || null
+    videoBindingDialog.keyframeAssetId = detail.sourceKeyframe?.assetId || null
+    videoBindingDialog.availableKeyframes = detail.availableKeyframes || []
+    videoBindingDialog.inheritedReferences = detail.inheritedReferences || null
+    if (!videoBindingDialog.availableKeyframes.length) {
+      videoBindingDialog.loadError = '当前分镜没有可用的已批准关键帧版本'
+    }
+  }).catch(() => {
+    if (requestId === videoBindingLoadRequestId && videoBindingDialog.assetId === asset.assetId) {
+      videoBindingDialog.loadError = '来源关键帧绑定加载失败，请检查服务状态后重试'
+    }
+  }).finally(() => {
+    if (requestId === videoBindingLoadRequestId && videoBindingDialog.assetId === asset.assetId) {
+      videoBindingDialog.loading = false
+    }
+  })
+}
+
+function syncVideoBindingSelection() {
+  const keyframe = referenceOptionById(
+    videoBindingDialog.availableKeyframes, videoBindingDialog.keyframeAssetId)
+  videoBindingDialog.sourceKeyframe = keyframe
+  videoBindingDialog.inheritedReferences = null
+  if (!keyframe?.assetId) return
+  const requestId = ++videoBindingSelectionRequestId
+  getAiVideoKeyframeReferenceBinding(keyframe.assetId).then(response => {
+    if (requestId === videoBindingSelectionRequestId
+      && String(videoBindingDialog.keyframeAssetId) === String(keyframe.assetId)) {
+      videoBindingDialog.inheritedReferences = response?.data || null
+    }
+  }).catch(() => {
+    if (requestId === videoBindingSelectionRequestId) {
+      proxy.$modal.msgError('所选关键帧的人物/场景继承关系读取失败')
+    }
+  })
+}
+
+function submitVideoSourceBinding() {
+  const assetId = videoBindingDialog.assetId
+  if (!assetId || !videoBindingDialog.keyframeAssetId) return
+  videoBindingDialog.submitting = true
+  regeneratingAssetId.value = assetId
+  updateAiVideoVideoSourceBinding(assetId, {
+    keyframeAssetId: videoBindingDialog.keyframeAssetId
+  }).then(response => {
+    const draft = response?.data || null
+    if (!draft?.assetId) throw new Error('视频绑定响应缺少资产信息')
+    videoBindingDialog.open = false
+    openVideoPromptDialog(draft)
+    proxy.$modal.msgSuccess(String(draft.assetId) === String(assetId)
+      ? '已更新当前视频草稿绑定的关键帧版本；尚未调用视频生成服务'
+      : `已创建视频 v${draft.versionNo || ''} 草稿并绑定所选关键帧；旧视频版本保持不变`)
+    refreshAssetViews()
+  }).catch(error => {
+    if (error?.message === '视频绑定响应缺少资产信息') proxy.$modal.msgError(error.message)
+  }).finally(() => {
+    videoBindingDialog.submitting = false
+    if (regeneratingAssetId.value === assetId) regeneratingAssetId.value = null
+  })
+}
+
+function resetVideoBindingToAuto() {
+  const assetId = videoBindingDialog.assetId
+  if (!assetId) return
+  videoBindingDialog.submitting = true
+  regeneratingAssetId.value = assetId
+  resetAiVideoVideoSourceBinding(assetId).then(response => {
+    const draft = response?.data || null
+    if (!draft?.assetId) throw new Error('视频自动绑定响应缺少资产信息')
+    videoBindingDialog.open = false
+    openVideoPromptDialog(draft)
+    proxy.$modal.msgSuccess(String(draft.assetId) === String(assetId)
+      ? '已将当前视频草稿恢复为自动匹配的最新已批准关键帧'
+      : `已创建视频 v${draft.versionNo || ''} 草稿并恢复自动关键帧匹配；旧版本保持不变`)
+    refreshAssetViews()
+  }).catch(error => {
+    if (error?.message === '视频自动绑定响应缺少资产信息') proxy.$modal.msgError(error.message)
+  }).finally(() => {
+    videoBindingDialog.submitting = false
     if (regeneratingAssetId.value === assetId) regeneratingAssetId.value = null
   })
 }
@@ -2084,7 +2472,7 @@ function isLatestAssetVersion(asset, assets) {
 }
 
 function approveAndPrepareVideoPrompt(asset) {
-  proxy.$modal.confirm(`请确认“${asset.assetName}”的关键帧画面可以用于视频生成。确认后只会同意图片并创建可编辑的视频提示词草稿，不会调用 Wanx。`).then(() => {
+  proxy.$modal.confirm(`请确认“${asset.assetName}”的关键帧画面可以用于视频生成。确认后只会同意图片并创建可编辑的视频提示词草稿，不会提交视频生成任务。`).then(() => {
     return approveAiVideoAsset(asset.assetId)
   }).then(() => {
     return prepareVideoPromptDraft(asset, true)
@@ -2103,8 +2491,8 @@ function prepareVideoPromptDraft(asset, justApproved = false) {
     }
     openVideoPromptDialog(draft)
     proxy.$modal.msgSuccess(justApproved
-      ? '关键帧已同意，视频提示词草稿已准备好；当前尚未调用 Wanx'
-      : '视频提示词草稿已准备好；当前尚未调用 Wanx')
+      ? '关键帧已同意，视频提示词草稿已准备好；当前尚未调用视频生成服务'
+      : '视频提示词草稿已准备好；当前尚未调用视频生成服务')
     refreshAssetViews()
     return draft
   }).catch(error => {
@@ -2135,7 +2523,7 @@ function syncVideoPromptDialogFromAsset(asset) {
     editable: asset.status === 'DRAFT' || asset.status === 'REJECTED',
     promptText: asset.promptText || '',
     negativePromptText: asset.negativePromptText || '',
-    durationSeconds: Math.min(5, Math.max(3, Math.round(durationMs / 1000))),
+    durationSeconds: Math.min(15, Math.max(3, Math.round(durationMs / 1000))),
     shotSize: context.shotSize,
     cameraMovement: context.cameraMovement,
     compositionText: context.compositionText,
@@ -2232,8 +2620,8 @@ function saveVideoPrompt(shouldGenerate) {
     proxy.$modal.msgWarning('请填写正向视频提示词')
     return
   }
-  if (!Number.isInteger(durationSeconds) || durationSeconds < 3 || durationSeconds > 5) {
-    proxy.$modal.msgWarning('当前 Wanx 2.1 视频时长只能选择 3、4 或 5 秒')
+  if (!Number.isInteger(durationSeconds) || durationSeconds < 3 || durationSeconds > 15) {
+    proxy.$modal.msgWarning('HappyHorse 视频时长必须是 3 至 15 秒的整数')
     return
   }
   const payload = {
@@ -2249,7 +2637,7 @@ function saveVideoPrompt(shouldGenerate) {
       if (savedAsset?.assetId === assetId) syncVideoPromptDialogFromAsset(savedAsset)
       promptSaved = true
       if (!shouldGenerate) {
-        proxy.$modal.msgSuccess('视频提示词已保存，尚未调用 Wanx')
+        proxy.$modal.msgSuccess('视频提示词已保存，尚未调用视频生成服务')
         if (videoPromptDialog.assetId === assetId) videoPromptDialog.open = false
         return null
       }
@@ -2258,8 +2646,8 @@ function saveVideoPrompt(shouldGenerate) {
       if (!shouldGenerate || !response) return
       const taskId = response.taskId ?? response.data?.taskId ?? response.data
       proxy.$modal.msgSuccess(taskId !== undefined && taskId !== null
-        ? `已提交 Wanx 视频任务 #${taskId}`
-        : '已提交 Wanx 视频生成任务')
+        ? `已提交视频生成任务 #${taskId}`
+        : '已提交视频生成任务')
       if (videoPromptDialog.assetId === assetId) videoPromptDialog.open = false
     }).finally(() => {
       if (promptSaved) refreshAssetViews()
@@ -2267,34 +2655,34 @@ function saveVideoPrompt(shouldGenerate) {
     })
   }
   if (shouldGenerate) {
-    proxy.$modal.confirm(`确认使用当前提示词生成 ${durationSeconds} 秒视频吗？确认后将调用 Wanx，产生一次模型调用及相应费用，并进入视频生成队列。`).then(submit).catch(() => {})
+    proxy.$modal.confirm(`确认使用当前提示词生成 ${durationSeconds} 秒视频吗？任务会携带关键帧、人物三视图和场景参考图，并调用当前视频供应商，产生一次模型调用及相应费用。`).then(submit).catch(() => {})
   } else {
     submit().catch(() => {})
   }
 }
 
-function resumeWanxSubmission(asset, sourceDrawer = assetDrawer) {
+function resumeVideoSubmission(asset, sourceDrawer = assetDrawer) {
   const task = sourceDrawer.taskByAssetId[asset.assetId]
-  const resume = providerTaskId => resolveAiVideoAssetWanxSubmission(asset.assetId, {
+  const resume = providerTaskId => resolveAiVideoAssetSubmission(asset.assetId, {
     action: 'RESUME_WITH_PROVIDER_TASK_ID',
     providerTaskId
   }).then(() => {
-    proxy.$modal.msgSuccess('已恢复 Wanx 任务轮询，不会重复创建视频任务')
+    proxy.$modal.msgSuccess('已恢复视频供应商任务轮询，不会重复创建视频任务')
     refreshAssetViews()
   })
   if (task?.providerTaskId) {
-    proxy.$modal.confirm(`检测到已保存的 Wanx 任务ID：${task.providerTaskId}。确认恢复该任务的结果轮询吗？此操作不会重新生成或重复计费。`)
+    proxy.$modal.confirm(`检测到已保存的供应商任务ID：${task.providerTaskId}。确认恢复该任务的结果轮询吗？此操作不会重新生成或重复计费。`)
       .then(() => resume(task.providerTaskId)).catch(() => {})
     return
   }
-  proxy.$modal.prompt('请先在阿里云百炼 / DashScope 控制台核对本次调用，再粘贴对应的 Wanx 任务ID。系统只会恢复结果轮询，不会重新提交生成。')
+  proxy.$modal.prompt('请先在当前视频供应商控制台核对本次调用，再粘贴对应的供应商任务ID。系统只会恢复结果轮询，不会重新提交生成。')
     .then(({ value }) => resume(String(value || '').trim())).catch(() => {})
 }
 
-function confirmWanxNotSubmitted(asset) {
-  proxy.$modal.confirm('只有在阿里云百炼 / DashScope 控制台确认没有对应视频任务时才能解锁。错误确认可能导致重复生成和重复计费，是否继续？')
-    .then(() => proxy.$modal.confirm('再次确认：Wanx 确实未受理本次请求。确认后草稿会变为失败状态，可修改后重新提交。'))
-    .then(() => resolveAiVideoAssetWanxSubmission(asset.assetId, {
+function confirmVideoNotSubmitted(asset) {
+  proxy.$modal.confirm('只有在当前视频供应商控制台确认没有对应任务时才能解锁。错误确认可能导致重复生成和重复计费，是否继续？')
+    .then(() => proxy.$modal.confirm('再次确认：视频供应商确实未受理本次请求。确认后草稿会变为失败状态，可修改后重新提交。'))
+    .then(() => resolveAiVideoAssetSubmission(asset.assetId, {
       action: 'CONFIRM_NOT_SUBMITTED'
     }))
     .then(() => {
@@ -2442,7 +2830,7 @@ function assetPreviewPlaceholder(asset) {
     if (asset.assetType === 'VIDEO_CLIP') return '待确认视频提示词'
     return '待确认提示词'
   }
-  if (asset.status === 'GENERATING') return asset.assetType === 'VIDEO_CLIP' ? '正在等待 Wanx 视频结果…' : '正在等待图片模型结果…'
+  if (asset.status === 'GENERATING') return asset.assetType === 'VIDEO_CLIP' ? '正在等待视频生成结果…' : '正在等待图片模型结果…'
   if (asset.status === 'REJECTED') return asset.assetType === 'VIDEO_CLIP' ? '视频生成失败，可修改提示词重试' : '图片生成失败'
   return '暂无预览'
 }
@@ -2458,22 +2846,22 @@ function assetDimensionLabel(asset) {
 function assetTaskMessage(asset, sourceDrawer = assetDrawer) {
   const task = sourceDrawer.taskByAssetId[asset.assetId]
   if (asset.assetType === 'VIDEO_CLIP') {
-    if (asset.status === 'DRAFT') return '视频提示词草稿已准备好；保存不会调用 Wanx，生成前仍需你二次确认'
+    if (asset.status === 'DRAFT') return '视频提示词草稿已准备好；保存不会调用视频供应商，生成前仍需你二次确认'
     if (sourceDrawer.taskLoadError && (asset.status === 'GENERATING' || asset.status === 'REJECTED')) return sourceDrawer.taskLoadError
     if (task?.errorMessage) return task.errorMessage
     if (asset.status === 'REJECTED') {
       try {
-        return JSON.parse(asset.metadataJson || '{}').generationError || 'Wanx 视频生成失败，可修改提示词后手动重试'
+        return JSON.parse(asset.metadataJson || '{}').generationError || '视频生成失败，可修改提示词后手动重试'
       } catch (error) {
-        return 'Wanx 视频生成失败，可修改提示词后手动重试'
+        return '视频生成失败，可修改提示词后手动重试'
       }
     }
     if (asset.status === 'GENERATED') return '视频片段已生成并保存到资产库'
-    if (task?.status === 'RETRYING') return '上次 Wanx 调用未正常结束，任务正在等待恢复'
-    if (task?.status === 'NEEDS_REVIEW') return task.errorMessage || 'Wanx 提交结果待人工核对，请勿重复生成'
-    if (task?.status === 'WAITING_CALLBACK') return 'Wanx 已接收任务，正在生成视频并等待结果'
-    if (task?.status === 'RUNNING') return 'Wanx 正在生成视频，请耐心等待'
-    if (task?.status === 'QUEUED') return '视频任务已排队，等待调用 Wanx'
+    if (task?.status === 'RETRYING') return '上次视频供应商调用未正常结束，任务正在等待恢复'
+    if (task?.status === 'NEEDS_REVIEW') return task.errorMessage || '视频供应商提交结果待人工核对，请勿重复生成'
+    if (task?.status === 'WAITING_CALLBACK') return '视频供应商已接收任务，正在生成并等待结果'
+    if (task?.status === 'RUNNING') return '视频供应商正在生成，请耐心等待'
+    if (task?.status === 'QUEUED') return '视频任务已排队，等待调用当前供应商'
     return '尚未取得关联视频任务状态，请稍后自动刷新'
   }
   if (asset.status === 'DRAFT') return asset.assetType === 'CHARACTER_REFERENCE'
@@ -2545,6 +2933,7 @@ getProjectList()
 <style scoped>
 .studio-page { min-height: calc(100vh - 84px); padding: 32px; color: #edf1f7; background: #101318; }
 .studio-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; max-width: 1440px; margin: 0 auto 28px; }
+.header-actions { display: flex; align-items: center; gap: 10px; }
 .eyebrow { margin: 0 0 8px; color: #f39a4a; font-size: 12px; font-weight: 700; letter-spacing: .14em; }
 h1, h2, h3, p { margin-top: 0; } h1 { margin-bottom: 8px; font-size: 32px; } .subtitle, .style-line, .project-meta, .chapter-content p, .drawer-header p { color: #9aa5b5; }
 .toolbar { display: flex; gap: 12px; max-width: 1440px; margin: 0 auto 24px; } .toolbar .el-input { width: 320px; } .toolbar .el-select { width: 140px; }
@@ -2559,7 +2948,8 @@ h1, h2, h3, p { margin-top: 0; } h1 { margin-bottom: 8px; font-size: 32px; } .su
 .project-meta { padding-top: 12px; border-top: 1px solid #2a3340; font-size: 11px; } .card-actions { margin-top: 16px; } .card-actions .el-button:first-child { flex: 1; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } .form-grid .el-form-item { min-width: 0; }
 .chapter-workspace { min-height: 100%; padding: 30px; color: #1d2735; } .drawer-header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; padding-bottom: 24px; border-bottom: 1px solid #e9edf3; } .drawer-header h2 { margin-bottom: 8px; } .drawer-actions { display: flex; gap: 8px; white-space: nowrap; }
-.chapter-list { margin-top: 18px; } .chapter-item { display: flex; align-items: center; gap: 14px; padding: 16px 0; border-bottom: 1px solid #edf0f4; } .chapter-number { min-width: 38px; color: #f39a4a; font-family: monospace; font-size: 17px; font-weight: 700; } .chapter-content { flex: 1; min-width: 130px; } .chapter-content p { margin-bottom: 0; font-size: 12px; } .chapter-title-button { max-width: 100%; overflow: hidden; margin: 0 0 5px; padding: 0; border: 0; color: #1d2735; background: transparent; font: inherit; font-size: 15px; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; } .chapter-title-button:hover, .chapter-title-button:focus-visible { color: #d97824; text-decoration: underline; } .chapter-item-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; } .chapter-item-actions :deep(.el-button + .el-button) { margin-left: 0; }
+.chapter-list { margin-top: 18px; } .chapter-item { display: flex; align-items: center; gap: 14px; padding: 16px 0; border-bottom: 1px solid #edf0f4; } .chapter-number { min-width: 38px; color: #f39a4a; font-family: monospace; font-size: 17px; font-weight: 700; } .chapter-content { flex: 1; min-width: 180px; } .chapter-content p { margin-bottom: 0; font-size: 12px; } .chapter-title-button { max-width: 100%; overflow: hidden; margin: 0 0 5px; padding: 0; border: 0; color: #1d2735; background: transparent; font: inherit; font-size: 15px; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; } .chapter-title-button:hover, .chapter-title-button:focus-visible { color: #d97824; text-decoration: underline; } .chapter-item-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; } .chapter-item-actions :deep(.el-button + .el-button) { margin-left: 0; }
+.chapter-analysis-progress { max-width: 420px; margin-top: 9px; } .chapter-analysis-progress__label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; color: #697586; font-size: 12px; } .chapter-analysis-progress__label strong { color: #d97824; font-variant-numeric: tabular-nums; } .chapter-analysis-progress :deep(.el-progress-bar__outer) { background: #f0e7df; } .chapter-analysis-progress :deep(.el-progress-bar__inner) { background: linear-gradient(90deg, #f39a4a, #df6f2b); } .chapter-analysis-error { max-width: 420px; margin-top: 7px !important; color: #d84f4f !important; line-height: 1.45; }
 .story-bible section { margin-bottom: 28px; } .story-bible h3 { margin-bottom: 10px; color: #1d2735; font-size: 16px; } .bible-summary { padding: 18px; border-radius: 12px; background: #fff7ee; } .bible-summary p { margin: 0; color: #555f6e; line-height: 1.8; } .section-heading { display: flex; justify-content: space-between; align-items: center; } .section-heading span { color: #8491a3; font-size: 12px; } .bible-characters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } .bible-card { padding: 14px; border: 1px solid #e8edf4; border-radius: 10px; } .bible-card p { min-height: 40px; margin: 8px 0; color: #657181; font-size: 13px; line-height: 1.55; } .bible-card small { color: #f39a4a; } .bible-scene { margin-bottom: 10px; padding: 16px; border-left: 3px solid #f39a4a; border-radius: 0 10px 10px 0; background: #f7f9fb; } .bible-scene p { margin: 7px 0; color: #657181; font-size: 13px; } .scene-no { display: inline-block; width: 34px; color: #f39a4a; font-family: monospace; } .scene-meta { color: #8491a3; font-size: 12px; }
 .asset-filter-context { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #7d8999; font-size: 12px; } .asset-toolbar { display: flex; gap: 10px; margin-bottom: 20px; } .asset-toolbar .el-select { width: 170px; } .asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; } .asset-card { overflow: hidden; border: 1px solid #e8edf4; border-radius: 12px; background: #fff; } .asset-preview { display: flex; align-items: center; justify-content: center; height: 210px; color: #8491a3; background: #f3f6fa; font-size: 13px; } .asset-preview :deep(.el-image), .asset-preview video { width: 100%; height: 100%; object-fit: cover; } .asset-body { padding: 12px; } .asset-body .el-tag + .el-tag { margin-left: 6px; } .asset-body h3 { overflow: hidden; margin: 10px 0 5px; color: #1d2735; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; } .asset-body p { margin: 0; color: #8491a3; font-size: 12px; } .character-view-spec { margin-top: 6px !important; color: #b86b23 !important; font-weight: 600; } .asset-prompt-preview { margin-top: 10px; padding: 9px 10px; border-radius: 8px; background: #f6f8fb; } .asset-prompt-preview strong { display: block; margin-bottom: 3px; color: #566173; font-size: 11px; } .asset-prompt-preview p { display: -webkit-box; overflow: hidden; margin-bottom: 7px; line-height: 17px; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; } .asset-prompt-preview p:last-child { margin-bottom: 0; } .prompt-form { margin-top: 18px; } .prompt-form :deep(textarea) { line-height: 1.6; } .asset-task-status { min-height: 32px; margin-top: 7px !important; color: #d75a4a !important; line-height: 16px; } .video-action { width: 100%; margin-top: 12px; } .asset-version-actions { display: flex; gap: 8px; margin-top: 10px; } .asset-version-actions .el-button { flex: 1; margin-left: 0; }
 .regeneration-reference-alert { margin-top: 12px; }
@@ -2568,6 +2958,11 @@ h1, h2, h3, p { margin-top: 0; } h1 { margin-bottom: 8px; font-size: 32px; } .su
 .reference-option-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reference-option-row small { flex-shrink: 0; color: #9099a8; }
 .regeneration-reference-help { display: block; margin-top: 7px; color: #8793a3; line-height: 1.5; }
+.binding-dialog-status { margin-top: 12px; }
+.video-binding-inheritance { display: grid; gap: 7px; padding: 12px 14px; border: 1px solid #e4eaf1; border-radius: 9px; color: #4f5d70; background: #f8fafc; }
+.video-binding-inheritance span { color: #7f8b9b; font-size: 12px; line-height: 1.55; }
+.asset-binding-summary { margin-top: 6px !important; padding: 6px 8px; border-radius: 6px; color: #9b612d !important; background: #fff7ee; line-height: 1.45; word-break: break-word; }
+.asset-binding-summary.inherited { color: #647286 !important; background: #f4f7fa; }
 .chapter-material-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .chapter-material-stats button { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 10px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 12px; color: #596579; background: #f8fafc; text-align: left; cursor: pointer; transition: border-color .18s, box-shadow .18s, background .18s; }
 .chapter-material-stats button:hover, .chapter-material-stats button.active { border-color: #e2944e; background: #fffaf5; box-shadow: 0 6px 18px rgba(130, 82, 40, .08); }
@@ -2620,6 +3015,6 @@ button.shot-reference-card:disabled { cursor: default; }
 .duration-editor { display: flex; align-items: center; gap: 9px; }
 .duration-editor > span { color: #566173; }
 .duration-editor > small { color: #8793a3; }
-@media (max-width: 700px) { .studio-page { padding: 20px; } .studio-header { align-items: flex-start; flex-direction: column; } .toolbar .el-input { width: 100%; } .toolbar { flex-wrap: wrap; } .form-grid, .video-summary-grid, .chapter-video-version-grid { grid-template-columns: 1fr; gap: 0; } .video-summary-grid, .chapter-video-version-grid { gap: 8px; } .video-summary-heading, .duration-editor, .chapter-video-shot-heading { align-items: flex-start; flex-direction: column; } .chapter-item { align-items: flex-start; flex-wrap: wrap; } .chapter-item-actions { width: 100%; justify-content: flex-start; } .chapter-video-scene-heading { align-items: flex-start; } .chapter-video-scene-heading div { align-items: flex-start; flex-direction: column; gap: 3px; } .chapter-video-toolbar-actions { justify-content: stretch; } .chapter-video-toolbar-actions .el-button { flex: 1; } }
+@media (max-width: 700px) { .studio-page { padding: 20px; } .studio-header { align-items: flex-start; flex-direction: column; } .header-actions { width: 100%; } .header-actions .el-button { flex: 1; } .toolbar .el-input { width: 100%; } .toolbar { flex-wrap: wrap; } .form-grid, .video-summary-grid, .chapter-video-version-grid { grid-template-columns: 1fr; gap: 0; } .video-summary-grid, .chapter-video-version-grid { gap: 8px; } .video-summary-heading, .duration-editor, .chapter-video-shot-heading { align-items: flex-start; flex-direction: column; } .chapter-item { align-items: flex-start; flex-wrap: wrap; } .chapter-item-actions { width: 100%; justify-content: flex-start; } .chapter-video-scene-heading { align-items: flex-start; } .chapter-video-scene-heading div { align-items: flex-start; flex-direction: column; gap: 3px; } .chapter-video-toolbar-actions { justify-content: stretch; } .chapter-video-toolbar-actions .el-button { flex: 1; } }
 @media (max-width: 700px) { .chapter-material-stats, .chapter-material-card-grid, .keyframe-action-row { grid-template-columns: 1fr; } .chapter-material-card-grid { padding: 12px; } .shot-reference-heading { align-items: flex-start; flex-direction: column; } .shot-reference-tags { justify-content: flex-start; } .shot-reference-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .chapter-video-toolbar-actions { flex-wrap: wrap; } }
 </style>

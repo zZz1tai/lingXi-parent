@@ -2,9 +2,9 @@ package com.lingXi.aiVedio.domain.dto;
 
 import lombok.Data;
 
-/** Wanx 提交结果不确定时的人工核对请求。 */
+/** 视频供应商提交结果不确定时的人工核对请求。 */
 @Data
-public class AiVideoWanxSubmissionResolutionRequest
+public class AiVideoSubmissionResolutionRequest
 {
     /** RESUME_WITH_PROVIDER_TASK_ID / CONFIRM_NOT_SUBMITTED */
     private String action;

@@ -141,6 +141,50 @@ export function createAiVideoAssetRegenerationDraft(assetId, data) {
   })
 }
 
+export function getAiVideoKeyframeReferenceBinding(assetId) {
+  return request({
+    url: '/aivideo/asset/' + assetId + '/references',
+    method: 'get'
+  })
+}
+
+export function updateAiVideoKeyframeReferenceBinding(assetId, data) {
+  return request({
+    url: '/aivideo/asset/' + assetId + '/references',
+    method: 'put',
+    data
+  })
+}
+
+export function resetAiVideoKeyframeReferenceBinding(assetId) {
+  return request({
+    url: '/aivideo/asset/' + assetId + '/references/reset-auto',
+    method: 'post'
+  })
+}
+
+export function getAiVideoVideoSourceBinding(assetId) {
+  return request({
+    url: '/aivideo/asset/' + assetId + '/source-keyframe',
+    method: 'get'
+  })
+}
+
+export function updateAiVideoVideoSourceBinding(assetId, data) {
+  return request({
+    url: '/aivideo/asset/' + assetId + '/source-keyframe',
+    method: 'put',
+    data
+  })
+}
+
+export function resetAiVideoVideoSourceBinding(assetId) {
+  return request({
+    url: '/aivideo/asset/' + assetId + '/source-keyframe/reset-auto',
+    method: 'post'
+  })
+}
+
 export function delAiVideoAsset(assetId) {
   return request({
     url: '/aivideo/asset/' + assetId,
@@ -148,7 +192,7 @@ export function delAiVideoAsset(assetId) {
   })
 }
 
-export function resolveAiVideoAssetWanxSubmission(assetId, data) {
+export function resolveAiVideoAssetSubmission(assetId, data) {
   return request({
     url: '/aivideo/asset/' + assetId + '/video-resolution',
     method: 'post',

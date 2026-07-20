@@ -89,10 +89,12 @@ public final class AiVideoJsonMetadata
         if (sceneReferenceAssetId == null)
         {
             metadata.remove("sceneReferenceAssetId");
+            metadata.remove("sourceAssetId");
         }
         else
         {
             metadata.put("sceneReferenceAssetId", sceneReferenceAssetId.longValue());
+            metadata.put("sourceAssetId", sceneReferenceAssetId.longValue());
         }
         com.fasterxml.jackson.databind.node.ArrayNode characters =
                 metadata.putArray("characterReferenceAssetIds");
@@ -106,6 +108,44 @@ public final class AiVideoJsonMetadata
                 }
             }
         }
+        return metadata.toString();
+    }
+
+    public static String withImageReferenceBinding(String metadataJson, Long sceneReferenceAssetId,
+            List<Long> characterReferenceAssetIds, String bindingMode)
+    {
+        String updated = withImageReferenceIds(
+                metadataJson, sceneReferenceAssetId, characterReferenceAssetIds);
+        try
+        {
+            ObjectNode metadata = (ObjectNode) OBJECT_MAPPER.readTree(updated);
+            metadata.put("referenceBindingMode", sanitize(bindingMode));
+            return metadata.toString();
+        }
+        catch (Exception ignored)
+        {
+            return updated;
+        }
+    }
+
+    public static String withVideoSourceBinding(String metadataJson, Long keyframeAssetId,
+            Integer keyframeVersionNo, String bindingMode)
+    {
+        ObjectNode metadata = OBJECT_MAPPER.createObjectNode();
+        if (metadataJson != null && !metadataJson.trim().isEmpty())
+        {
+            try
+            {
+                com.fasterxml.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(metadataJson);
+                if (existing != null && existing.isObject()) metadata.setAll((ObjectNode) existing);
+            }
+            catch (Exception ignored)
+            {
+            }
+        }
+        if (keyframeAssetId != null) metadata.put("sourceKeyframeAssetId", keyframeAssetId.longValue());
+        if (keyframeVersionNo != null) metadata.put("sourceKeyframeVersionNo", keyframeVersionNo.intValue());
+        metadata.put("sourceBindingMode", sanitize(bindingMode));
         return metadata.toString();
     }
 

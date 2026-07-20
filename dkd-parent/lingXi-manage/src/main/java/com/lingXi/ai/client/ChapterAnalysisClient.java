@@ -9,6 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
@@ -24,8 +26,10 @@ import java.util.List;
 @Component
 public class ChapterAnalysisClient {
 
-    private static final long CHAPTER_PROVIDER_CALL_BUDGET = 2L;
+    /** Conservative idle-read budget; streamed progress resets it between scene calls. */
+    private static final long CHAPTER_STREAMING_READ_SAFETY_MULTIPLIER = 4L;
     private static final long CHAPTER_TRANSPORT_MARGIN_MS = 60_000L;
+    private static final int MAX_STREAM_EVENT_CHARS = 2 * 1024 * 1024;
 
     private final VideoConfig config;
     private final AgentConfig agentConfig;
@@ -75,6 +79,11 @@ public class ChapterAnalysisClient {
         public boolean isRetryable() { return retryable; }
     }
 
+    @FunctionalInterface
+    public interface ProgressListener {
+        void onProgress(String stage, int progress, String message);
+    }
+
     // ── API Methods ─────────────────────────────────────────────────────────
 
     /**
@@ -83,7 +92,7 @@ public class ChapterAnalysisClient {
      * @param apiKey            DashScope API key
      * @param model             LLM model name
      * @param baseUrl           LLM base URL
-     * @param videoModel        Downstream Wanx model used to normalize shot durations
+     * @param videoModel        Downstream video model used to normalize shot durations
      * @param chapterTitle      Chapter title
      * @param sourceText        Raw chapter source text
      * @param projectCharacters Existing project characters for identity reuse
@@ -97,6 +106,19 @@ public class ChapterAnalysisClient {
             String chapterTitle,
             String sourceText,
             List<ObjectNode> projectCharacters) {
+        return analyzeChapter(apiKey, model, baseUrl, videoModel, chapterTitle,
+                sourceText, projectCharacters, null);
+    }
+
+    public AnalysisResult analyzeChapter(
+            String apiKey,
+            String model,
+            String baseUrl,
+            String videoModel,
+            String chapterTitle,
+            String sourceText,
+            List<ObjectNode> projectCharacters,
+            ProgressListener progressListener) {
 
         try {
             ObjectNode body = objectMapper.createObjectNode();
@@ -120,7 +142,15 @@ public class ChapterAnalysisClient {
             }
             body.set("llm_config", llmConfig);
 
-            String url = config.getBaseUrl() + config.getAnalyzeChapterUrl();
+            ProgressListener effectiveProgressListener = progressListener == null
+                    ? (stage, progress, message) -> { }
+                    : progressListener;
+            String endpoint = config.getAnalyzeChapterStreamUrl();
+            if (endpoint == null || endpoint.trim().isEmpty()) {
+                throw new ChapterClientConfigurationException(
+                        "video.analyze-chapter-stream-url must be configured");
+            }
+            String url = config.getBaseUrl() + endpoint;
             int timeout = requirePositive(config.getChapterReadTimeout(), "video.chapter-read-timeout");
             validateChapterTimeoutBudget(timeout, providerReadTimeoutSeconds);
 
@@ -128,7 +158,8 @@ public class ChapterAnalysisClient {
                             + "providerTimeoutSeconds={} | httpReadTimeoutMs={}",
                     sourceText.length(), providerReadTimeoutSeconds, timeout);
 
-            JsonNode response = doPost(url, body.toString(), timeout);
+            JsonNode response = doPostStream(
+                    url, body.toString(), timeout, effectiveProgressListener);
             return parseAnalysisResponse(response);
 
         } catch (SocketTimeoutException e) {
@@ -176,12 +207,13 @@ public class ChapterAnalysisClient {
     }
 
     private void validateChapterTimeoutBudget(int chapterReadTimeoutMs, int providerReadTimeoutSeconds) {
-        long minimumBudgetMs = providerReadTimeoutSeconds * 1_000L * CHAPTER_PROVIDER_CALL_BUDGET
+        long minimumBudgetMs = providerReadTimeoutSeconds * 1_000L
+                * CHAPTER_STREAMING_READ_SAFETY_MULTIPLIER
                 + CHAPTER_TRANSPORT_MARGIN_MS;
         if (chapterReadTimeoutMs <= minimumBudgetMs) {
             throw new ChapterClientConfigurationException(
                     "video.chapter-read-timeout must be greater than " + minimumBudgetMs
-                            + " ms so the primary provider call, one contract-repair call, and transport margin can finish");
+                            + " ms so streamed planning, scene generation, local repair, and transport margin can finish");
         }
     }
 
@@ -229,6 +261,66 @@ public class ChapterAnalysisClient {
             }
             return response;
 
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
+    }
+
+    private JsonNode doPostStream(String urlStr, String jsonBody, int readTimeout,
+            ProgressListener progressListener) throws IOException {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(urlStr);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            conn.setRequestProperty("Accept", "application/x-ndjson");
+            applyServiceAuth(conn);
+            conn.setConnectTimeout(requirePositive(config.getConnectTimeout(), "video.connect-timeout"));
+            conn.setReadTimeout(readTimeout);
+            conn.setDoOutput(true);
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
+            }
+
+            int statusCode = conn.getResponseCode();
+            if (statusCode < 200 || statusCode >= 300) {
+                String responseBody = AgentResponseUtil.readResponseBody(conn, statusCode);
+                return AgentResponseUtil.normalizeError(
+                        objectMapper, responseBody, statusCode,
+                        "CHAPTER_AGENT_HTTP_ERROR", "Python 章节分析流式接口请求失败");
+            }
+
+            JsonNode terminalResponse = null;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.trim().isEmpty()) {
+                        continue;
+                    }
+                    if (line.length() > MAX_STREAM_EVENT_CHARS) {
+                        throw new IOException("Chapter progress event exceeds size limit");
+                    }
+                    JsonNode event = objectMapper.readTree(line);
+                    String type = event.path("type").asText("");
+                    if ("progress".equals(type)) {
+                        progressListener.onProgress(
+                                event.path("stage").asText("RUNNING"),
+                                event.path("progress").asInt(10),
+                                event.path("message").asText("章节分析进行中"));
+                    } else if ("result".equals(type)) {
+                        terminalResponse = event.path("response");
+                    }
+                }
+            }
+            if (terminalResponse == null || !terminalResponse.isObject()) {
+                throw new IOException("Python chapter analysis stream ended without a result");
+            }
+            return terminalResponse;
         } finally {
             if (conn != null) {
                 conn.disconnect();

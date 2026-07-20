@@ -89,7 +89,10 @@ class Settings(BaseSettings):
         ),
     )
     outbound_allowed_hosts: str = Field(
-        default="api.openai.com,dashscope.aliyuncs.com",
+        default=(
+            "api.openai.com,dashscope.aliyuncs.com,"
+            "*.cn-beijing.maas.aliyuncs.com"
+        ),
         description="Comma-separated allowlist for provider HTTP destinations",
     )
     allow_insecure_outbound_http: bool = Field(

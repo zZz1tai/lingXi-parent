@@ -112,7 +112,10 @@ def _normalize_api_base_url(base_url: str) -> str:
 
     path = parsed.path.rstrip("/")
     compatible_suffix = "/compatible-mode/v1"
-    if path.endswith(compatible_suffix):
+    video_endpoint_suffix = "/api/v1" + VIDEO_SYNTHESIS_PATH
+    if path.endswith(video_endpoint_suffix):
+        path = path[: -len(VIDEO_SYNTHESIS_PATH)]
+    elif path.endswith(compatible_suffix):
         path = path[: -len(compatible_suffix)] + "/api/v1"
     elif not path:
         path = "/api/v1"
@@ -354,32 +357,23 @@ async def submit_video(
     response: Response,
     client: Annotated[httpx.AsyncClient, Depends(get_http_client)],
 ) -> SubmitVideoResponse:
-    """Submit an image-to-video generation task to DashScope WanxVideo.
+    """Submit an image-to-video generation task through the active provider adapter.
 
     This is an async endpoint that returns a task ID for polling.
     """
     logger.info(
-        "Submitting video task | model_length=%d | duration_ms=%d | prompt_len=%d",
+        "Submitting video task | provider=%s | model_length=%d | duration_ms=%d | prompt_len=%d | character_refs=%d | scene_ref=%s",
+        request.provider,
         len(request.model),
         request.duration_ms,
         len(request.prompt),
+        len(request.character_reference_image_urls),
+        bool(request.scene_reference_image_url),
     )
 
     # Normalize duration
     duration_ms = _normalize_duration_ms(request.duration_ms, request.model)
 
-    # Reject edited prompts that exceed the selected model's limits. Never
-    # silently mutate content after the user has reviewed and confirmed it.
-    prompt_limit = _get_prompt_limit(request.model)
-    if len(request.prompt) > prompt_limit:
-        response.status_code = 400
-        return SubmitVideoResponse(
-            success=False,
-            normalized_duration_ms=duration_ms,
-            error=f"Video prompt exceeds the provider limit of {prompt_limit} characters",
-            status_code=400,
-            error_code="VIDEO_PROMPT_TOO_LONG",
-        )
     negative_prompt = request.negative_prompt or ""
     if len(negative_prompt) > VIDEO_NEGATIVE_PROMPT_LIMIT:
         response.status_code = 400
@@ -393,22 +387,71 @@ async def submit_video(
             status_code=400,
             error_code="VIDEO_NEGATIVE_PROMPT_TOO_LONG",
         )
+    is_happyhorse = request.provider.lower() == "happyhorse" or "happyhorse" in request.model.lower()
     prompt = request.prompt
+    input_data: dict[str, Any]
+    parameters: dict[str, Any]
+    if is_happyhorse:
+        media_urls = [request.image_url, *request.character_reference_image_urls]
+        if request.scene_reference_image_url:
+            media_urls.append(request.scene_reference_image_url)
+        if not 1 <= len(media_urls) <= 9:
+            response.status_code = 400
+            return SubmitVideoResponse(
+                success=False,
+                normalized_duration_ms=duration_ms,
+                error="HappyHorse requires between 1 and 9 reference images",
+                status_code=400,
+                error_code="VIDEO_REFERENCE_COUNT_INVALID",
+            )
+        reference_instructions = [
+            "[Image 1]是当前分镜关键帧，用于约束主要构图、人物站位和镜头起始状态。"
+        ]
+        for index in range(len(request.character_reference_image_urls)):
+            reference_instructions.append(
+                f"[Image {index + 2}]是当前分镜人物三视图，用于保持人物身份、服装和体态一致。"
+            )
+        if request.scene_reference_image_url:
+            reference_instructions.append(
+                f"[Image {len(media_urls)}]是场景参考图，用于保持环境、光线和美术风格一致。"
+            )
+        prompt = "\n".join(reference_instructions + [request.prompt])
+        if negative_prompt:
+            prompt += f"\n生成时避免出现：{negative_prompt}"
+        input_data = {
+            "prompt": prompt,
+            "media": [
+                {"type": "reference_image", "url": url} for url in media_urls
+            ],
+        }
+        parameters = {
+            "resolution": request.resolution,
+            "ratio": request.ratio,
+            "duration": duration_ms // 1000,
+            "watermark": request.watermark,
+        }
+    else:
+        input_data = {"prompt": prompt, "img_url": request.image_url}
+        if negative_prompt:
+            input_data["negative_prompt"] = negative_prompt
+        parameters = {
+            "resolution": request.resolution,
+            "prompt_extend": request.prompt_extend,
+        }
+        if _should_include_duration(request.model):
+            parameters["duration"] = duration_ms // 1000
 
-    # Build request body
-    input_data: dict[str, str] = {
-        "prompt": prompt,
-        "img_url": request.image_url,
-    }
-    if negative_prompt:
-        input_data["negative_prompt"] = negative_prompt
-
-    parameters: dict[str, Any] = {
-        "resolution": request.resolution,
-        "prompt_extend": request.prompt_extend,
-    }
-    if _should_include_duration(request.model):
-        parameters["duration"] = duration_ms // 1000  # Convert to seconds
+    # Never silently truncate content after the user has reviewed and confirmed it.
+    prompt_limit = _get_prompt_limit(request.model)
+    if len(prompt) > prompt_limit:
+        response.status_code = 400
+        return SubmitVideoResponse(
+            success=False,
+            normalized_duration_ms=duration_ms,
+            error=f"Video prompt exceeds the provider limit of {prompt_limit} characters",
+            status_code=400,
+            error_code="VIDEO_PROMPT_TOO_LONG",
+        )
 
     body: dict[str, Any] = {
         "model": request.model,
@@ -458,8 +501,8 @@ async def submit_video(
                 ),
                 status_code=provider_response.status_code,
                 error_code=(
-                    "WANX_SUBMISSION_UNCERTAIN"
-                    if submission_uncertain else "WANX_SUBMISSION_REJECTED"
+                    "VIDEO_PROVIDER_SUBMISSION_UNCERTAIN"
+                    if submission_uncertain else "VIDEO_PROVIDER_SUBMISSION_REJECTED"
                 ),
                 retryable=(
                     _is_retryable_status(provider_response.status_code)
@@ -481,7 +524,7 @@ async def submit_video(
                 normalized_duration_ms=duration_ms,
                 error="Video submission result is uncertain; do not resubmit automatically",
                 status_code=502,
-                error_code="WANX_SUBMISSION_UNCERTAIN",
+                error_code="VIDEO_PROVIDER_SUBMISSION_UNCERTAIN",
                 submission_uncertain=True,
             )
 
@@ -502,7 +545,7 @@ async def submit_video(
             normalized_duration_ms=duration_ms,
             error="Video submission result is uncertain; do not resubmit automatically",
             status_code=504,
-            error_code="WANX_SUBMISSION_UNCERTAIN",
+            error_code="VIDEO_PROVIDER_SUBMISSION_UNCERTAIN",
             submission_uncertain=True,
         )
     except httpx.HTTPError as exc:
@@ -516,7 +559,7 @@ async def submit_video(
             normalized_duration_ms=duration_ms,
             error="Video submission result is uncertain; do not resubmit automatically",
             status_code=503,
-            error_code="WANX_SUBMISSION_UNCERTAIN",
+            error_code="VIDEO_PROVIDER_SUBMISSION_UNCERTAIN",
             submission_uncertain=True,
         )
     except (InputValidationError, ValueError):
@@ -527,7 +570,7 @@ async def submit_video(
             normalized_duration_ms=duration_ms,
             error="Invalid video provider configuration",
             status_code=400,
-            error_code="WANX_PROVIDER_CONFIG_ERROR",
+            error_code="VIDEO_PROVIDER_CONFIG_ERROR",
         )
     except Exception as exc:
         logger.error(
@@ -540,7 +583,7 @@ async def submit_video(
             normalized_duration_ms=duration_ms,
             error="Video submission result is uncertain; do not resubmit automatically",
             status_code=500,
-            error_code="WANX_SUBMISSION_UNCERTAIN",
+            error_code="VIDEO_PROVIDER_SUBMISSION_UNCERTAIN",
             submission_uncertain=True,
         )
 
@@ -587,8 +630,8 @@ async def query_video(
                 error="Video provider query failed",
                 status_code=provider_response.status_code,
                 error_code=(
-                    "WANX_QUERY_RETRYABLE_HTTP_ERROR"
-                    if retryable else "WANX_QUERY_HTTP_ERROR"
+                    "VIDEO_PROVIDER_QUERY_RETRYABLE_HTTP_ERROR"
+                    if retryable else "VIDEO_PROVIDER_QUERY_HTTP_ERROR"
                 ),
                 retryable=retryable,
             )
@@ -605,7 +648,7 @@ async def query_video(
                 success=False,
                 error="Video provider returned an invalid query response",
                 status_code=502,
-                error_code="WANX_QUERY_INVALID_RESPONSE",
+                error_code="VIDEO_PROVIDER_QUERY_INVALID_RESPONSE",
                 retryable=True,
             )
 
@@ -647,7 +690,7 @@ async def query_video(
             success=False,
             error="Video provider query timed out",
             status_code=504,
-            error_code="WANX_QUERY_TIMEOUT",
+            error_code="VIDEO_PROVIDER_QUERY_TIMEOUT",
             retryable=True,
         )
     except httpx.HTTPError as exc:
@@ -660,7 +703,7 @@ async def query_video(
             success=False,
             error="Video provider query is temporarily unavailable",
             status_code=503,
-            error_code="WANX_QUERY_TRANSPORT_ERROR",
+            error_code="VIDEO_PROVIDER_QUERY_TRANSPORT_ERROR",
             retryable=True,
         )
     except (InputValidationError, ValueError):
@@ -670,7 +713,7 @@ async def query_video(
             success=False,
             error="Invalid video provider configuration",
             status_code=400,
-            error_code="WANX_PROVIDER_CONFIG_ERROR",
+            error_code="VIDEO_PROVIDER_CONFIG_ERROR",
         )
     except Exception as exc:
         logger.error(
@@ -682,6 +725,6 @@ async def query_video(
             success=False,
             error="Video query failed unexpectedly",
             status_code=500,
-            error_code="WANX_QUERY_INTERNAL_ERROR",
+            error_code="VIDEO_PROVIDER_QUERY_INTERNAL_ERROR",
             retryable=True,
         )

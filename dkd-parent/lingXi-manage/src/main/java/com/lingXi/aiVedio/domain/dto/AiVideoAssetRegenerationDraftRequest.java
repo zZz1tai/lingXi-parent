@@ -12,4 +12,7 @@ public class AiVideoAssetRegenerationDraftRequest
 
     /** 新关键帧使用的人物参考图；顺序会保存到资产关系中。 */
     private List<Long> characterReferenceAssetIds;
+
+    /** 视频新版本可显式切换到同一分镜的另一个关键帧版本。 */
+    private Long keyframeAssetId;
 }

@@ -97,6 +97,8 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(10000, video._normalize_duration_ms(8000, "wanx2.5-i2v-preview"))
         self.assertEqual(2000, video._normalize_duration_ms(1000, "wanx2.6-i2v"))
         self.assertEqual(9000, video._normalize_duration_ms(9000, "wanx2.6-i2v"))
+        self.assertEqual(3000, video._normalize_duration_ms(1000, "happyhorse-1.1-r2v"))
+        self.assertEqual(15000, video._normalize_duration_ms(20000, "happyhorse-1.1-r2v"))
 
     def test_compatible_llm_base_is_converted_to_native_dashscope_path(self) -> None:
         actual = video._build_api_url(
@@ -107,6 +109,20 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
             "https://dashscope.aliyuncs.com/api/v1/services/aigc/"
             "multimodal-generation/generation",
             actual,
+        )
+
+    def test_full_happyhorse_submit_url_is_normalized_without_duplicate_path(self) -> None:
+        full_url = (
+            "https://workspace-123.cn-beijing.maas.aliyuncs.com/api/v1/"
+            "services/aigc/video-generation/video-synthesis"
+        )
+        self.assertEqual(
+            full_url,
+            video._build_api_url(full_url, video.VIDEO_SYNTHESIS_PATH),
+        )
+        self.assertEqual(
+            "https://workspace-123.cn-beijing.maas.aliyuncs.com/api/v1/tasks/task-1",
+            video._build_task_query_url(full_url, "task-1"),
         )
 
     def test_image_schema_accepts_five_references_and_rejects_six(self) -> None:
@@ -141,6 +157,87 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
                 duration_ms=4000,
                 idempotency_key="x" * 257,
             )
+
+    def test_video_schema_preserves_bound_character_and_scene_references(self) -> None:
+        character_urls = [
+            "https://assets.invalid/character-a-v2.png",
+            "https://assets.invalid/character-b-v3.png",
+        ]
+        request = SubmitVideoRequest(
+            api_key="offline-key",
+            model=VIDEO_MODEL,
+            base_url=PROVIDER_BASE_URL,
+            prompt="test prompt",
+            image_url="https://assets.invalid/keyframe.png",
+            character_reference_image_urls=character_urls,
+            scene_reference_image_url="https://assets.invalid/scene-v4.png",
+            resolution="720P",
+            duration_ms=4000,
+        )
+        self.assertEqual(character_urls, request.character_reference_image_urls)
+        self.assertEqual(
+            "https://assets.invalid/scene-v4.png", request.scene_reference_image_url
+        )
+
+        with self.assertRaises(ValidationError):
+            SubmitVideoRequest(
+                api_key="offline-key",
+                model=VIDEO_MODEL,
+                base_url=PROVIDER_BASE_URL,
+                prompt="test prompt",
+                image_url="https://assets.invalid/keyframe.png",
+                character_reference_image_urls=[
+                    f"https://assets.invalid/character-{index}.png"
+                    for index in range(5)
+                ],
+                resolution="720P",
+                duration_ms=4000,
+            )
+
+    async def test_happyhorse_sends_keyframe_characters_and_scene_as_ordered_media(self) -> None:
+        request = SubmitVideoRequest(
+            api_key="offline-key",
+            provider="happyhorse",
+            model="happyhorse-1.1-r2v",
+            base_url="https://workspace.cn-beijing.maas.aliyuncs.com",
+            prompt="人物走过庭院，镜头缓慢推进",
+            negative_prompt="身份漂移、服装变化",
+            image_url="https://assets.invalid/keyframe.png",
+            character_reference_image_urls=[
+                "https://assets.invalid/character-a.png",
+                "https://assets.invalid/character-b.png",
+            ],
+            scene_reference_image_url="https://assets.invalid/scene.png",
+            resolution="720P",
+            ratio="16:9",
+            watermark=False,
+            duration_ms=12000,
+        )
+        client = _FakeAsyncClient(
+            _FakeResponse(payload={"output": {"task_id": "happyhorse-task-1"}})
+        )
+
+        result = await video.submit_video(request, response=Response(), client=client)
+
+        self.assertTrue(result.success)
+        media = client.json_body["input"]["media"]
+        self.assertEqual(
+            [
+                "https://assets.invalid/keyframe.png",
+                "https://assets.invalid/character-a.png",
+                "https://assets.invalid/character-b.png",
+                "https://assets.invalid/scene.png",
+            ],
+            [item["url"] for item in media],
+        )
+        prompt = client.json_body["input"]["prompt"]
+        self.assertIn("[Image 1]", prompt)
+        self.assertIn("[Image 2]", prompt)
+        self.assertIn("[Image 4]", prompt)
+        self.assertEqual(12, client.json_body["parameters"]["duration"])
+        self.assertEqual("16:9", client.json_body["parameters"]["ratio"])
+        self.assertFalse(client.json_body["parameters"]["watermark"])
+        self.assertTrue(client.url.endswith(video.VIDEO_SYNTHESIS_PATH))
 
     async def test_all_five_references_are_sent_in_order_without_truncation(self) -> None:
         references = [
@@ -232,7 +329,7 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.success)
         self.assertTrue(result.submission_uncertain)
-        self.assertEqual("WANX_SUBMISSION_UNCERTAIN", result.error_code)
+        self.assertEqual("VIDEO_PROVIDER_SUBMISSION_UNCERTAIN", result.error_code)
         self.assertEqual(504, result.status_code)
         self.assertEqual(202, http_response.status_code)
 
@@ -283,7 +380,7 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.success)
         self.assertTrue(result.submission_uncertain)
         self.assertFalse(result.retryable)
-        self.assertEqual("WANX_SUBMISSION_UNCERTAIN", result.error_code)
+        self.assertEqual("VIDEO_PROVIDER_SUBMISSION_UNCERTAIN", result.error_code)
         self.assertEqual(202, http_response.status_code)
 
     async def test_invalid_success_payload_submission_is_uncertain(self) -> None:
@@ -309,7 +406,7 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.success)
         self.assertTrue(result.submission_uncertain)
-        self.assertEqual("WANX_SUBMISSION_UNCERTAIN", result.error_code)
+        self.assertEqual("VIDEO_PROVIDER_SUBMISSION_UNCERTAIN", result.error_code)
         self.assertEqual(202, http_response.status_code)
 
     async def test_success_payload_without_task_id_is_uncertain(self) -> None:
@@ -333,7 +430,7 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.success)
         self.assertTrue(result.submission_uncertain)
-        self.assertEqual("WANX_SUBMISSION_UNCERTAIN", result.error_code)
+        self.assertEqual("VIDEO_PROVIDER_SUBMISSION_UNCERTAIN", result.error_code)
         self.assertEqual(202, http_response.status_code)
 
     async def test_idempotency_key_is_forwarded_to_provider(self) -> None:

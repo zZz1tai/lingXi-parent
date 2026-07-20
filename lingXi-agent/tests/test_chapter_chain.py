@@ -91,10 +91,40 @@ def _story_bible() -> dict:
     }
 
 
+def _chapter_plan() -> dict:
+    document = _story_bible()
+    scene = document["scenes"][0]
+    return {
+        "summary": document["summary"],
+        "worldSetting": document["worldSetting"],
+        "timeline": document["timeline"],
+        "relationships": document["relationships"],
+        "immutableFacts": document["immutableFacts"],
+        "segmentationRationale": document["videoPlan"]["segmentationRationale"],
+        "characters": document["characters"],
+        "scenes": [
+            {
+                "sceneNo": 1,
+                "title": scene["title"],
+                "time": scene["time"],
+                "location": scene["location"],
+                "atmosphere": scene["atmosphere"],
+                "dramaticGoal": scene["dramaticGoal"],
+                "characters": scene["characters"],
+                "sourceUnitIds": ["U1", "U2"],
+            }
+        ],
+    }
+
+
 class ChapterChainIntegrationTests(unittest.TestCase):
     def test_chapter_chain_repairs_invalid_json_once(self) -> None:
         model = FakeListChatModel(
-            responses=["not json", json.dumps(_story_bible(), ensure_ascii=False)]
+            responses=[
+                json.dumps(_chapter_plan(), ensure_ascii=False),
+                "not json",
+                json.dumps(_story_bible()["scenes"][0], ensure_ascii=False),
+            ]
         )
         chain = build_chapter_analysis_chain(model)
 

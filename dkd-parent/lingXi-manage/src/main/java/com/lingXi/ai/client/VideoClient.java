@@ -148,6 +148,7 @@ public class VideoClient {
     public ImageResult generateImage(
             String apiKey,
             String model,
+            String providerBaseUrl,
             String assetType,
             String prompt,
             String negativePrompt,
@@ -158,7 +159,7 @@ public class VideoClient {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("api_key", apiKey);
             body.put("model", model);
-            putProviderBaseUrl(body);
+            body.put("base_url", providerBaseUrl);
             if (assetType != null && !assetType.trim().isEmpty()) {
                 body.put("asset_type", assetType.trim());
             }
@@ -218,25 +219,46 @@ public class VideoClient {
      */
     public VideoSubmitResult submitVideo(
             String apiKey,
+            String provider,
+            String providerBaseUrl,
             String model,
             String prompt,
             String negativePrompt,
             String imageUrl,
+            List<String> characterReferenceImageUrls,
+            String sceneReferenceImageUrl,
             String resolution,
+            String ratio,
+            boolean watermark,
             int durationMs,
             String idempotencyKey) {
 
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("api_key", apiKey);
+            body.put("provider", provider);
             body.put("model", model);
-            putProviderBaseUrl(body);
+            body.put("base_url", providerBaseUrl);
             body.put("prompt", prompt);
             if (negativePrompt != null && !negativePrompt.isEmpty()) {
                 body.put("negative_prompt", negativePrompt);
             }
             body.put("image_url", imageUrl);
+            if (characterReferenceImageUrls != null && !characterReferenceImageUrls.isEmpty()) {
+                com.fasterxml.jackson.databind.node.ArrayNode characters =
+                        body.putArray("character_reference_image_urls");
+                for (String referenceUrl : characterReferenceImageUrls) {
+                    if (referenceUrl != null && !referenceUrl.trim().isEmpty()) {
+                        characters.add(referenceUrl.trim());
+                    }
+                }
+            }
+            if (sceneReferenceImageUrl != null && !sceneReferenceImageUrl.trim().isEmpty()) {
+                body.put("scene_reference_image_url", sceneReferenceImageUrl.trim());
+            }
             body.put("resolution", resolution);
+            body.put("ratio", ratio);
+            body.put("watermark", watermark);
             body.put("duration_ms", durationMs);
             body.put("idempotency_key", idempotencyKey);
 
@@ -250,8 +272,8 @@ public class VideoClient {
             log.error("Failed to submit video task, errorType={}",
                     e.getClass().getSimpleName());
             return new VideoSubmitResult(false, null,
-                    "WANX_SUBMISSION_UNCERTAIN: Python Agent transport failed",
-                    503, "WANX_SUBMISSION_UNCERTAIN", false, true, null);
+                    "VIDEO_PROVIDER_SUBMISSION_UNCERTAIN: Python Agent transport failed",
+                    503, "VIDEO_PROVIDER_SUBMISSION_UNCERTAIN", false, true, null);
         }
     }
 
@@ -283,11 +305,11 @@ public class VideoClient {
      * @param taskId DashScope task ID
      * @return VideoQueryResult with status and video URL if completed
      */
-    public VideoQueryResult queryVideo(String apiKey, String taskId) {
+    public VideoQueryResult queryVideo(String apiKey, String providerBaseUrl, String taskId) {
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("api_key", apiKey);
-            putProviderBaseUrl(body);
+            body.put("base_url", providerBaseUrl);
             body.put("task_id", taskId);
 
             String url = config.getBaseUrl() + config.getQueryVideoUrl();
@@ -323,14 +345,6 @@ public class VideoClient {
     }
 
     // ── HTTP Helpers ────────────────────────────────────────────────────────
-
-    /** Provider URL remains configuration-driven; Python converts compatible-mode/v1 to native api/v1. */
-    private void putProviderBaseUrl(ObjectNode body) {
-        String baseUrl = agentConfig.getLlmBaseUrl();
-        if (baseUrl != null && !baseUrl.trim().isEmpty()) {
-            body.put("base_url", baseUrl.trim());
-        }
-    }
 
     private JsonNode doPost(String urlStr, String jsonBody, int readTimeout) throws IOException {
         HttpURLConnection conn = null;

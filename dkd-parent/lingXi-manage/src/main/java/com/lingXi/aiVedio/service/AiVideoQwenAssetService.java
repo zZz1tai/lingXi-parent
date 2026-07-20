@@ -5,7 +5,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.lingXi.ai.client.VideoClient;
 import com.lingXi.ai.config.DashScopeConfig;
+import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
+import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.AiVideoProject;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
@@ -32,6 +34,8 @@ public class AiVideoQwenAssetService
     private AiVideoImageReferenceService imageReferenceService;
     @Autowired
     private DashScopeConfig dashScopeConfig;
+    @Autowired
+    private AiVideoModelConfigService modelConfigService;
 
     /**
      * 章节分析阶段只保存图片资产和提示词，不创建生成任务，也不调用图片模型。
@@ -82,7 +86,7 @@ public class AiVideoQwenAssetService
         asset.setPromptText(prompt);
         asset.setNegativePromptText(negativePrompt);
         asset.setGenerationParamsJson(AiVideoJsonMetadata.generationParameters(
-                "dashscope", dashScopeConfig.getImageModel()));
+                "dashscope", modelConfigService.getConfig().getImageModel()));
         asset.setMetadataJson(metadataJson);
         asset.setCreateBy("ai-video-worker");
         assetMapper.insertAiVideoAsset(asset);
@@ -134,11 +138,13 @@ public class AiVideoQwenAssetService
                 if (aspectRatio.isEmpty()) aspectRatio = null;
             }
             ResolvedImageReferences references = imageReferenceService.resolveAndValidate(asset);
+            AiVideoModelConfig runtimeConfig = modelConfigService.getConfig();
+            String imageModel = runtimeConfig.getImageModel();
             String requestJson = AiVideoJsonMetadata.imageGenerationRequest(asset.getPromptText(),
-                    asset.getNegativePromptText(), dashScopeConfig.getImageModel(), asset.getAssetType(), aspectRatio,
+                    asset.getNegativePromptText(), imageModel, asset.getAssetType(), aspectRatio,
                     references.getAssetIds());
             if (taskMapper.updateClaimedImageTaskRequest(
-                    task.getTaskId(), requestJson, dashScopeConfig.getImageModel()) != 1)
+                    task.getTaskId(), requestJson, imageModel) != 1)
             {
                 throw new IllegalStateException("图片任务状态已变化，拒绝调用图片模型");
             }
@@ -146,7 +152,8 @@ public class AiVideoQwenAssetService
             // Call Python Agent API for image generation
             VideoClient.ImageResult result = videoClient.generateImage(
                     dashScopeConfig.getApiKey(),
-                    dashScopeConfig.getImageModel(),
+                    imageModel,
+                    runtimeConfig.getWorkspaceBaseUrl(),
                     asset.getAssetType(),
                     asset.getPromptText(),
                     asset.getNegativePromptText(),

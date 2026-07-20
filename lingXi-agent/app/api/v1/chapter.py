@@ -8,11 +8,15 @@ Handles source unit building, prompt construction, LLM call, and JSON validation
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
+import re
 import time
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Response
+from fastapi.responses import StreamingResponse
 from httpx import TimeoutException as HttpxTimeoutException, TransportError
 from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 
@@ -25,6 +29,7 @@ from app.chains.chapter_analysis import (
 from app.schemas.chapter import AnalyzeChapterRequest, AnalyzeChapterResponse
 from app.security.outbound import validate_outbound_http_url
 from app.services.chapter_analysis import (
+    build_planning_context,
     build_prompt,
     build_source_units,
 )
@@ -39,6 +44,7 @@ router = APIRouter(prefix="/api/v1/video", tags=["chapter"])
 CHAPTER_MAX_CONCURRENCY = 4
 CHAPTER_SLOT_WAIT_SECONDS = 5.0
 _chapter_slots = asyncio.BoundedSemaphore(CHAPTER_MAX_CONCURRENCY)
+CONTRACT_ERROR_LOG_LIMIT = 600
 
 
 class _ChapterConfigurationError(ValueError):
@@ -57,6 +63,25 @@ def _iter_exception_chain(exc: BaseException) -> Iterator[BaseException]:
         seen.add(id(current))
         yield current
         current = current.__cause__ or current.__context__
+
+
+def _safe_contract_error_detail(exc: BaseException) -> str:
+    """Return a short, log-safe contract failure summary without model payloads."""
+
+    detail = str(exc)[:4_000]
+    detail = re.sub(
+        r"(?i)input_value=.*?(?=,\s*input_type=|$)",
+        "input_value=[REDACTED]",
+        detail,
+        flags=re.DOTALL,
+    )
+    detail = re.sub(r"(?i)(api[_-]?key|authorization|bearer)\s*[:=]\s*\S+", r"\1=[REDACTED]", detail)
+    detail = re.sub(r"[\w.+-]+@[\w.-]+", "[REDACTED_EMAIL]", detail)
+    detail = re.sub(r"(?<!\d)1\d{10}(?!\d)", "[REDACTED_PHONE]", detail)
+    detail = " ".join(detail.split())
+    if len(detail) > CONTRACT_ERROR_LOG_LIMIT:
+        return detail[:CONTRACT_ERROR_LOG_LIMIT] + "…"
+    return detail or "未提供具体契约校验信息"
 
 
 def _chapter_error_details(exc: BaseException) -> tuple[str, bool, str, int]:
@@ -158,11 +183,19 @@ async def _invoke_with_capacity(analysis_chain, *args, **kwargs):
 
 # ── Endpoint ─────────────────────────────────────────────────────────────────
 
-@router.post("/analyze-chapter", response_model=AnalyzeChapterResponse)
 async def analyze_chapter(
     request: AnalyzeChapterRequest,
     response: Response,
     request_id: str = Depends(get_request_id),
+) -> AnalyzeChapterResponse:
+    return await _run_chapter_analysis(request, response, request_id)
+
+
+async def _run_chapter_analysis(
+    request: AnalyzeChapterRequest,
+    response: Response,
+    request_id: str,
+    progress_callback: Callable[[str, int, str], Awaitable[None] | None] | None = None,
 ) -> AnalyzeChapterResponse:
     """Analyze a novel chapter and produce a structured story bible.
 
@@ -184,6 +217,14 @@ async def analyze_chapter(
     )
 
     try:
+        if progress_callback is not None:
+            emitted = progress_callback(
+                "PREPARING",
+                10,
+                "正在切分章节原文并准备人物规范",
+            )
+            if inspect.isawaitable(emitted):
+                await emitted
         # Step 1: Build source units
         source_units = build_source_units(request.source_text)
         logger.info(
@@ -215,6 +256,11 @@ async def analyze_chapter(
             source_units=source_units,
             project_characters=project_characters,
             video_model=request.video_model,
+        )
+        planning_context = build_planning_context(
+            chapter_title=request.chapter_title,
+            source_units=source_units,
+            project_characters=project_characters,
         )
         logger.info(
             "Prompt built | request_id=%s | prompt_length=%d",
@@ -256,9 +302,11 @@ async def analyze_chapter(
             analysis_chain,
             prompt,
             source_units,
+            planning_context=planning_context,
             request_id=request_id,
             video_model=request.video_model,
             timeout_seconds=request.llm_config.timeout_seconds,
+            progress_callback=progress_callback,
         )
         raw_response = chain_result.raw_response
         story_bible = chain_result.story_bible
@@ -297,15 +345,27 @@ async def analyze_chapter(
     except Exception as exc:
         elapsed = time.time() - start_time
         error_code, retryable, error_message, http_status = _chapter_error_details(exc)
-        logger.error(
-            "Chapter analysis failed | request_id=%s | elapsed=%.2fs | error_code=%s | "
-            "retryable=%s | error_type=%s",
-            request_id,
-            elapsed,
-            error_code,
-            retryable,
-            type(exc).__name__,
-        )
+        if error_code == "CHAPTER_LLM_OUTPUT_INVALID":
+            logger.error(
+                "Chapter analysis contract validation failed | request_id=%s | elapsed=%.2fs | "
+                "error_code=%s | retryable=%s | error_type=%s | contract_detail=%s",
+                request_id,
+                elapsed,
+                error_code,
+                retryable,
+                type(exc).__name__,
+                _safe_contract_error_detail(exc),
+            )
+        else:
+            logger.error(
+                "Chapter analysis failed | request_id=%s | elapsed=%.2fs | error_code=%s | "
+                "retryable=%s | error_type=%s",
+                request_id,
+                elapsed,
+                error_code,
+                retryable,
+                type(exc).__name__,
+            )
         response.status_code = http_status
         return AnalyzeChapterResponse(
             success=False,
@@ -314,3 +374,76 @@ async def analyze_chapter(
             retryable=retryable,
             request_id=request_id,
         )
+
+
+@router.post("/analyze-chapter", response_model=AnalyzeChapterResponse)
+async def analyze_chapter_endpoint(
+    request: AnalyzeChapterRequest,
+    response: Response,
+    request_id: str = Depends(get_request_id),
+) -> AnalyzeChapterResponse:
+    """Backward-compatible non-streaming chapter-analysis endpoint."""
+
+    return await analyze_chapter(request, response, request_id)
+
+
+@router.post("/analyze-chapter/stream", response_model=None)
+async def analyze_chapter_stream(
+    request: AnalyzeChapterRequest,
+    request_id: str = Depends(get_request_id),
+) -> StreamingResponse:
+    """Stream NDJSON stage events followed by one terminal result event."""
+
+    async def event_stream():
+        queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue(maxsize=16)
+
+        async def report(stage: str, progress: int, message: str) -> None:
+            await queue.put(
+                {
+                    "type": "progress",
+                    "stage": stage,
+                    "progress": progress,
+                    "message": message,
+                    "request_id": request_id,
+                }
+            )
+
+        async def run_analysis() -> None:
+            http_response = Response()
+            try:
+                result = await _run_chapter_analysis(
+                    request,
+                    http_response,
+                    request_id,
+                    progress_callback=report,
+                )
+                await queue.put(
+                    {
+                        "type": "result",
+                        "status_code": http_response.status_code,
+                        "response": result.model_dump(mode="json"),
+                    }
+                )
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(run_analysis())
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
+        finally:
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+    )

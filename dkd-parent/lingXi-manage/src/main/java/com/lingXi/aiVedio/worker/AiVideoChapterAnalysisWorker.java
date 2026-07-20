@@ -22,7 +22,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.lingXi.ai.client.ChapterAnalysisClient;
 import com.lingXi.ai.config.AgentConfig;
-import com.lingXi.ai.config.DashScopeConfig;
+import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoAssetRelation;
 import com.lingXi.aiVedio.domain.AiVideoChapter;
@@ -30,6 +30,7 @@ import com.lingXi.aiVedio.domain.AiVideoCharacter;
 import com.lingXi.aiVedio.domain.AiVideoScene;
 import com.lingXi.aiVedio.domain.AiVideoShot;
 import com.lingXi.aiVedio.domain.AiVideoStoryBible;
+import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
 import com.lingXi.aiVedio.mapper.AiVideoChapterMapper;
 import com.lingXi.aiVedio.mapper.AiVideoAssetRelationMapper;
 import com.lingXi.aiVedio.mapper.AiVideoCharacterMapper;
@@ -62,7 +63,7 @@ public class AiVideoChapterAnalysisWorker
     @Autowired
     private AgentConfig agentConfig;
     @Autowired
-    private DashScopeConfig dashScopeConfig;
+    private AiVideoModelConfigService modelConfigService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -130,14 +131,17 @@ public class AiVideoChapterAnalysisWorker
             }
 
             // Call Python Agent for chapter analysis
+            AiVideoModelConfig runtimeConfig = modelConfigService.getConfig();
             ChapterAnalysisClient.AnalysisResult result = chapterAnalysisClient.analyzeChapter(
                     agentConfig.getLlmApiKey(),
-                    agentConfig.getLlmModel(),
-                    agentConfig.getLlmBaseUrl(),
-                    dashScopeConfig.getVideoModel(),
+                    runtimeConfig.getTextModel(),
+                    runtimeConfig.getWorkspaceBaseUrl(),
+                    runtimeConfig.getVideoModel(),
                     chapter.getChapterTitle(),
                     chapter.getSourceText(),
-                    projectCharacterNodes);
+                    projectCharacterNodes,
+                    (stage, progress, message) -> updateStoryBibleProgress(
+                            taskId, stage, progress, message));
 
             if (!result.isSuccess())
             {
@@ -157,7 +161,8 @@ public class AiVideoChapterAnalysisWorker
             }
 
             JsonNode document = result.getStoryBible();
-            persistResult(chapter, document);
+            updateStoryBibleProgress(taskId, "PERSISTING", 95, "正在保存人物、场景、分镜和素材草稿");
+            persistResult(chapter, document, runtimeConfig.getTextModel());
             updateTaskStatusWithLockRetry(taskId, "SUCCEEDED", 100, null, null);
         }
         catch (Exception ex)
@@ -208,6 +213,27 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    private void updateStoryBibleProgress(Long taskId, String stage, Integer progress, String message)
+    {
+        String stageCode = firstNonBlank(stage, "RUNNING");
+        if (stageCode.length() > 64)
+        {
+            stageCode = stageCode.substring(0, 64);
+        }
+        String stageLabel = firstNonBlank(message, "章节分析进行中");
+        if (stageLabel.length() > 256)
+        {
+            stageLabel = stageLabel.substring(0, 256);
+        }
+        int boundedProgress = Math.max(10, Math.min(progress == null ? 10 : progress, 95));
+        int updated = taskMapper.updateStoryBibleTaskProgress(
+                taskId, boundedProgress, stageCode, stageLabel);
+        if (updated != 1)
+        {
+            throw new IllegalStateException("章节分析任务进度更新失败，taskId=" + taskId);
+        }
+    }
+
     private void waitBeforeTaskStatusRetry(Long taskId, String operation, int attempt,
             PessimisticLockingFailureException failure)
     {
@@ -229,13 +255,14 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
-    private void persistResult(final AiVideoChapter chapter, final JsonNode document)
+    private void persistResult(final AiVideoChapter chapter, final JsonNode document,
+            final String textModel)
     {
         TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
         transactionTemplate.execute(status -> {
             try
             {
-                persistResultInTransaction(chapter, document);
+                persistResultInTransaction(chapter, document, textModel);
                 return null;
             }
             catch (RuntimeException ex)
@@ -249,7 +276,8 @@ public class AiVideoChapterAnalysisWorker
         });
     }
 
-    private void persistResultInTransaction(AiVideoChapter chapter, JsonNode document) throws Exception
+    private void persistResultInTransaction(AiVideoChapter chapter, JsonNode document,
+            String textModel) throws Exception
     {
         String promptVersion = document.path("promptVersion").asText("").trim();
         if (promptVersion.isEmpty())
@@ -269,7 +297,7 @@ public class AiVideoChapterAnalysisWorker
         bible.setImmutableFactsJson(objectMapper.writeValueAsString(document.path("immutableFacts")));
         bible.setContentJson(objectMapper.writeValueAsString(document));
         bible.setSourceReferenceJson("{\"chapterId\":" + chapter.getChapterId() + ",\"sourceHash\":\"" + chapter.getSourceHash() + "\"}");
-        bible.setModelName(agentConfig.getLlmModel());
+        bible.setModelName(textModel);
         bible.setPromptVersion(promptVersion);
         bible.setCreateBy("ai-video-worker");
         storyBibleMapper.insertAiVideoStoryBible(bible);
@@ -437,6 +465,7 @@ public class AiVideoChapterAnalysisWorker
         metadata.put("sourceAssetId", sceneReferenceAssetId);
         metadata.put("sceneReferenceAssetId", sceneReferenceAssetId);
         metadata.set("characterReferenceAssetIds", longArrayNode(characterReferenceAssetIds));
+        metadata.put("referenceBindingMode", "AUTO");
         return metadata.toString();
     }
 

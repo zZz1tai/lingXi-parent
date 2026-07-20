@@ -43,11 +43,11 @@
         limit 1
     </select>
 
-    <select id="selectLatestNeedsReviewWanxTaskByAssetId" parameterType="Long" resultMap="AiVideoGenerationTaskResult">
+    <select id="selectLatestNeedsReviewVideoTaskByAssetId" parameterType="Long" resultMap="AiVideoGenerationTaskResult">
         select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key,
                provider_task_id, progress, request_json, error_code, error_message, create_time
         from ai_video_generation_task
-        where asset_id = #{assetId} and task_type = 'VIDEO' and provider_code = 'wanx'
+        where asset_id = #{assetId} and task_type = 'VIDEO'
           and status = 'NEEDS_REVIEW' and (del_flag = '0' or del_flag is null)
         order by task_id desc
         limit 1
@@ -79,10 +79,22 @@
     <update id="claimStoryBibleTask">
         update ai_video_generation_task
         set status = 'RUNNING', progress = 10, error_code = null, error_message = null,
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.stageCode', 'PREPARING', '$.stageLabel', '正在准备章节原文和人物规范'),
             started_time = coalesce(started_time, now()), update_time = now()
         where task_id = #{taskId}
           and task_type = 'STORY_BIBLE'
           and status = 'QUEUED'
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="updateStoryBibleTaskProgress">
+        update ai_video_generation_task
+        set progress = #{progress},
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.stageCode', #{stageCode}, '$.stageLabel', #{stageLabel}),
+            update_time = now()
+        where task_id = #{taskId} and task_type = 'STORY_BIBLE' and status = 'RUNNING'
           and (del_flag = '0' or del_flag is null)
     </update>
 
@@ -91,33 +103,33 @@
         where task_id = #{taskId} and (del_flag = '0' or del_flag is null)
     </update>
 
-    <update id="markWanxVideoTaskWaiting">
+    <update id="markVideoProviderTaskWaiting">
         update ai_video_generation_task
         set provider_task_id = #{providerTaskId}, status = 'WAITING_CALLBACK', progress = 20,
             request_json = json_set(coalesce(request_json, json_object()),
                 '$.normalizedDurationMs', #{normalizedDurationMs}),
             error_code = null, error_message = null, started_time = coalesce(started_time, now()), update_time = now()
-        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status = 'QUEUED' and (del_flag = '0' or del_flag is null)
     </update>
 
-    <update id="markWanxVideoTaskNeedsReviewWithProviderId">
+    <update id="markVideoProviderTaskNeedsReviewWithProviderId">
         update ai_video_generation_task
         set provider_task_id = #{providerTaskId}, status = 'NEEDS_REVIEW', progress = 20,
             error_code = #{errorCode}, error_message = #{errorMessage}, update_time = now()
-        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status in ('QUEUED', 'NEEDS_REVIEW') and (del_flag = '0' or del_flag is null)
     </update>
 
-    <update id="claimWanxVideoTask">
+    <update id="claimVideoProviderTask">
         update ai_video_generation_task
         set status = 'RUNNING', progress = 30, error_code = null, error_message = null, update_time = now()
-        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status = 'WAITING_CALLBACK' and provider_task_id is not null
           and (del_flag = '0' or del_flag is null)
     </update>
 
-    <update id="updateClaimedWanxVideoTaskStatus">
+    <update id="updateClaimedVideoProviderTaskStatus">
         update ai_video_generation_task
         <set>
             status = #{status},
@@ -129,53 +141,53 @@
             </if>
             update_time = now()
         </set>
-        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
     </update>
 
-    <update id="markStaleWanxSubmissionsNeedsReview">
+    <update id="markStaleVideoProviderSubmissionsNeedsReview">
         update ai_video_generation_task
         set status = 'NEEDS_REVIEW', progress = 20,
-            error_code = 'WANX_VIDEO_SUBMISSION_INTERRUPTED',
-            error_message = '本地进程在确认 Wanx 任务ID前中断，请勿重复提交，需人工核对',
+            error_code = 'VIDEO_PROVIDER_SUBMISSION_INTERRUPTED',
+            error_message = '本地进程在确认供应商任务ID前中断，请勿重复提交，需人工核对',
             update_time = now()
-        where task_type = 'VIDEO' and provider_code = 'wanx' and status = 'QUEUED'
+        where task_type = 'VIDEO' and provider_code = #{providerCode} and status = 'QUEUED'
           and provider_task_id is null
           and coalesce(update_time, create_time) &lt; date_sub(now(), interval 2 minute)
           and (del_flag = '0' or del_flag is null)
     </update>
 
-    <update id="recoverStaleWanxSubmissionsWithProviderId">
+    <update id="recoverStaleVideoProviderSubmissionsWithProviderId">
         update ai_video_generation_task
         set status = 'WAITING_CALLBACK', progress = 20,
             error_code = null, error_message = null, started_time = coalesce(started_time, now()), update_time = now()
-        where task_type = 'VIDEO' and provider_code = 'wanx' and status = 'QUEUED'
+        where task_type = 'VIDEO' and provider_code = #{providerCode} and status = 'QUEUED'
           and provider_task_id is not null
           and coalesce(update_time, create_time) &lt; date_sub(now(), interval 2 minute)
           and (del_flag = '0' or del_flag is null)
     </update>
 
-    <update id="releaseStaleClaimedWanxVideoTasks">
+    <update id="releaseStaleClaimedVideoProviderTasks">
         update ai_video_generation_task
         set status = 'WAITING_CALLBACK', progress = 30,
-            error_code = 'WANX_VIDEO_POLL_INTERRUPTED',
+            error_code = 'VIDEO_PROVIDER_POLL_INTERRUPTED',
             error_message = '上次轮询处理中断，已安全恢复等待状态', update_time = now()
-        where task_type = 'VIDEO' and provider_code = 'wanx' and status = 'RUNNING'
+        where task_type = 'VIDEO' and provider_code = #{providerCode} and status = 'RUNNING'
           and provider_task_id is not null
           and coalesce(update_time, create_time) &lt; date_sub(now(), interval 5 minute)
           and (del_flag = '0' or del_flag is null)
     </update>
 
-    <update id="failQueuedWanxVideoTask">
+    <update id="failQueuedVideoProviderTask">
         update ai_video_generation_task
         set status = 'FAILED', progress = 100, error_code = #{errorCode}, error_message = #{errorMessage},
             completed_time = now(), update_time = now()
-        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status = 'QUEUED' and provider_task_id is null
           and (del_flag = '0' or del_flag is null)
     </update>
 
-    <update id="resolveNeedsReviewWanxTaskWithProviderId">
+    <update id="resolveNeedsReviewVideoTaskWithProviderId">
         update ai_video_generation_task
         set provider_task_id = #{providerTaskId}, status = 'WAITING_CALLBACK', progress = 20,
             error_code = null, error_message = null, started_time = coalesce(started_time, now()),
@@ -185,22 +197,22 @@
                     'resolvedBy', #{resolvedBy},
                     'resolvedAt', date_format(now(), '%Y-%m-%dT%H:%i:%s'))),
             update_time = now()
-        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+        where task_id = #{taskId} and task_type = 'VIDEO'
           and status = 'NEEDS_REVIEW' and (del_flag = '0' or del_flag is null)
     </update>
 
-    <update id="resolveNeedsReviewWanxTaskAsNotSubmitted">
+    <update id="resolveNeedsReviewVideoTaskAsNotSubmitted">
         update ai_video_generation_task
         set status = 'FAILED', progress = 100,
-            error_code = 'WANX_VIDEO_CONFIRMED_NOT_SUBMITTED',
-            error_message = '人工核对确认 Wanx 未受理，视频草稿已解锁',
+            error_code = 'VIDEO_PROVIDER_CONFIRMED_NOT_SUBMITTED',
+            error_message = '人工核对确认供应商未受理，视频草稿已解锁',
             request_json = json_set(coalesce(request_json, json_object()),
                 '$.resolution', json_object(
                     'action', 'CONFIRM_NOT_SUBMITTED',
                     'resolvedBy', #{resolvedBy},
                     'resolvedAt', date_format(now(), '%Y-%m-%dT%H:%i:%s'))),
             completed_time = now(), update_time = now()
-        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = 'wanx'
+        where task_id = #{taskId} and task_type = 'VIDEO'
           and status = 'NEEDS_REVIEW' and provider_task_id is null
           and (del_flag = '0' or del_flag is null)
     </update>
@@ -257,10 +269,11 @@
         limit 20
     </select>
 
-    <select id="selectWaitingWanxVideoTasks" resultMap="AiVideoGenerationTaskResult">
+    <select id="selectWaitingVideoProviderTasks" resultMap="AiVideoGenerationTaskResult">
         select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key, provider_task_id, progress
         from ai_video_generation_task
-        where (del_flag = '0' or del_flag is null) and task_type = 'VIDEO' and provider_code = 'wanx'
+        where (del_flag = '0' or del_flag is null) and task_type = 'VIDEO'
+          and provider_code = #{providerCode}
           and status = 'WAITING_CALLBACK' and provider_task_id is not null
         order by create_time asc
         limit 10
@@ -268,7 +281,7 @@
 
     <select id="selectAiVideoGenerationTaskList" parameterType="Long" resultMap="AiVideoGenerationTaskResult">
         select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key,
-               provider_task_id, progress, error_code, error_message, create_time
+               provider_task_id, progress, request_json, error_code, error_message, create_time
         from ai_video_generation_task
         where project_id = #{projectId} and (del_flag = '0' or del_flag is null)
         order by task_id desc

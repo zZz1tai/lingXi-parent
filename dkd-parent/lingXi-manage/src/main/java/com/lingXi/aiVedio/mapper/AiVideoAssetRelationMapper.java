@@ -12,6 +12,9 @@ public interface AiVideoAssetRelationMapper
     int copyIncomingReferenceRelations(@Param("projectId") Long projectId,
             @Param("sourceAssetId") Long sourceAssetId, @Param("newAssetId") Long newAssetId);
 
+    int deleteIncomingReferenceRelations(@Param("projectId") Long projectId,
+            @Param("targetAssetId") Long targetAssetId);
+
     int countActiveKeyframeReferences(@Param("fromAssetId") Long fromAssetId);
 
     List<AiVideoAsset> selectActiveReferenceAssetsByTargetAssetId(

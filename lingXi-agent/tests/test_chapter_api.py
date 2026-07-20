@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -12,6 +13,7 @@ from fastapi import Response
 from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 
 from app.api.v1 import chapter
+from app.chains.chapter_analysis import ChapterAnalysisOutputError
 from app.schemas.request import LLMConfig
 
 
@@ -90,6 +92,10 @@ class _ProviderBodyFailureChain:
 
 class _SuccessChain:
     async def ainvoke(self, *_args, **_kwargs):
+        callback = _kwargs.get("progress_callback")
+        if callback is not None:
+            await callback("PLANNING", 20, "正在提取章节事实")
+            await callback("FINALIZING", 90, "正在整理最终结果")
         return SimpleNamespace(
             story_bible={"scenes": [], "characters": []},
             raw_response='{"scenes": [], "characters": []}',
@@ -98,6 +104,29 @@ class _SuccessChain:
 
 
 class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
+    def test_contract_error_detail_is_redacted_and_truncated(self) -> None:
+        detail = chapter._safe_contract_error_detail(
+            ChapterAnalysisOutputError(
+                "api_key=secret-value bearer: token-value " + "x" * 1_000
+            )
+        )
+
+        self.assertIn("api_key=[REDACTED]", detail)
+        self.assertIn("bearer=[REDACTED]", detail)
+        self.assertNotIn("secret-value", detail)
+        self.assertNotIn("token-value", detail)
+        self.assertLessEqual(len(detail), chapter.CONTRACT_ERROR_LOG_LIMIT + 1)
+
+    def test_contract_error_detail_redacts_pydantic_input_value(self) -> None:
+        detail = chapter._safe_contract_error_detail(
+            ValueError("field invalid; input_value='张三 13800138000 test@example.com', input_type=str")
+        )
+
+        self.assertIn("input_value=[REDACTED]", detail)
+        self.assertNotIn("张三", detail)
+        self.assertNotIn("13800138000", detail)
+        self.assertNotIn("test@example.com", detail)
+
     @staticmethod
     def _request(*, timeout_seconds: int | None) -> chapter.AnalyzeChapterRequest:
         return chapter.AnalyzeChapterRequest(
@@ -148,6 +177,8 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(create_llm.call_args.kwargs["streaming"], True)
         self.assertEqual(0, create_llm.call_args.kwargs["max_retries"])
         self.assertEqual(417, timeout_chain.kwargs["timeout_seconds"])
+        self.assertIn("SOURCE UNITS", timeout_chain.kwargs["planning_context"])
+        self.assertNotIn("videoPlan", timeout_chain.kwargs["planning_context"])
         self.assertFalse(response.success)
         self.assertEqual("CHAPTER_LLM_TIMEOUT", response.error_code)
         self.assertTrue(response.retryable)
@@ -214,6 +245,34 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("prompt", response.model_dump())
         self.assertNotIn("source_units", response.model_dump())
         self.assertNotIn("raw_llm_response", response.model_dump())
+
+    async def test_stream_endpoint_emits_progress_before_terminal_result(self) -> None:
+        with (
+            patch.object(chapter, "create_llm", return_value=object()),
+            patch.object(
+                chapter,
+                "build_chapter_analysis_chain",
+                return_value=_SuccessChain(),
+            ),
+        ):
+            stream = await chapter.analyze_chapter_stream(
+                self._request(timeout_seconds=417),
+                request_id="offline-request",
+            )
+            events = [
+                json.loads(chunk.decode() if isinstance(chunk, bytes) else chunk)
+                async for chunk in stream.body_iterator
+            ]
+
+        self.assertEqual(
+            ["progress", "progress", "progress", "result"],
+            [event["type"] for event in events],
+        )
+        self.assertEqual(
+            ["PREPARING", "PLANNING", "FINALIZING"],
+            [event["stage"] for event in events[:-1]],
+        )
+        self.assertTrue(events[-1]["response"]["success"])
 
     async def test_connection_failure_is_retryable(self) -> None:
         with (

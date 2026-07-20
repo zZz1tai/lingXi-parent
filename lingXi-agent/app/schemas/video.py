@@ -1,7 +1,7 @@
 """
 Pydantic v2 request/response models for video generation API endpoints.
 
-Handles text-to-image (QwenImage) and image-to-video (WanxVideo) via DashScope.
+Handles image and video generation through provider adapters.
 """
 
 from __future__ import annotations
@@ -136,7 +136,11 @@ class SubmitVideoRequest(BaseModel):
 
     api_key: ApiKeyText = Field(
         ...,
-        description="DashScope API key",
+        description="Video provider API key",
+    )
+    provider: IdentifierText = Field(
+        default="happyhorse",
+        description="Video provider adapter code",
     )
     model: ModelNameText = Field(
         ...,
@@ -144,7 +148,7 @@ class SubmitVideoRequest(BaseModel):
     )
     base_url: HttpUrlText = Field(
         ...,
-        description="DashScope API base URL",
+        description="Video provider API base URL",
     )
     prompt: str = Field(
         ...,
@@ -167,16 +171,38 @@ class SubmitVideoRequest(BaseModel):
         ...,
         description="Public URL of the keyframe image",
     )
+    character_reference_image_urls: list[HttpUrlText] = Field(
+        default_factory=list,
+        max_length=4,
+        description=(
+            "Bound character turnaround image URLs. Provider adapters that support "
+            "multi-reference video generation must forward these without reordering."
+        ),
+    )
+    scene_reference_image_url: Optional[HttpUrlText] = Field(
+        default=None,
+        description="Bound scene reference image URL",
+    )
     resolution: str = Field(
         ...,
         min_length=1,
         description="Video resolution",
     )
+    ratio: str = Field(
+        default="16:9",
+        min_length=3,
+        max_length=8,
+        description="Requested output aspect ratio",
+    )
+    watermark: bool = Field(
+        default=False,
+        description="Whether the provider should add its video watermark",
+    )
     duration_ms: int = Field(
         ...,
         ge=1000,
-        le=10000,
-        description="Video duration in milliseconds (1000-10000)",
+        le=15000,
+        description="Video duration in milliseconds (1000-15000)",
     )
     prompt_extend: bool = Field(
         default=False,
@@ -205,8 +231,8 @@ class SubmitVideoResponse(BaseModel):
     normalized_duration_ms: Optional[int] = Field(
         default=None,
         ge=1000,
-        le=10000,
-        description="Actual duration accepted by the selected Wanx model",
+        le=15000,
+        description="Actual duration accepted by the selected video model",
     )
     error: Optional[str] = Field(
         default=None,
@@ -227,7 +253,7 @@ class SubmitVideoResponse(BaseModel):
     submission_uncertain: bool = Field(
         default=False,
         description=(
-            "True when Wanx may have accepted the request but no task ID was "
+            "True when the video provider may have accepted the request but no task ID was "
             "received; callers must not submit again automatically"
         ),
     )

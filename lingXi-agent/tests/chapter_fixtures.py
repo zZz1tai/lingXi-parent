@@ -106,3 +106,33 @@ def story_bible() -> dict[str, Any]:
 
 def cloned_story_bible() -> dict[str, Any]:
     return deepcopy(story_bible())
+
+
+def chapter_plan() -> dict[str, Any]:
+    bible = story_bible()
+    scene = bible["scenes"][0]
+    return {
+        "summary": bible["summary"],
+        "worldSetting": bible["worldSetting"],
+        "timeline": bible["timeline"],
+        "relationships": bible["relationships"],
+        "immutableFacts": bible["immutableFacts"],
+        "segmentationRationale": bible["videoPlan"]["segmentationRationale"],
+        "characters": bible["characters"],
+        "scenes": [
+            {
+                "sceneNo": 1,
+                "title": scene["title"],
+                "time": scene["time"],
+                "location": scene["location"],
+                "atmosphere": scene["atmosphere"],
+                "dramaticGoal": scene["dramaticGoal"],
+                "characters": scene["characters"],
+                "sourceUnitIds": ["U1", "U2"],
+            }
+        ],
+    }
+
+
+def generated_scene() -> dict[str, Any]:
+    return deepcopy(story_bible()["scenes"][0])

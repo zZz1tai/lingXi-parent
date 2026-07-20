@@ -20,6 +20,19 @@ def _normalized_allowlist(values: Iterable[str]) -> set[str]:
     return {value.strip().lower().rstrip(".") for value in values if value.strip()}
 
 
+def _host_is_allowed(host: str, authority: str, configured: set[str]) -> bool:
+    """Match exact destinations or an explicitly configured subdomain suffix."""
+
+    if host in configured or authority in configured:
+        return True
+    return any(
+        pattern.startswith("*.")
+        and host.endswith(pattern[1:])
+        and host != pattern[2:]
+        for pattern in configured
+    )
+
+
 def validate_outbound_http_url(
     url: str,
     *,
@@ -60,10 +73,9 @@ def validate_outbound_http_url(
     authority = f"{host}:{port}" if port is not None else host
     default_port = 443 if parsed.scheme == "https" else 80
     non_default_port = port is not None and port != default_port
-    if (
-        host not in configured
-        and authority not in configured
-    ) or (non_default_port and authority not in configured):
+    if not _host_is_allowed(host, authority, configured) or (
+        non_default_port and authority not in configured
+    ):
         raise InputValidationError("Provider destination is not allowed")
 
     if parsed.scheme == "http" and not settings.allow_insecure_outbound_http:

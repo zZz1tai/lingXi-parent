@@ -20,8 +20,10 @@ import com.lingXi.common.enums.BusinessType;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.dto.AiVideoAssetRegenerationDraftRequest;
 import com.lingXi.aiVedio.domain.dto.AiVideoAssetPromptRequest;
+import com.lingXi.aiVedio.domain.dto.AiVideoKeyframeReferenceBindingRequest;
 import com.lingXi.aiVedio.domain.dto.AiVideoVideoPromptRequest;
-import com.lingXi.aiVedio.domain.dto.AiVideoWanxSubmissionResolutionRequest;
+import com.lingXi.aiVedio.domain.dto.AiVideoVideoSourceBindingRequest;
+import com.lingXi.aiVedio.domain.dto.AiVideoSubmissionResolutionRequest;
 import com.lingXi.aiVedio.service.IAiVideoAssetService;
 
 /** AI 视频资产查询 */
@@ -96,6 +98,58 @@ public class AiVideoAssetController extends BaseController
         return success(assetService.createRegenerationDraft(assetId, request));
     }
 
+    @PreAuthorize("@ss.hasPermi('aivideo:asset:query')")
+    @GetMapping("/{assetId}/references")
+    public AjaxResult getKeyframeReferences(@PathVariable Long assetId)
+    {
+        return success(assetService.getKeyframeReferenceBinding(assetId));
+    }
+
+    @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
+    @Log(title = "AI视频关键帧参考版本绑定", businessType = BusinessType.UPDATE)
+    @RepeatSubmit(message = "关键帧参考版本正在更新，请勿重复操作")
+    @PutMapping("/{assetId}/references")
+    public AjaxResult updateKeyframeReferences(@PathVariable Long assetId,
+            @RequestBody AiVideoKeyframeReferenceBindingRequest request)
+    {
+        return success(assetService.updateKeyframeReferenceBinding(assetId, request));
+    }
+
+    @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
+    @Log(title = "AI视频关键帧恢复自动绑定", businessType = BusinessType.UPDATE)
+    @RepeatSubmit(message = "关键帧正在恢复自动绑定，请勿重复操作")
+    @PostMapping("/{assetId}/references/reset-auto")
+    public AjaxResult resetKeyframeReferences(@PathVariable Long assetId)
+    {
+        return success(assetService.resetKeyframeReferenceBinding(assetId));
+    }
+
+    @PreAuthorize("@ss.hasPermi('aivideo:asset:query')")
+    @GetMapping("/{videoAssetId}/source-keyframe")
+    public AjaxResult getVideoSourceKeyframe(@PathVariable Long videoAssetId)
+    {
+        return success(assetService.getVideoSourceBinding(videoAssetId));
+    }
+
+    @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
+    @Log(title = "AI视频来源关键帧版本绑定", businessType = BusinessType.UPDATE)
+    @RepeatSubmit(message = "视频来源关键帧正在更新，请勿重复操作")
+    @PutMapping("/{videoAssetId}/source-keyframe")
+    public AjaxResult updateVideoSourceKeyframe(@PathVariable Long videoAssetId,
+            @RequestBody AiVideoVideoSourceBindingRequest request)
+    {
+        return success(assetService.updateVideoSourceBinding(videoAssetId, request));
+    }
+
+    @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
+    @Log(title = "AI视频恢复自动关键帧绑定", businessType = BusinessType.UPDATE)
+    @RepeatSubmit(message = "视频正在恢复自动关键帧绑定，请勿重复操作")
+    @PostMapping("/{videoAssetId}/source-keyframe/reset-auto")
+    public AjaxResult resetVideoSourceKeyframe(@PathVariable Long videoAssetId)
+    {
+        return success(assetService.resetVideoSourceBinding(videoAssetId));
+    }
+
     @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
     @Log(title = "AI视频资产删除", businessType = BusinessType.DELETE)
     @RepeatSubmit(message = "资产正在删除，请勿重复操作")
@@ -135,13 +189,13 @@ public class AiVideoAssetController extends BaseController
     }
 
     @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
-    @Log(title = "AI视频Wanx任务核对", businessType = BusinessType.UPDATE)
-    @RepeatSubmit(message = "Wanx任务核对正在处理，请勿重复操作")
+    @Log(title = "AI视频供应商任务核对", businessType = BusinessType.UPDATE)
+    @RepeatSubmit(message = "视频供应商任务核对正在处理，请勿重复操作")
     @PostMapping("/{videoAssetId}/video-resolution")
     public AjaxResult resolveVideoSubmission(@PathVariable Long videoAssetId,
-            @RequestBody AiVideoWanxSubmissionResolutionRequest request)
+            @RequestBody AiVideoSubmissionResolutionRequest request)
     {
-        assetService.resolveWanxSubmission(videoAssetId, request.getAction(), request.getProviderTaskId());
+        assetService.resolveVideoSubmission(videoAssetId, request.getAction(), request.getProviderTaskId());
         return success();
     }
 }

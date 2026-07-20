@@ -34,6 +34,12 @@
             <groupId>com.dkd</groupId>
             <artifactId>lingXi-framework</artifactId>
         </dependency>
+
+        <!-- 复用系统参数表与 Redis 缓存，支持 AI 模型配置运行时生效 -->
+        <dependency>
+            <groupId>com.dkd</groupId>
+            <artifactId>lingXi-system</artifactId>
+        </dependency>
         
         <!-- 通用模块 -->
         <dependency>

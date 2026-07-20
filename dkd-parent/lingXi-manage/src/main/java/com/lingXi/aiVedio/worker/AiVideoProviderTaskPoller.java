@@ -9,16 +9,18 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.lingXi.ai.client.VideoClient;
 import com.lingXi.ai.client.VideoClient.VideoQueryResult;
 import com.lingXi.ai.config.DashScopeConfig;
+import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
+import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 
-/** 持久化轮询 Wanx 图生视频任务，并转存视频片段。 */
+/** 持久化轮询异步视频供应商任务，并转存视频片段。 */
 @Component
-public class AiVideoWanxVideoTaskPoller
+public class AiVideoProviderTaskPoller
 {
     @Autowired
     private AiVideoGenerationTaskMapper taskMapper;
@@ -29,27 +31,32 @@ public class AiVideoWanxVideoTaskPoller
     @Autowired
     private DashScopeConfig dashScopeConfig;
     @Autowired
+    private AiVideoModelConfigService modelConfigService;
+    @Autowired
     private AiVideoLocalAssetStorage localAssetStorage;
     @Autowired
     private PlatformTransactionManager transactionManager;
 
-    @Scheduled(fixedDelayString = "${aivideo.wanx.video-poll-interval-ms}")
+    @Scheduled(fixedDelayString = "${aivideo.video.poll-interval-ms:15000}")
     public void poll()
     {
-        taskMapper.markStaleWanxSubmissionsNeedsReview();
-        taskMapper.recoverStaleWanxSubmissionsWithProviderId();
-        taskMapper.releaseStaleClaimedWanxVideoTasks();
-        List<AiVideoGenerationTask> tasks = taskMapper.selectWaitingWanxVideoTasks();
+        AiVideoModelConfig runtimeConfig = modelConfigService.getConfig();
+        String providerCode = runtimeConfig.getVideoProvider();
+        taskMapper.markStaleVideoProviderSubmissionsNeedsReview(providerCode);
+        taskMapper.recoverStaleVideoProviderSubmissionsWithProviderId(providerCode);
+        taskMapper.releaseStaleClaimedVideoProviderTasks(providerCode);
+        List<AiVideoGenerationTask> tasks = taskMapper.selectWaitingVideoProviderTasks(providerCode);
         for (AiVideoGenerationTask task : tasks)
         {
-            if (taskMapper.claimWanxVideoTask(task.getTaskId()) != 1)
+            if (taskMapper.claimVideoProviderTask(task.getTaskId(), providerCode) != 1)
             {
                 continue;
             }
             try
             {
                 VideoQueryResult result = videoClient.queryVideo(
-                        dashScopeConfig.getApiKey(), task.getProviderTaskId());
+                        dashScopeConfig.getApiKey(), runtimeConfig.getWorkspaceBaseUrl(),
+                        task.getProviderTaskId());
                 
                 if (!result.success())
                 {
@@ -62,29 +69,31 @@ public class AiVideoWanxVideoTaskPoller
                 {
                     if (result.videoUrl() == null || result.videoUrl().trim().isEmpty())
                     {
-                        throw new IllegalStateException("Wanx 任务已成功但未返回视频地址");
+                        throw new IllegalStateException("视频供应商任务已成功但未返回视频地址");
                     }
-                    complete(task, result.videoUrl());
+                    complete(task, result.videoUrl(), providerCode);
                 }
                 else if ("FAILED".equals(status) || "CANCELED".equals(status))
                 {
-                    fail(task, result.error());
+                    fail(task, result.error(), providerCode);
                 }
                 else
                 {
-                    taskMapper.updateClaimedWanxVideoTaskStatus(
-                            task.getTaskId(), "WAITING_CALLBACK", 40, null, null);
+                    taskMapper.updateClaimedVideoProviderTaskStatus(
+                            task.getTaskId(), providerCode, "WAITING_CALLBACK", 40, null, null);
                 }
             }
             catch (Exception ex)
             {
-                taskMapper.updateClaimedWanxVideoTaskStatus(task.getTaskId(), "WAITING_CALLBACK", 40,
-                        "WANX_VIDEO_POLL_ERROR", ex.getMessage());
+                taskMapper.updateClaimedVideoProviderTaskStatus(
+                        task.getTaskId(), providerCode, "WAITING_CALLBACK", 40,
+                        "VIDEO_PROVIDER_POLL_ERROR", ex.getMessage());
             }
         }
     }
 
-    private void complete(AiVideoGenerationTask task, String videoUrl) throws Exception
+    private void complete(AiVideoGenerationTask task, String videoUrl,
+            String providerCode) throws Exception
     {
         AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
         if (asset == null) throw new IllegalStateException("视频任务关联资产不存在");
@@ -102,18 +111,19 @@ public class AiVideoWanxVideoTaskPoller
         transaction.execute(status -> {
             if (assetMapper.markAiVideoAssetGenerated(asset) != 1)
             {
-                throw new IllegalStateException("视频资产状态已变化，无法登记 Wanx 结果");
+                throw new IllegalStateException("视频资产状态已变化，无法登记供应商结果");
             }
-            if (taskMapper.updateClaimedWanxVideoTaskStatus(
-                    task.getTaskId(), "SUCCEEDED", 100, null, null) != 1)
+            if (taskMapper.updateClaimedVideoProviderTaskStatus(
+                    task.getTaskId(), providerCode,
+                    "SUCCEEDED", 100, null, null) != 1)
             {
-                throw new IllegalStateException("Wanx 视频任务完成状态更新失败");
+                throw new IllegalStateException("视频任务完成状态更新失败");
             }
             return null;
         });
     }
 
-    private void fail(AiVideoGenerationTask task, String message)
+    private void fail(AiVideoGenerationTask task, String message, String providerCode)
     {
         AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
@@ -126,12 +136,13 @@ public class AiVideoWanxVideoTaskPoller
             asset.setUpdateBy("ai-video-poller");
             if (assetMapper.markAiVideoAssetFailed(asset) != 1)
             {
-                throw new IllegalStateException("视频资产状态已变化，无法登记 Wanx 失败结果");
+                throw new IllegalStateException("视频资产状态已变化，无法登记供应商失败结果");
             }
-            if (taskMapper.updateClaimedWanxVideoTaskStatus(task.getTaskId(), "FAILED", 100,
-                    "WANX_VIDEO_TASK_FAILED", message) != 1)
+            if (taskMapper.updateClaimedVideoProviderTaskStatus(
+                    task.getTaskId(), providerCode, "FAILED", 100,
+                    "VIDEO_PROVIDER_TASK_FAILED", message) != 1)
             {
-                throw new IllegalStateException("Wanx 视频任务失败状态更新失败");
+                throw new IllegalStateException("视频供应商任务失败状态更新失败");
             }
             return null;
         });

@@ -22,6 +22,12 @@
             relation_order = values(relation_order), metadata_json = values(metadata_json)
     </insert>
 
+    <delete id="deleteIncomingReferenceRelations">
+        delete from ai_video_asset_relation
+        where project_id = #{projectId} and to_asset_id = #{targetAssetId}
+          and relation_type = 'REFERENCE_IMAGE'
+    </delete>
+
     <select id="countActiveKeyframeReferences" parameterType="Long" resultType="int">
         select count(1)
         from ai_video_asset_relation r

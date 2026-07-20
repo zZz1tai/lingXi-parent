@@ -38,6 +38,9 @@ public class VideoConfig {
      */
     private String analyzeChapterUrl;
 
+    /** Streaming chapter-analysis endpoint that emits NDJSON progress events. */
+    private String analyzeChapterStreamUrl = "/api/v1/video/analyze-chapter/stream";
+
     /**
      * Connection timeout in milliseconds.
      */
@@ -49,8 +52,8 @@ public class VideoConfig {
     private Integer imageReadTimeout;
 
     /**
-     * Read timeout for chapter analysis, including one structured-output
-     * repair attempt in the Python LangChain workflow.
+     * Idle read timeout for streamed chapter analysis, including scene-local
+     * generation and repair stages in the Python LangChain workflow.
      */
     private Integer chapterReadTimeout;
 

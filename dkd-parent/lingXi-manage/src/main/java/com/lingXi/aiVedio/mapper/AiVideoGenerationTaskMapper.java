@@ -12,7 +12,7 @@ public interface AiVideoGenerationTaskMapper
 
     AiVideoGenerationTask selectLatestImageTaskByAssetId(Long assetId);
 
-    AiVideoGenerationTask selectLatestNeedsReviewWanxTaskByAssetId(Long assetId);
+    AiVideoGenerationTask selectLatestNeedsReviewVideoTaskByAssetId(Long assetId);
 
     int countActiveAiVideoGenerationTasksByAssetId(Long assetId);
 
@@ -22,35 +22,44 @@ public interface AiVideoGenerationTaskMapper
 
     int claimStoryBibleTask(@Param("taskId") Long taskId);
 
+    int updateStoryBibleTaskProgress(@Param("taskId") Long taskId,
+            @Param("progress") Integer progress, @Param("stageCode") String stageCode,
+            @Param("stageLabel") String stageLabel);
+
     int updateAiVideoGenerationProviderTaskId(@Param("taskId") Long taskId, @Param("providerTaskId") String providerTaskId);
 
-    int markWanxVideoTaskWaiting(@Param("taskId") Long taskId,
+    int markVideoProviderTaskWaiting(@Param("taskId") Long taskId,
+            @Param("providerCode") String providerCode,
             @Param("providerTaskId") String providerTaskId,
             @Param("normalizedDurationMs") Integer normalizedDurationMs);
 
-    int markWanxVideoTaskNeedsReviewWithProviderId(@Param("taskId") Long taskId,
+    int markVideoProviderTaskNeedsReviewWithProviderId(@Param("taskId") Long taskId,
+            @Param("providerCode") String providerCode,
             @Param("providerTaskId") String providerTaskId,
             @Param("errorCode") String errorCode, @Param("errorMessage") String errorMessage);
 
-    int claimWanxVideoTask(@Param("taskId") Long taskId);
+    int claimVideoProviderTask(@Param("taskId") Long taskId,
+            @Param("providerCode") String providerCode);
 
-    int updateClaimedWanxVideoTaskStatus(@Param("taskId") Long taskId,
+    int updateClaimedVideoProviderTaskStatus(@Param("taskId") Long taskId,
+            @Param("providerCode") String providerCode,
             @Param("status") String status, @Param("progress") Integer progress,
             @Param("errorCode") String errorCode, @Param("errorMessage") String errorMessage);
 
-    int markStaleWanxSubmissionsNeedsReview();
+    int markStaleVideoProviderSubmissionsNeedsReview(@Param("providerCode") String providerCode);
 
-    int recoverStaleWanxSubmissionsWithProviderId();
+    int recoverStaleVideoProviderSubmissionsWithProviderId(@Param("providerCode") String providerCode);
 
-    int releaseStaleClaimedWanxVideoTasks();
+    int releaseStaleClaimedVideoProviderTasks(@Param("providerCode") String providerCode);
 
-    int failQueuedWanxVideoTask(@Param("taskId") Long taskId,
+    int failQueuedVideoProviderTask(@Param("taskId") Long taskId,
+            @Param("providerCode") String providerCode,
             @Param("errorCode") String errorCode, @Param("errorMessage") String errorMessage);
 
-    int resolveNeedsReviewWanxTaskWithProviderId(@Param("taskId") Long taskId,
+    int resolveNeedsReviewVideoTaskWithProviderId(@Param("taskId") Long taskId,
             @Param("providerTaskId") String providerTaskId, @Param("resolvedBy") String resolvedBy);
 
-    int resolveNeedsReviewWanxTaskAsNotSubmitted(@Param("taskId") Long taskId,
+    int resolveNeedsReviewVideoTaskAsNotSubmitted(@Param("taskId") Long taskId,
             @Param("resolvedBy") String resolvedBy);
 
     int updateClaimedImageTaskRequest(@Param("taskId") Long taskId, @Param("requestJson") String requestJson,
@@ -67,7 +76,8 @@ public interface AiVideoGenerationTaskMapper
 
     List<AiVideoGenerationTask> selectQueuedImageTasksForRecovery();
 
-    List<AiVideoGenerationTask> selectWaitingWanxVideoTasks();
+    List<AiVideoGenerationTask> selectWaitingVideoProviderTasks(
+            @Param("providerCode") String providerCode);
 
     List<AiVideoGenerationTask> selectAiVideoGenerationTaskList(Long projectId);
 }
