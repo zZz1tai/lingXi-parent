@@ -141,11 +141,6 @@ dromara:
         domain: https://java-ai-itzhou.oss-cn-beijing.aliyuncs.com/ # 访问域名，注意“/”结尾，例如：https://abc.oss-cn-shanghai.aliyuncs.com/
         base-path: dkd-images/ # 基础路径
 
-# 千问api调用接口
-dashscope:
-  api-key: sk-fcb8548e57ff4eb68237b7d092e5f1b1  #千问api
-  image-model: qwen-image-2.0-pro-2026-06-22
-
 # LingXi-Agent 配置
 agent:
   base-url: http://localhost:5000
@@ -159,11 +154,6 @@ agent:
   max-iterations: 5
   connect-timeout: 5000
   read-timeout: 60000
-  # LLM 配置 (传递给 Python Agent, 复用 dashscope 配置)
-  llm-api-key: ${dashscope.api-key}
-  llm-model: deepseek-v4-flash
-  llm-base-url: https://llm-pjxe58t9bydrpkqj.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-
 # Video Generation API 配置 (调用 Python Agent)
 video:
   base-url: http://localhost:5000
@@ -182,14 +172,11 @@ video:
 
 # AI 视频图片任务节流配置
 aivideo:
+  secret:
+    # 仅用于加密页面保存的 API Key；必须通过环境变量提供 Base64 编码的 32 字节密钥。
+    encryption-key: ${AIVIDEO_CONFIG_ENCRYPTION_KEY:}
   video:
     provider: happyhorse
-    model: happyhorse-1.1-r2v
-    # 业务空间专属域名；Agent 会把 compatible-mode/v1 归一化为原生视频 API 路径。
-    base-url: https://llm-pjxe58t9bydrpkqj.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-    resolution: 720P
-    ratio: 16:9
-    watermark: false
     poll-interval-ms: 15000
   scheduler:
     # 图片同步生成不会阻塞视频供应商任务轮询

@@ -372,7 +372,8 @@
 2. **后端配置**:
    - 配置 `application.yml` 文件中的数据库连接信息
    - 配置 Redis 连接信息
-   - 配置其他系统参数
+   - 设置 `AIVIDEO_CONFIG_ENCRYPTION_KEY`，值为 Base64 编码的 32 字节随机密钥；生产环境必须固定保存，变更后已加密的 API Key 将无法解密
+   - 启动后使用“AI 模型配置”页面保存 Workspace、API Key 和模型名称，后端配置文件不再提供模型参数兜底
 
 ## 已知限制与待优化点
 

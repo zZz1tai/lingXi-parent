@@ -277,8 +277,19 @@ def get_checkpointer() -> BaseCheckpointSaver:
     return _checkpointer_instance
 
 
-def get_agent(*, checkpointed: bool = True) -> CompiledStateGraph:
-    """Return a cached graph with or without cross-request checkpoints."""
+def get_agent(
+    *,
+    checkpointed: bool = True,
+    model: BaseChatModel | None = None,
+) -> CompiledStateGraph:
+    """Return a graph using the request model, or the legacy default if absent."""
+
+    if model is not None:
+        return build_search_agent(
+            model=model,
+            checkpointer=get_checkpointer() if checkpointed else None,
+            store=_store_instance,
+        )
 
     global _agent_instance, _ephemeral_agent_instance
     if checkpointed:

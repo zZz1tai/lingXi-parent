@@ -263,13 +263,20 @@ async def chat_invoke(
             raise SearchError("Context analysis failed") from exc
 
     try:
-        agent = get_agent(checkpointed=request.thread_id is not None)
         context = create_agent_context(
             llm_config=request.llm_config,
             user_id=request.user_id or "",
             thread_id=public_thread_id,
             style=request.style,
             business_tag=request.business_tag or "",
+        )
+        agent = (
+            get_agent(
+                checkpointed=request.thread_id is not None,
+                model=context.model,
+            )
+            if context.model is not None
+            else get_agent(checkpointed=request.thread_id is not None)
         )
         result = await agent.ainvoke(
             _build_agent_input(request),
@@ -452,13 +459,20 @@ async def _stream_agent_events(
     final_response = ""
     agent_stream: Any = None
     try:
-        agent = get_agent(checkpointed=request.thread_id is not None)
         context = create_agent_context(
             llm_config=request.llm_config,
             user_id=request.user_id or "",
             thread_id=public_thread_id,
             style=request.style,
             business_tag=request.business_tag or "",
+        )
+        agent = (
+            get_agent(
+                checkpointed=request.thread_id is not None,
+                model=context.model,
+            )
+            if context.model is not None
+            else get_agent(checkpointed=request.thread_id is not None)
         )
         agent_stream = agent.astream(
             _build_agent_input(request),

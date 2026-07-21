@@ -4,7 +4,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.lingXi.ai.client.VideoClient;
-import com.lingXi.ai.config.DashScopeConfig;
 import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
@@ -32,8 +31,6 @@ public class AiVideoQwenAssetService
     private AiVideoImageCompletionService imageCompletionService;
     @Autowired
     private AiVideoImageReferenceService imageReferenceService;
-    @Autowired
-    private DashScopeConfig dashScopeConfig;
     @Autowired
     private AiVideoModelConfigService modelConfigService;
 
@@ -86,7 +83,7 @@ public class AiVideoQwenAssetService
         asset.setPromptText(prompt);
         asset.setNegativePromptText(negativePrompt);
         asset.setGenerationParamsJson(AiVideoJsonMetadata.generationParameters(
-                "dashscope", modelConfigService.getConfig().getImageModel()));
+                "dashscope", modelConfigService.getRequiredConfig().getImageModel()));
         asset.setMetadataJson(metadataJson);
         asset.setCreateBy("ai-video-worker");
         assetMapper.insertAiVideoAsset(asset);
@@ -138,7 +135,7 @@ public class AiVideoQwenAssetService
                 if (aspectRatio.isEmpty()) aspectRatio = null;
             }
             ResolvedImageReferences references = imageReferenceService.resolveAndValidate(asset);
-            AiVideoModelConfig runtimeConfig = modelConfigService.getConfig();
+            AiVideoModelConfig runtimeConfig = modelConfigService.getRequiredConfig();
             String imageModel = runtimeConfig.getImageModel();
             String requestJson = AiVideoJsonMetadata.imageGenerationRequest(asset.getPromptText(),
                     asset.getNegativePromptText(), imageModel, asset.getAssetType(), aspectRatio,
@@ -151,7 +148,7 @@ public class AiVideoQwenAssetService
             
             // Call Python Agent API for image generation
             VideoClient.ImageResult result = videoClient.generateImage(
-                    dashScopeConfig.getApiKey(),
+                    runtimeConfig.getApiKey(),
                     imageModel,
                     runtimeConfig.getWorkspaceBaseUrl(),
                     asset.getAssetType(),

@@ -12,7 +12,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.lingXi.ai.client.VideoClient;
-import com.lingXi.ai.config.DashScopeConfig;
 import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
@@ -38,8 +37,6 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
     @Autowired
     private AiVideoPublicAssetUrlResolver publicAssetUrlResolver;
     @Autowired
-    private DashScopeConfig dashScopeConfig;
-    @Autowired
     private AiVideoModelConfigService modelConfigService;
     @Autowired
     private ObjectMapper objectMapper;
@@ -50,7 +47,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
     public String providerCode() { return "happyhorse"; }
 
     @Override
-    public String modelCode() { return modelConfigService.getConfig().getVideoModel(); }
+    public String modelCode() { return modelConfigService.getRequiredConfig().getVideoModel(); }
 
     /**
      * 先在一个短事务内原子完成草稿状态迁移和任务创建，事务提交后才调用外部服务。
@@ -60,6 +57,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
     public Long submit(final AiVideoAsset video, final AiVideoAsset keyframe,
             final List<AiVideoAsset> boundReferenceAssets, final String username)
     {
+        final AiVideoModelConfig runtimeConfig = modelConfigService.getRequiredConfig();
         if (video.getDurationMs() == null || video.getDurationMs().intValue() <= 0)
         {
             throw new ServiceException("视频时长必须大于 0 毫秒");
@@ -67,20 +65,20 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         final String referenceUrl = publicAssetUrlResolver.resolve(keyframe.getObjectKey());
         final VideoReferenceUrls referenceUrls = resolveReferenceUrls(boundReferenceAssets);
         final String taskRequestJson = buildTaskRequestJson(video, keyframe, username,
-                referenceUrl, referenceUrls);
+                referenceUrl, referenceUrls, runtimeConfig.getVideoModel());
 
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
-        AiVideoGenerationTask task = transaction.execute(status -> prepareTask(video, username, taskRequestJson));
+        AiVideoGenerationTask task = transaction.execute(status -> prepareTask(
+                video, username, taskRequestJson, runtimeConfig.getVideoModel()));
         if (task == null || task.getTaskId() == null)
         {
             throw new ServiceException("视频生成任务创建失败");
         }
         video.setStatus("GENERATING");
 
-        AiVideoModelConfig runtimeConfig = modelConfigService.getConfig();
         // Call Python Agent API for video submission
         VideoClient.VideoSubmitResult result = videoClient.submitVideo(
-                dashScopeConfig.getApiKey(),
+                runtimeConfig.getApiKey(),
                 providerCode(),
                 runtimeConfig.getWorkspaceBaseUrl(),
                 runtimeConfig.getVideoModel(),
@@ -132,7 +130,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
             throw new ServiceException("视频供应商已返回结果，但实际时长或任务ID无效，请人工核对");
         }
         if (!finalizeSuccessfulSubmission(video, task, providerTaskId,
-                normalizedDurationMs, username))
+                normalizedDurationMs, runtimeConfig.getVideoModel(), username))
         {
             taskMapper.markVideoProviderTaskNeedsReviewWithProviderId(
                     task.getTaskId(), providerCode(), providerTaskId,
@@ -146,14 +144,14 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
     
     private boolean finalizeSuccessfulSubmission(final AiVideoAsset video,
             final AiVideoGenerationTask task, final String providerTaskId,
-            final Integer normalizedDurationMs, final String username)
+            final Integer normalizedDurationMs, final String videoModel, final String username)
     {
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
         Boolean result = transaction.execute(status -> {
             if (!normalizedDurationMs.equals(video.getDurationMs())
                     && assetMapper.updateGeneratingVideoDuration(video.getAssetId(), normalizedDurationMs,
                             AiVideoJsonMetadata.videoGenerationParameters(providerCode(),
-                                    modelCode(), normalizedDurationMs, null),
+                                    videoModel, normalizedDurationMs, null),
                             username) != 1)
             {
                 status.setRollbackOnly();
@@ -192,11 +190,12 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         });
     }
 
-    private AiVideoGenerationTask prepareTask(AiVideoAsset video, String username, String requestJson)
+    private AiVideoGenerationTask prepareTask(AiVideoAsset video, String username,
+            String requestJson, String videoModel)
     {
         if (assetMapper.markEditableVideoAssetGenerating(video.getAssetId(), video.getPromptText(),
                 video.getNegativePromptText(), video.getDurationMs(),
-                AiVideoJsonMetadata.videoGenerationParameters(providerCode(), modelCode(),
+                AiVideoJsonMetadata.videoGenerationParameters(providerCode(), videoModel,
                         video.getDurationMs(), null),
                 username) != 1)
         {
@@ -213,7 +212,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         task.setIdempotencyKey(providerCode() + "-video-" + video.getAssetId()
                 + "-" + System.currentTimeMillis());
         task.setProviderCode(providerCode());
-        task.setModelCode(modelCode());
+        task.setModelCode(videoModel);
         task.setProgress(5);
         task.setMaxRetry(0);
         task.setRequestJson(requestJson);
@@ -226,13 +225,13 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
     }
 
     private String buildTaskRequestJson(AiVideoAsset video, AiVideoAsset keyframe, String username,
-            String keyframeUrl, VideoReferenceUrls referenceUrls)
+            String keyframeUrl, VideoReferenceUrls referenceUrls, String videoModel)
     {
         ObjectNode request = objectMapper.createObjectNode();
         request.put("trigger", "USER_CONFIRMED");
         request.put("confirmedBy", username == null ? "" : username);
         request.put("provider", providerCode());
-        request.put("model", modelCode());
+        request.put("model", videoModel);
         putLong(request, "videoAssetId", video.getAssetId());
         putLong(request, "sourceAssetId", keyframe.getAssetId());
         putLong(request, "projectId", video.getProjectId());

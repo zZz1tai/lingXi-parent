@@ -36,6 +36,7 @@ app/
 │   └── checkpoints.py         # InMemory / AsyncPostgresSaver 生命周期
 ├── chains/
 │   ├── chapter_analysis.py    # 章节骨架、逐场景生成、局部修复及全局校验
+│   ├── promt.py               # 章节规划、场景生成与修复提示词
 │   └── business_chat.py       # 看板分析与快捷问题 LCEL 链
 ├── api/v1/
 │   ├── chat.py                # 普通对话、结构化看板分析、快捷问题
@@ -104,7 +105,7 @@ cd lingXi-agent
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env
-# 修改 .env，至少设置 OPENAI_API_KEY 与 AGENT_SERVICE_API_KEY
+# 修改 .env，设置 AGENT_SERVICE_API_KEY；模型 API Key 由 Java 模型配置页面逐请求传入
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 5000
 ```
 

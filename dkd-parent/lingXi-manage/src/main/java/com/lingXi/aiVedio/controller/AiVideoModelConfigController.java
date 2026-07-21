@@ -31,7 +31,8 @@ public class AiVideoModelConfigController extends BaseController
     }
 
     @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
-    @Log(title = "AI视频模型配置", businessType = BusinessType.UPDATE)
+    @Log(title = "AI视频模型配置", businessType = BusinessType.UPDATE,
+            isSaveRequestData = false)
     @PutMapping
     public AjaxResult updateConfig(@RequestBody AiVideoModelConfig config)
     {

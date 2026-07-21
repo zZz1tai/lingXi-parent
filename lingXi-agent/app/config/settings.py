@@ -1,8 +1,8 @@
 """
 Application configuration management.
 
-Loads settings from environment variables and .env file.
-All sensitive values (API keys, model names) are managed here.
+Loads infrastructure settings from environment variables and .env files.
+Model credentials and model names are supplied per request by the Java service.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ class Settings(BaseSettings):
         description="Custom API base URL for OpenAI-compatible endpoints",
     )
     model_name: str = Field(
-        default="gpt-4o-mini",
-        description="Model name to use for chat completions",
+        default="runtime-configured",
+        description="Diagnostic placeholder; Java requests provide the runtime model",
     )
     temperature: float = Field(
         default=0.7,

@@ -10,8 +10,6 @@ import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import com.lingXi.ai.config.AgentConfig;
-import com.lingXi.ai.config.DashScopeConfig;
 import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.common.utils.StringUtils;
@@ -19,13 +17,14 @@ import com.lingXi.system.domain.SysConfig;
 import com.lingXi.system.service.ISysConfigService;
 
 /**
- * 从 sys_config 读取 AI 视频生产链路的运行时模型配置。
- * 数据库没有覆盖值时回退到 application.yml，保存后下一次任务立即生效。
+ * 从 sys_config 读取 AI 生产链路的运行时配置。
+ * 数据库是唯一配置源；API Key 以 AES-GCM 密文保存，接口只返回掩码。
  */
 @Service
 public class AiVideoModelConfigService
 {
     private static final String KEY_WORKSPACE_BASE_URL = "aivideo.model.workspaceBaseUrl";
+    private static final String KEY_API_KEY = "aivideo.model.apiKey";
     private static final String KEY_TEXT_MODEL = "aivideo.model.textModel";
     private static final String KEY_IMAGE_MODEL = "aivideo.model.imageModel";
     private static final String KEY_VIDEO_MODEL = "aivideo.model.videoModel";
@@ -41,24 +40,21 @@ public class AiVideoModelConfigService
     @Autowired
     private ISysConfigService sysConfigService;
     @Autowired
-    private AgentConfig agentConfig;
-    @Autowired
-    private DashScopeConfig dashScopeConfig;
+    private AiVideoSecretCipher secretCipher;
     @Autowired
     private AiVideoProviderProperties videoProviderProperties;
 
+    /** 页面读取使用，不把 API Key 明文放入返回对象。 */
     public AiVideoModelConfig getConfig()
     {
-        AiVideoModelConfig config = new AiVideoModelConfig();
-        config.setWorkspaceBaseUrl(read(KEY_WORKSPACE_BASE_URL, agentConfig.getLlmBaseUrl()));
-        config.setTextModel(read(KEY_TEXT_MODEL, agentConfig.getLlmModel()));
-        config.setImageModel(read(KEY_IMAGE_MODEL, dashScopeConfig.getImageModel()));
-        config.setVideoProvider(videoProviderProperties.getProvider());
-        config.setVideoModel(read(KEY_VIDEO_MODEL, videoProviderProperties.getModel()));
-        config.setVideoResolution(read(KEY_VIDEO_RESOLUTION, videoProviderProperties.getResolution()));
-        config.setVideoRatio(read(KEY_VIDEO_RATIO, videoProviderProperties.getRatio()));
-        config.setVideoWatermark(Boolean.valueOf(read(KEY_VIDEO_WATERMARK,
-                String.valueOf(Boolean.TRUE.equals(videoProviderProperties.getWatermark())))));
+        return readStoredConfig(false);
+    }
+
+    /** 模型调用使用；缺少任一页面配置时拒绝启动新任务。 */
+    public AiVideoModelConfig getRequiredConfig()
+    {
+        AiVideoModelConfig config = readStoredConfig(true);
+        validateStoredConfig(config);
         return config;
     }
 
@@ -70,7 +66,28 @@ public class AiVideoModelConfigService
             throw new ServiceException("模型配置不能为空");
         }
         AiVideoModelConfig normalized = validateAndNormalize(input);
+        String storedApiKey = read(KEY_API_KEY);
+        String replacementApiKey = normalizeOptionalApiKey(input.getApiKey());
+        if (replacementApiKey == null && StringUtils.isEmpty(storedApiKey))
+        {
+            throw new ServiceException("请填写 API Key");
+        }
+        String encryptedReplacementApiKey = null;
+        if (replacementApiKey != null)
+        {
+            // 在任何数据库或 Redis 写入之前验证主密钥并完成加密，避免失败时留下脏缓存。
+            encryptedReplacementApiKey = secretCipher.encrypt(replacementApiKey);
+        }
+        else
+        {
+            // 不更换 Key 时也先验证当前密文能被部署环境中的主密钥解开。
+            secretCipher.decrypt(storedApiKey);
+        }
         upsert(KEY_WORKSPACE_BASE_URL, "AI视频-业务空间地址", normalized.getWorkspaceBaseUrl(), username);
+        if (encryptedReplacementApiKey != null)
+        {
+            upsert(KEY_API_KEY, "AI服务-API Key（密文）", encryptedReplacementApiKey, username);
+        }
         upsert(KEY_TEXT_MODEL, "AI视频-章节分析模型", normalized.getTextModel(), username);
         upsert(KEY_IMAGE_MODEL, "AI视频-图片生成模型", normalized.getImageModel(), username);
         upsert(KEY_VIDEO_MODEL, "AI视频-视频生成模型", normalized.getVideoModel(), username);
@@ -79,6 +96,32 @@ public class AiVideoModelConfigService
         upsert(KEY_VIDEO_WATERMARK, "AI视频-视频水印",
                 String.valueOf(normalized.getVideoWatermark()), username);
         return getConfig();
+    }
+
+    private AiVideoModelConfig readStoredConfig(boolean includeSecret)
+    {
+        AiVideoModelConfig config = new AiVideoModelConfig();
+        config.setWorkspaceBaseUrl(read(KEY_WORKSPACE_BASE_URL));
+        config.setTextModel(read(KEY_TEXT_MODEL));
+        config.setImageModel(read(KEY_IMAGE_MODEL));
+        config.setVideoProvider(videoProviderProperties.getProvider());
+        config.setVideoModel(read(KEY_VIDEO_MODEL));
+        config.setVideoResolution(read(KEY_VIDEO_RESOLUTION));
+        config.setVideoRatio(read(KEY_VIDEO_RATIO));
+        config.setVideoWatermark(parseBoolean(read(KEY_VIDEO_WATERMARK)));
+        String encryptedApiKey = read(KEY_API_KEY);
+        boolean apiKeyConfigured = StringUtils.isNotEmpty(encryptedApiKey);
+        config.setApiKeyConfigured(Boolean.valueOf(apiKeyConfigured));
+        if (apiKeyConfigured)
+        {
+            String apiKey = secretCipher.decrypt(encryptedApiKey);
+            config.setApiKeyMasked(maskApiKey(apiKey));
+            if (includeSecret)
+            {
+                config.setApiKey(apiKey);
+            }
+        }
+        return config;
     }
 
     private AiVideoModelConfig validateAndNormalize(AiVideoModelConfig input)
@@ -119,6 +162,15 @@ public class AiVideoModelConfigService
         }
         config.setVideoWatermark(input.getVideoWatermark());
         return config;
+    }
+
+    private void validateStoredConfig(AiVideoModelConfig config)
+    {
+        if (!Boolean.TRUE.equals(config.getApiKeyConfigured()) || StringUtils.isEmpty(config.getApiKey()))
+        {
+            throw new ServiceException("AI 模型配置未完成：请先在模型配置页面保存 API Key");
+        }
+        validateAndNormalize(config);
     }
 
     private String normalizeWorkspaceBaseUrl(String value)
@@ -162,6 +214,47 @@ public class AiVideoModelConfigService
         return model;
     }
 
+    private String normalizeOptionalApiKey(String value)
+    {
+        if (value == null || value.trim().isEmpty())
+        {
+            return null;
+        }
+        String apiKey = value.trim();
+        if (apiKey.length() < 8 || apiKey.length() > 256)
+        {
+            throw new ServiceException("API Key 长度必须在 8 到 256 个字符之间");
+        }
+        for (int i = 0; i < apiKey.length(); i++)
+        {
+            if (Character.isWhitespace(apiKey.charAt(i)) || Character.isISOControl(apiKey.charAt(i)))
+            {
+                throw new ServiceException("API Key 不能包含空格或控制字符");
+            }
+        }
+        return apiKey;
+    }
+
+    private String maskApiKey(String apiKey)
+    {
+        if (apiKey == null || apiKey.isEmpty())
+        {
+            return "";
+        }
+        if (apiKey.length() <= 10)
+        {
+            return apiKey.substring(0, 2) + "******" + apiKey.substring(apiKey.length() - 2);
+        }
+        return apiKey.substring(0, 4) + "********" + apiKey.substring(apiKey.length() - 4);
+    }
+
+    private Boolean parseBoolean(String value)
+    {
+        if ("true".equalsIgnoreCase(value)) return Boolean.TRUE;
+        if ("false".equalsIgnoreCase(value)) return Boolean.FALSE;
+        return null;
+    }
+
     private String required(String value, String label)
     {
         if (value == null || value.trim().isEmpty())
@@ -171,10 +264,10 @@ public class AiVideoModelConfigService
         return value.trim();
     }
 
-    private String read(String key, String fallback)
+    private String read(String key)
     {
         String value = sysConfigService.selectConfigByKey(key);
-        return StringUtils.isEmpty(value) ? fallback : value.trim();
+        return StringUtils.isEmpty(value) ? null : value.trim();
     }
 
     private void upsert(String key, String name, String value, String username)

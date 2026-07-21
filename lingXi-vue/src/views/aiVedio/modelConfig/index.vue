@@ -50,9 +50,38 @@
           <el-form-item label="Workspace Base URL" prop="workspaceBaseUrl">
             <el-input v-model="form.workspaceBaseUrl" size="large" placeholder="https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1" />
           </el-form-item>
+          <el-form-item label="API Key" prop="apiKey">
+            <div class="secret-field">
+              <el-input
+                v-if="apiKeyEditing"
+                ref="apiKeyInputRef"
+                v-model="form.apiKey"
+                type="password"
+                show-password
+                clearable
+                autocomplete="new-password"
+                maxlength="256"
+                size="large"
+                placeholder="粘贴新的 API Key"
+              />
+              <el-input
+                v-else
+                :model-value="form.apiKeyMasked"
+                readonly
+                size="large"
+                aria-label="已保存的 API Key 掩码"
+              />
+              <el-button v-if="form.apiKeyConfigured && !apiKeyEditing" size="large" @click="startApiKeyEdit">
+                更换密钥
+              </el-button>
+              <el-button v-if="form.apiKeyConfigured && apiKeyEditing" size="large" @click="cancelApiKeyEdit">
+                取消更换
+              </el-button>
+            </div>
+          </el-form-item>
           <div class="security-note">
             <el-icon><Lock /></el-icon>
-            API Key 继续由服务端安全配置提供，本页面不会读取、回传或保存密钥明文。
+            API Key 会加密保存；重新打开页面只显示首尾字符，中间以 ** 隐藏，接口不会回传明文。
           </div>
         </section>
 
@@ -142,11 +171,16 @@ import { getAiVideoModelConfig, updateAiVideoModelConfig } from '@/api/aiVedio/m
 const { proxy } = getCurrentInstance()
 const router = useRouter()
 const formRef = ref()
+const apiKeyInputRef = ref()
 const loading = ref(false)
 const saving = ref(false)
+const apiKeyEditing = ref(true)
 const ratios = ['16:9', '9:16', '3:4', '4:3', '4:5', '5:4', '1:1', '9:21', '21:9']
 const form = reactive({
   workspaceBaseUrl: '',
+  apiKey: '',
+  apiKeyMasked: '',
+  apiKeyConfigured: false,
   textModel: '',
   imageModel: '',
   videoProvider: '',
@@ -156,11 +190,42 @@ const form = reactive({
   videoWatermark: false
 })
 const modelPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+function validateWorkspaceUrl(_rule, value, callback) {
+  try {
+    const url = new URL(value)
+    const validHost = url.hostname === 'dashscope.aliyuncs.com' || url.hostname.endsWith('.cn-beijing.maas.aliyuncs.com')
+    const validPort = !url.port || url.port === '443'
+    if (url.protocol !== 'https:' || !validHost || !validPort || url.username || url.password || url.search || url.hash) {
+      callback(new Error('请输入阿里云百炼北京地域的标准 HTTPS 地址'))
+      return
+    }
+    callback()
+  } catch {
+    callback(new Error('请输入阿里云百炼北京地域的标准 HTTPS 地址'))
+  }
+}
+function validateApiKey(_rule, value, callback) {
+  if (form.apiKeyConfigured && !apiKeyEditing.value) {
+    callback()
+    return
+  }
+  const apiKey = (value || '').trim()
+  if (!apiKey) {
+    callback(new Error('请粘贴 API Key'))
+    return
+  }
+  if (apiKey.length < 8 || apiKey.length > 256 || /\s/.test(apiKey)) {
+    callback(new Error('API Key 应为 8-256 个不含空格的字符'))
+    return
+  }
+  callback()
+}
 const rules = {
   workspaceBaseUrl: [
     { required: true, message: '请输入业务空间地址', trigger: 'blur' },
-    { pattern: /^https:\/\/[A-Za-z0-9.-]+(?:\/.*)?$/, message: '请输入标准 HTTPS 地址', trigger: 'blur' }
+    { validator: validateWorkspaceUrl, trigger: 'blur' }
   ],
+  apiKey: [{ validator: validateApiKey, trigger: ['blur', 'change'] }],
   textModel: [{ required: true, pattern: modelPattern, message: '模型名称格式不正确', trigger: 'blur' }],
   imageModel: [{ required: true, pattern: modelPattern, message: '模型名称格式不正确', trigger: 'blur' }],
   videoModel: [{ required: true, pattern: modelPattern, message: '模型名称格式不正确', trigger: 'blur' }],
@@ -171,6 +236,9 @@ const rules = {
 function applyConfig(data = {}) {
   Object.assign(form, {
     workspaceBaseUrl: data.workspaceBaseUrl || '',
+    apiKey: '',
+    apiKeyMasked: data.apiKeyMasked || '',
+    apiKeyConfigured: Boolean(data.apiKeyConfigured),
     textModel: data.textModel || '',
     imageModel: data.imageModel || '',
     videoProvider: data.videoProvider || 'happyhorse',
@@ -179,6 +247,20 @@ function applyConfig(data = {}) {
     videoRatio: data.videoRatio || '16:9',
     videoWatermark: Boolean(data.videoWatermark)
   })
+  apiKeyEditing.value = !form.apiKeyConfigured
+  nextTick(() => formRef.value?.clearValidate('apiKey'))
+}
+
+function startApiKeyEdit() {
+  form.apiKey = ''
+  apiKeyEditing.value = true
+  nextTick(() => apiKeyInputRef.value?.focus())
+}
+
+function cancelApiKeyEdit() {
+  form.apiKey = ''
+  apiKeyEditing.value = false
+  formRef.value?.clearValidate('apiKey')
 }
 
 async function loadConfig() {
@@ -196,7 +278,18 @@ async function saveConfig() {
   if (!valid) return
   saving.value = true
   try {
-    const response = await updateAiVideoModelConfig({ ...form })
+    const payload = {
+      workspaceBaseUrl: form.workspaceBaseUrl,
+      textModel: form.textModel,
+      imageModel: form.imageModel,
+      videoProvider: form.videoProvider,
+      videoModel: form.videoModel,
+      videoResolution: form.videoResolution,
+      videoRatio: form.videoRatio,
+      videoWatermark: form.videoWatermark
+    }
+    if (apiKeyEditing.value) payload.apiKey = form.apiKey.trim()
+    const response = await updateAiVideoModelConfig(payload)
     applyConfig(response.data)
     proxy.$modal.msgSuccess('模型配置已保存，将从下一次新任务开始生效')
   } finally {
@@ -241,6 +334,8 @@ h1 { margin: 0; font-size: clamp(34px, 5vw, 58px); line-height: .98; letter-spac
 .panel-heading h2, .model-card h2 { margin: 0; font-size: 20px; }
 .panel-heading p:last-child, .model-card > p { margin: 7px 0 0; color: #8f9aaa; line-height: 1.55; }
 .security-note { display: flex; align-items: center; gap: 9px; margin-top: -2px; color: #778496; font-size: 12px; }
+.secret-field { display: flex; width: 100%; gap: 10px; }
+.secret-field .el-input { flex: 1; }
 .model-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; align-items: start; }
 .model-card { position: relative; overflow: hidden; min-height: 300px; padding: 24px; border: 1px solid #2a313d; border-radius: 18px; background: #171c24; }
 .card-accent { position: absolute; inset: 0 auto 0 0; width: 3px; }
@@ -264,5 +359,5 @@ h1 { margin: 0; font-size: clamp(34px, 5vw, 58px); line-height: .98; letter-spac
 :deep(.el-input.is-disabled .el-input__wrapper) { background: #151922; box-shadow: 0 0 0 1px #29303b inset; }
 @media (prefers-reduced-motion: no-preference) { .pulse { animation: signal 2.2s ease-out infinite; } @keyframes signal { 0%, 30% { box-shadow: 0 0 0 0 rgba(87, 215, 139, .25); } 70%, 100% { box-shadow: 0 0 0 8px rgba(87, 215, 139, 0); } } }
 @media (max-width: 980px) { .pipeline { grid-template-columns: 1fr; gap: 8px; } .pipeline-link { width: 1px; height: 16px; margin-left: 34px; } .model-grid { grid-template-columns: 1fr; } .model-card { min-height: auto; } .model-card > p { min-height: auto; } }
-@media (max-width: 640px) { .model-config-page { padding: 20px; } .config-header, .action-bar { align-items: flex-start; flex-direction: column; } .effective-badge { align-self: flex-start; } .action-buttons { width: 100%; } .action-buttons .el-button { flex: 1; } .video-options { grid-template-columns: 1fr; gap: 0; } }
+@media (max-width: 640px) { .model-config-page { padding: 20px; } .config-header, .action-bar { align-items: flex-start; flex-direction: column; } .effective-badge { align-self: flex-start; } .action-buttons { width: 100%; } .action-buttons .el-button { flex: 1; } .video-options { grid-template-columns: 1fr; gap: 0; } .secret-field { align-items: stretch; flex-direction: column; } }
 </style>

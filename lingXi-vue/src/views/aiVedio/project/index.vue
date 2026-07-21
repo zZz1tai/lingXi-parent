@@ -131,20 +131,42 @@
                 {{ chapter.chapterTitle || `第 ${chapter.chapterNo} 章` }}
               </button>
               <p>{{ chapter.wordCount || 0 }} 字 · {{ pipelineLabel(chapter.pipelineStatus) }}</p>
-              <div v-if="chapter.parseStatus === 'RUNNING'" class="chapter-analysis-progress">
-                <div class="chapter-analysis-progress__label">
-                  <span>{{ chapter.analysisTask?.stageLabel || '正在启动章节分析' }}</span>
-                  <strong>{{ chapter.analysisTask?.progress || 10 }}%</strong>
+              <div
+                v-if="chapter.parseStatus === 'RUNNING'"
+                class="chapter-analysis-progress"
+                data-testid="chapter-analysis-progress"
+              >
+                <div class="chapter-analysis-progress__heading">
+                  <span class="chapter-analysis-progress__stage">
+                    {{ chapterAnalysisStageTitle(chapter.analysisTask) }}
+                  </span>
+                  <strong>{{ chapterAnalysisProgress(chapter.analysisTask) }}%</strong>
                 </div>
+                <p class="chapter-analysis-progress__detail">
+                  {{ chapter.analysisTask?.stageLabel || '正在启动章节分析' }}
+                </p>
                 <el-progress
-                  :percentage="chapter.analysisTask?.progress || 10"
+                  :percentage="chapterAnalysisProgress(chapter.analysisTask)"
                   :show-text="false"
-                  :stroke-width="6"
+                  :stroke-width="8"
+                  :aria-label="`章节分析进度 ${chapterAnalysisProgress(chapter.analysisTask)}%`"
                 />
+                <ol class="chapter-analysis-phases" aria-label="章节分析阶段">
+                  <li
+                    v-for="(phase, phaseIndex) in CHAPTER_ANALYSIS_PHASES"
+                    :key="phase.key"
+                    :class="`is-${chapterAnalysisPhaseState(chapter.analysisTask, phaseIndex)}`"
+                  >
+                    <span>{{ phaseIndex + 1 }}</span>
+                    <small>{{ phase.label }}</small>
+                  </li>
+                </ol>
               </div>
-              <p v-else-if="chapter.parseStatus === 'FAILED' && chapter.analysisTask?.errorMessage" class="chapter-analysis-error">
-                {{ chapter.analysisTask.errorMessage }}
-              </p>
+              <div v-else-if="chapter.parseStatus === 'FAILED' && chapter.analysisTask?.errorMessage" class="chapter-analysis-error">
+                <strong>章节分析失败</strong>
+                <span>{{ chapter.analysisTask.errorMessage }}</span>
+                <small v-if="chapter.analysisTask.errorCode">{{ chapter.analysisTask.errorCode }}</small>
+              </div>
             </div>
             <el-tag effect="plain" :type="chapter.parseStatus === 'FAILED' ? 'danger' : 'info'">{{ chapter.parseStatus }}</el-tag>
             <div class="chapter-item-actions">
@@ -1244,6 +1266,25 @@ const busyAssetStatuses = new Set([
   'RUNNING', 'POLLING', 'WAITING', 'WAITING_CALLBACK', 'RETRYING', 'NEEDS_REVIEW',
   'VALIDATING', 'QUALITY_CHECK'
 ])
+const CHAPTER_ANALYSIS_PHASES = [
+  { key: 'prepare', label: '准备' },
+  { key: 'planning', label: '规划' },
+  { key: 'scenes', label: '场景生成' },
+  { key: 'validation', label: '校验' },
+  { key: 'persisting', label: '保存' }
+]
+const chapterAnalysisStageMeta = {
+  QUEUED: { title: '等待执行', phaseIndex: 0 },
+  PREPARING: { title: '准备章节', phaseIndex: 0 },
+  PLANNING: { title: '规划章节骨架', phaseIndex: 1 },
+  PLANNING_REPAIR: { title: '修复章节规划', phaseIndex: 1 },
+  SCENE_GENERATING: { title: '逐场景生成', phaseIndex: 2 },
+  SCENE_REPAIRING: { title: '局部修复场景', phaseIndex: 2 },
+  VALIDATING: { title: '校验整章结构', phaseIndex: 3 },
+  REPAIRING: { title: '修复全局契约', phaseIndex: 3 },
+  FINALIZING: { title: '整理分析结果', phaseIndex: 3 },
+  PERSISTING: { title: '保存分析结果', phaseIndex: 4 }
+}
 const chapterVideoTitle = computed(() => chapterVideoDrawer.chapter?.chapterTitle || `第 ${chapterVideoDrawer.chapter?.chapterNo || ''} 章`)
 const assetChapterFilterLabel = computed(() => {
   const chapter = chapterDrawer.chapters.find(item => item.chapterId === assetDrawer.chapterId)
@@ -1350,10 +1391,10 @@ function openChapterDrawer(project) {
   loadChapters()
 }
 
-function loadChapters() {
+function loadChapters({ silent = false } = {}) {
   if (!chapterDrawer.project) return
   const projectId = chapterDrawer.project.projectId
-  chapterDrawer.loading = true
+  if (!silent) chapterDrawer.loading = true
   Promise.allSettled([
     listAiVideoChapter(projectId),
     listAiVideoTask(projectId)
@@ -1370,7 +1411,9 @@ function loadChapters() {
       analysisTask: latestTaskByChapter.get(chapter.chapterId) || null
     }))
     scheduleChapterPolling()
-  }).finally(() => { chapterDrawer.loading = false })
+  }).finally(() => {
+    if (!silent) chapterDrawer.loading = false
+  })
 }
 
 function normalizeChapterAnalysisTask(task) {
@@ -1385,10 +1428,26 @@ function normalizeChapterAnalysisTask(task) {
   return {
     ...task,
     progress: Math.max(0, Math.min(100, Number(task.progress) || 0)),
-    stageCode: stage.stageCode || '',
+    stageCode: stage.stageCode || (task.status === 'QUEUED' ? 'QUEUED' : ''),
     stageLabel: stage.stageLabel || chapterStageFallback(task.status),
     errorMessage: String(task.errorMessage || '').replace(/^retryable=(true|false)\s*\|\s*/i, '')
   }
+}
+
+function chapterAnalysisStageTitle(task) {
+  return chapterAnalysisStageMeta[task?.stageCode]?.title || '章节分析'
+}
+
+function chapterAnalysisProgress(task) {
+  const progress = Number(task?.progress)
+  return Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0
+}
+
+function chapterAnalysisPhaseState(task, phaseIndex) {
+  const currentPhase = chapterAnalysisStageMeta[task?.stageCode]?.phaseIndex ?? 0
+  if (phaseIndex < currentPhase) return 'complete'
+  if (phaseIndex === currentPhase) return 'active'
+  return 'pending'
 }
 
 function chapterStageFallback(status) {
@@ -1426,14 +1485,25 @@ function removeChapter(chapter) {
 function analyzeChapter(chapter) {
   analyzeAiVideoChapter(chapterDrawer.project.projectId, chapter.chapterId).then(response => {
     proxy.$modal.msgSuccess(`已创建解析任务 #${response.taskId}`)
-    loadChapters()
+    chapter.parseStatus = 'RUNNING'
+    chapter.analysisTask = {
+      taskId: response.taskId,
+      status: 'QUEUED',
+      progress: 0,
+      stageCode: 'QUEUED',
+      stageLabel: '任务已提交，等待分析线程执行',
+      errorCode: '',
+      errorMessage: ''
+    }
+    scheduleChapterPolling()
+    loadChapters({ silent: true })
   })
 }
 
 function scheduleChapterPolling() {
   stopChapterPolling()
   if (chapterDrawer.open && chapterDrawer.chapters.some(item => item.parseStatus === 'RUNNING')) {
-    chapterPollTimer = setTimeout(() => loadChapters(), 5000)
+    chapterPollTimer = setTimeout(() => loadChapters({ silent: true }), 2500)
   }
 }
 
@@ -2949,7 +3019,27 @@ h1, h2, h3, p { margin-top: 0; } h1 { margin-bottom: 8px; font-size: 32px; } .su
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } .form-grid .el-form-item { min-width: 0; }
 .chapter-workspace { min-height: 100%; padding: 30px; color: #1d2735; } .drawer-header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; padding-bottom: 24px; border-bottom: 1px solid #e9edf3; } .drawer-header h2 { margin-bottom: 8px; } .drawer-actions { display: flex; gap: 8px; white-space: nowrap; }
 .chapter-list { margin-top: 18px; } .chapter-item { display: flex; align-items: center; gap: 14px; padding: 16px 0; border-bottom: 1px solid #edf0f4; } .chapter-number { min-width: 38px; color: #f39a4a; font-family: monospace; font-size: 17px; font-weight: 700; } .chapter-content { flex: 1; min-width: 180px; } .chapter-content p { margin-bottom: 0; font-size: 12px; } .chapter-title-button { max-width: 100%; overflow: hidden; margin: 0 0 5px; padding: 0; border: 0; color: #1d2735; background: transparent; font: inherit; font-size: 15px; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; } .chapter-title-button:hover, .chapter-title-button:focus-visible { color: #d97824; text-decoration: underline; } .chapter-item-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; } .chapter-item-actions :deep(.el-button + .el-button) { margin-left: 0; }
-.chapter-analysis-progress { max-width: 420px; margin-top: 9px; } .chapter-analysis-progress__label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; color: #697586; font-size: 12px; } .chapter-analysis-progress__label strong { color: #d97824; font-variant-numeric: tabular-nums; } .chapter-analysis-progress :deep(.el-progress-bar__outer) { background: #f0e7df; } .chapter-analysis-progress :deep(.el-progress-bar__inner) { background: linear-gradient(90deg, #f39a4a, #df6f2b); } .chapter-analysis-error { max-width: 420px; margin-top: 7px !important; color: #d84f4f !important; line-height: 1.45; }
+.chapter-analysis-progress { max-width: 520px; margin-top: 10px; padding: 12px 14px; border: 1px solid #f1dfcc; border-radius: 12px; background: linear-gradient(135deg, #fffaf4, #fff); box-shadow: 0 7px 20px rgb(126 77 31 / 7%); }
+.chapter-analysis-progress__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.chapter-analysis-progress__heading strong { color: #c9681f; font-size: 14px; font-variant-numeric: tabular-nums; }
+.chapter-analysis-progress__stage { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border-radius: 999px; color: #a65319; background: #ffead5; font-size: 11px; font-weight: 700; letter-spacing: .03em; }
+.chapter-analysis-progress__detail { overflow: hidden; margin: 7px 0 8px !important; color: #687587 !important; font-size: 12px !important; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.chapter-analysis-progress :deep(.el-progress-bar__outer) { background: #f0e7df; }
+.chapter-analysis-progress :deep(.el-progress-bar__inner) { background: linear-gradient(90deg, #f4a057, #df6f2b); transition: width .45s ease; }
+.chapter-analysis-phases { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
+.chapter-analysis-phases li { position: relative; display: flex; align-items: center; gap: 5px; min-width: 0; color: #a4abb5; font-size: 10px; }
+.chapter-analysis-phases li::after { position: absolute; top: 9px; right: 2px; left: 23px; height: 1px; background: #eadfd4; content: ''; }
+.chapter-analysis-phases li:last-child::after { display: none; }
+.chapter-analysis-phases li > span { z-index: 1; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 18px; height: 18px; border: 1px solid #d8dce2; border-radius: 50%; background: #fff; font-size: 9px; font-weight: 700; }
+.chapter-analysis-phases li small { z-index: 1; overflow: hidden; padding-right: 3px; background: #fffaf7; text-overflow: ellipsis; white-space: nowrap; }
+.chapter-analysis-phases li.is-complete { color: #6c8b58; }
+.chapter-analysis-phases li.is-complete > span { border-color: #8eaf78; color: #fff; background: #8eaf78; }
+.chapter-analysis-phases li.is-complete::after { background: #a9c497; }
+.chapter-analysis-phases li.is-active { color: #c9681f; font-weight: 700; }
+.chapter-analysis-phases li.is-active > span { border-color: #e9893d; color: #fff; background: #e9893d; box-shadow: 0 0 0 4px rgb(233 137 61 / 13%); }
+.chapter-analysis-error { display: grid; max-width: 520px; gap: 4px; margin-top: 9px; padding: 10px 12px; border: 1px solid #f1caca; border-radius: 9px; color: #b63e3e; background: #fff6f6; font-size: 12px; line-height: 1.45; }
+.chapter-analysis-error strong { font-size: 12px; }
+.chapter-analysis-error small { color: #be7474; font-family: monospace; }
 .story-bible section { margin-bottom: 28px; } .story-bible h3 { margin-bottom: 10px; color: #1d2735; font-size: 16px; } .bible-summary { padding: 18px; border-radius: 12px; background: #fff7ee; } .bible-summary p { margin: 0; color: #555f6e; line-height: 1.8; } .section-heading { display: flex; justify-content: space-between; align-items: center; } .section-heading span { color: #8491a3; font-size: 12px; } .bible-characters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } .bible-card { padding: 14px; border: 1px solid #e8edf4; border-radius: 10px; } .bible-card p { min-height: 40px; margin: 8px 0; color: #657181; font-size: 13px; line-height: 1.55; } .bible-card small { color: #f39a4a; } .bible-scene { margin-bottom: 10px; padding: 16px; border-left: 3px solid #f39a4a; border-radius: 0 10px 10px 0; background: #f7f9fb; } .bible-scene p { margin: 7px 0; color: #657181; font-size: 13px; } .scene-no { display: inline-block; width: 34px; color: #f39a4a; font-family: monospace; } .scene-meta { color: #8491a3; font-size: 12px; }
 .asset-filter-context { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #7d8999; font-size: 12px; } .asset-toolbar { display: flex; gap: 10px; margin-bottom: 20px; } .asset-toolbar .el-select { width: 170px; } .asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; } .asset-card { overflow: hidden; border: 1px solid #e8edf4; border-radius: 12px; background: #fff; } .asset-preview { display: flex; align-items: center; justify-content: center; height: 210px; color: #8491a3; background: #f3f6fa; font-size: 13px; } .asset-preview :deep(.el-image), .asset-preview video { width: 100%; height: 100%; object-fit: cover; } .asset-body { padding: 12px; } .asset-body .el-tag + .el-tag { margin-left: 6px; } .asset-body h3 { overflow: hidden; margin: 10px 0 5px; color: #1d2735; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; } .asset-body p { margin: 0; color: #8491a3; font-size: 12px; } .character-view-spec { margin-top: 6px !important; color: #b86b23 !important; font-weight: 600; } .asset-prompt-preview { margin-top: 10px; padding: 9px 10px; border-radius: 8px; background: #f6f8fb; } .asset-prompt-preview strong { display: block; margin-bottom: 3px; color: #566173; font-size: 11px; } .asset-prompt-preview p { display: -webkit-box; overflow: hidden; margin-bottom: 7px; line-height: 17px; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; } .asset-prompt-preview p:last-child { margin-bottom: 0; } .prompt-form { margin-top: 18px; } .prompt-form :deep(textarea) { line-height: 1.6; } .asset-task-status { min-height: 32px; margin-top: 7px !important; color: #d75a4a !important; line-height: 16px; } .video-action { width: 100%; margin-top: 12px; } .asset-version-actions { display: flex; gap: 8px; margin-top: 10px; } .asset-version-actions .el-button { flex: 1; margin-left: 0; }
 .regeneration-reference-alert { margin-top: 12px; }
@@ -3016,5 +3106,6 @@ button.shot-reference-card:disabled { cursor: default; }
 .duration-editor > span { color: #566173; }
 .duration-editor > small { color: #8793a3; }
 @media (max-width: 700px) { .studio-page { padding: 20px; } .studio-header { align-items: flex-start; flex-direction: column; } .header-actions { width: 100%; } .header-actions .el-button { flex: 1; } .toolbar .el-input { width: 100%; } .toolbar { flex-wrap: wrap; } .form-grid, .video-summary-grid, .chapter-video-version-grid { grid-template-columns: 1fr; gap: 0; } .video-summary-grid, .chapter-video-version-grid { gap: 8px; } .video-summary-heading, .duration-editor, .chapter-video-shot-heading { align-items: flex-start; flex-direction: column; } .chapter-item { align-items: flex-start; flex-wrap: wrap; } .chapter-item-actions { width: 100%; justify-content: flex-start; } .chapter-video-scene-heading { align-items: flex-start; } .chapter-video-scene-heading div { align-items: flex-start; flex-direction: column; gap: 3px; } .chapter-video-toolbar-actions { justify-content: stretch; } .chapter-video-toolbar-actions .el-button { flex: 1; } }
+@media (max-width: 700px) { .chapter-content { width: calc(100% - 52px); } .chapter-analysis-progress { max-width: none; } .chapter-analysis-phases li { align-items: center; flex-direction: column; gap: 3px; text-align: center; } .chapter-analysis-phases li::after { top: 9px; right: -50%; left: 50%; } .chapter-analysis-phases li small { width: 100%; padding: 0; background: transparent; } }
 @media (max-width: 700px) { .chapter-material-stats, .chapter-material-card-grid, .keyframe-action-row { grid-template-columns: 1fr; } .chapter-material-card-grid { padding: 12px; } .shot-reference-heading { align-items: flex-start; flex-direction: column; } .shot-reference-tags { justify-content: flex-start; } .shot-reference-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .chapter-video-toolbar-actions { flex-wrap: wrap; } }
 </style>

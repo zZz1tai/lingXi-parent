@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.lingXi.ai.config.AgentConfig;
+import com.lingXi.aiVedio.config.AiVideoModelConfigService;
+import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -42,14 +44,21 @@ public class AgentClient {
     private final AgentConfig config;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ExecutorService executorService;
+    private final AiVideoModelConfigService modelConfigService;
 
     @Autowired
-    public AgentClient(AgentConfig config) {
-        this(config, createStreamExecutor(config));
+    public AgentClient(AgentConfig config, AiVideoModelConfigService modelConfigService) {
+        this(config, modelConfigService, createStreamExecutor(config));
     }
 
     AgentClient(AgentConfig config, ExecutorService executorService) {
+        this(config, null, executorService);
+    }
+
+    private AgentClient(AgentConfig config, AiVideoModelConfigService modelConfigService,
+            ExecutorService executorService) {
         this.config = config;
+        this.modelConfigService = modelConfigService;
         this.executorService = executorService;
     }
 
@@ -540,14 +549,14 @@ public class AgentClient {
     }
 
     private void putLlmConfig(ObjectNode root) {
-        if (config.getLlmApiKey() != null && !config.getLlmApiKey().isEmpty()) {
-            ObjectNode llmConfig = root.putObject("llm_config");
-            llmConfig.put("api_key", config.getLlmApiKey());
-            llmConfig.put("model", config.getLlmModel());
-            if (config.getLlmBaseUrl() != null && !config.getLlmBaseUrl().isEmpty()) {
-                llmConfig.put("base_url", config.getLlmBaseUrl());
-            }
+        if (modelConfigService == null) {
+            return;
         }
+        AiVideoModelConfig runtimeConfig = modelConfigService.getRequiredConfig();
+        ObjectNode llmConfig = root.putObject("llm_config");
+        llmConfig.put("api_key", runtimeConfig.getApiKey());
+        llmConfig.put("model", runtimeConfig.getTextModel());
+        llmConfig.put("base_url", runtimeConfig.getWorkspaceBaseUrl());
     }
 
     private String extractResponse(JsonNode root) {

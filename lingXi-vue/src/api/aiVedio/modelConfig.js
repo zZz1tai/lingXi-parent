@@ -11,6 +11,7 @@ export function updateAiVideoModelConfig(data) {
   return request({
     url: '/aivideo/model-config',
     method: 'put',
+    headers: { repeatSubmit: false },
     data
   })
 }

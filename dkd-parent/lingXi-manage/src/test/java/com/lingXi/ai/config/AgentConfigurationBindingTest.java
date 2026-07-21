@@ -15,21 +15,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 class AgentConfigurationBindingTest {
 
     @Test
-    void agentServiceAndLlmPropertiesBindToAgentConfig() {
+    void agentServicePropertiesBindToAgentConfig() {
         Map<String, String> properties = new LinkedHashMap<>();
         properties.put("agent.service-api-key", "service-key-sentinel");
-        properties.put("agent.llm-api-key", "llm-key-sentinel");
-        properties.put("agent.llm-model", "model-sentinel");
-        properties.put("agent.llm-base-url", "https://provider.invalid/v1");
 
         AgentConfig config = new Binder(new MapConfigurationPropertySource(properties))
                 .bind("agent", Bindable.of(AgentConfig.class))
                 .get();
 
         assertEquals("service-key-sentinel", config.getServiceApiKey());
-        assertEquals("llm-key-sentinel", config.getLlmApiKey());
-        assertEquals("model-sentinel", config.getLlmModel());
-        assertEquals("https://provider.invalid/v1", config.getLlmBaseUrl());
     }
 
     @Test

@@ -21,7 +21,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.lingXi.ai.client.ChapterAnalysisClient;
-import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoAssetRelation;
@@ -60,8 +59,6 @@ public class AiVideoChapterAnalysisWorker
     @Autowired
     private ChapterAnalysisClient chapterAnalysisClient;
 
-    @Autowired
-    private AgentConfig agentConfig;
     @Autowired
     private AiVideoModelConfigService modelConfigService;
 
@@ -131,9 +128,9 @@ public class AiVideoChapterAnalysisWorker
             }
 
             // Call Python Agent for chapter analysis
-            AiVideoModelConfig runtimeConfig = modelConfigService.getConfig();
+            AiVideoModelConfig runtimeConfig = modelConfigService.getRequiredConfig();
             ChapterAnalysisClient.AnalysisResult result = chapterAnalysisClient.analyzeChapter(
-                    agentConfig.getLlmApiKey(),
+                    runtimeConfig.getApiKey(),
                     runtimeConfig.getTextModel(),
                     runtimeConfig.getWorkspaceBaseUrl(),
                     runtimeConfig.getVideoModel(),

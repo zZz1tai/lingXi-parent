@@ -148,7 +148,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         String requestJson = buildImageRequestJson(asset, references.getAssetIds());
         String generationParamsJson = buildImageGenerationParamsJson(asset);
         if (taskMapper.resetFailedImageTaskForRetry(
-                task.getTaskId(), requestJson, modelConfigService.getConfig().getImageModel()) != 1)
+                task.getTaskId(), requestJson, modelConfigService.getRequiredConfig().getImageModel()) != 1)
         {
             throw new ServiceException("图片任务状态已变化，请刷新后重试");
         }
@@ -599,7 +599,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         task.setPriority(100);
         task.setIdempotencyKey("qwen-image-" + asset.getAssetCode() + "-" + asset.getVersionNo());
         task.setProviderCode("dashscope");
-        task.setModelCode(modelConfigService.getConfig().getImageModel());
+        task.setModelCode(modelConfigService.getRequiredConfig().getImageModel());
         task.setProgress(5);
         task.setMaxRetry(0);
         task.setRequestJson(buildImageRequestJson(asset, references.getAssetIds()));
@@ -1316,7 +1316,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     {
         String aspectRatio = resolveImageAspectRatio(asset);
         return AiVideoJsonMetadata.imageGenerationRequest(asset.getPromptText(), asset.getNegativePromptText(),
-                modelConfigService.getConfig().getImageModel(), asset.getAssetType(), aspectRatio,
+                modelConfigService.getRequiredConfig().getImageModel(), asset.getAssetType(), aspectRatio,
                 referenceAssetIds);
     }
 
@@ -1324,7 +1324,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     {
         String aspectRatio = resolveImageAspectRatio(asset);
         return AiVideoJsonMetadata.generationParameters("dashscope",
-                modelConfigService.getConfig().getImageModel(),
+                modelConfigService.getRequiredConfig().getImageModel(),
                 aspectRatio);
     }
 

@@ -46,15 +46,6 @@ public class AgentConfig implements EnvironmentAware {
     /** Agent 流式转发等待队列长度 */
     private Integer streamQueueCapacity = 100;
 
-    // LLM 配置 (传递给 Python Agent)
-    /** LLM API Key */
-    @ToString.Exclude
-    private String llmApiKey;
-    /** LLM 模型名称 */
-    private String llmModel;
-    /** LLM API Base URL (DashScope 等) */
-    private String llmBaseUrl;
-
     @Override
     public void setEnvironment(Environment environment) {
         this.environment = environment;

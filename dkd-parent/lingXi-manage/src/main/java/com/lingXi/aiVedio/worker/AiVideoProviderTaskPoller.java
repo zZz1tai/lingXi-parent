@@ -8,7 +8,6 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import com.lingXi.ai.client.VideoClient;
 import com.lingXi.ai.client.VideoClient.VideoQueryResult;
-import com.lingXi.ai.config.DashScopeConfig;
 import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
@@ -17,8 +16,11 @@ import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
+import com.lingXi.common.exception.ServiceException;
+import lombok.extern.slf4j.Slf4j;
 
 /** 持久化轮询异步视频供应商任务，并转存视频片段。 */
+@Slf4j
 @Component
 public class AiVideoProviderTaskPoller
 {
@@ -29,8 +31,6 @@ public class AiVideoProviderTaskPoller
     @Autowired
     private VideoClient videoClient;
     @Autowired
-    private DashScopeConfig dashScopeConfig;
-    @Autowired
     private AiVideoModelConfigService modelConfigService;
     @Autowired
     private AiVideoLocalAssetStorage localAssetStorage;
@@ -40,7 +40,16 @@ public class AiVideoProviderTaskPoller
     @Scheduled(fixedDelayString = "${aivideo.video.poll-interval-ms:15000}")
     public void poll()
     {
-        AiVideoModelConfig runtimeConfig = modelConfigService.getConfig();
+        AiVideoModelConfig runtimeConfig;
+        try
+        {
+            runtimeConfig = modelConfigService.getRequiredConfig();
+        }
+        catch (ServiceException ex)
+        {
+            log.debug("AI 模型配置未完成，跳过视频供应商任务轮询：{}", ex.getMessage());
+            return;
+        }
         String providerCode = runtimeConfig.getVideoProvider();
         taskMapper.markStaleVideoProviderSubmissionsNeedsReview(providerCode);
         taskMapper.recoverStaleVideoProviderSubmissionsWithProviderId(providerCode);
@@ -55,7 +64,7 @@ public class AiVideoProviderTaskPoller
             try
             {
                 VideoQueryResult result = videoClient.queryVideo(
-                        dashScopeConfig.getApiKey(), runtimeConfig.getWorkspaceBaseUrl(),
+                        runtimeConfig.getApiKey(), runtimeConfig.getWorkspaceBaseUrl(),
                         task.getProviderTaskId());
                 
                 if (!result.success())

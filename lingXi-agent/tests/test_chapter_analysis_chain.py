@@ -17,8 +17,14 @@ from app.chains.chapter_analysis import (
     ChapterAnalysisOutputTooLargeError,
     build_chapter_analysis_chain,
 )
+from app.chains.promt import SCENE_PROMPT, SCENE_REPAIR_PROMPT
 from app.services.chapter_analysis import SourceUnit
-from tests.chapter_fixtures import chapter_plan, generated_scene, source_units
+from tests.chapter_fixtures import (
+    chapter_plan,
+    cloned_story_bible,
+    generated_scene,
+    source_units,
+)
 
 
 class ResponseSequence:
@@ -108,6 +114,32 @@ class EndlessStreamingModel(Runnable[Any, str]):
 
 
 class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
+    def test_scene_prompts_include_explicit_dialogue_character_limits(self) -> None:
+        prompt_values = {
+            "chapter_context": "{}",
+            "characters": "[]",
+            "scene_plan": "{}",
+            "scene_source_units": "[]",
+            "scene_source_unit_count": 1,
+            "minimum_shot_count": 2,
+            "repair_attempt": 1,
+            "validation_errors": "[]",
+            "invalid_response": "{}",
+        }
+        prompt_texts = [
+            "\n".join(
+                str(message.content)
+                for message in prompt.format_messages(**prompt_values)
+            )
+            for prompt in (SCENE_PROMPT, SCENE_REPAIR_PROMPT)
+        ]
+
+        for prompt_text in prompt_texts:
+            self.assertIn("3000ms allows at most 10", prompt_text)
+            self.assertIn("4000ms at most 14", prompt_text)
+            self.assertIn("5000ms at most 18", prompt_text)
+            self.assertIn("splitting it into multiple scene dialogues", prompt_text)
+
     async def test_continuous_stream_is_cancelled_by_wall_clock_deadline(self) -> None:
         model = EndlessStreamingModel()
         chain = build_chapter_analysis_chain(model)
@@ -278,6 +310,74 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, result.repair_count)
         self.assertIn("PLANNING_REPAIR", [stage for stage, _, _ in events])
         self.assertEqual(3, model.stream_calls)
+
+    async def test_final_dialogue_duration_error_repairs_only_the_target_scene(self) -> None:
+        valid_plan = json.dumps(chapter_plan(), ensure_ascii=False)
+        valid_scene = json.dumps(generated_scene(), ensure_ascii=False)
+        chain = build_chapter_analysis_chain(StreamingOnlyResponseSequence("unused"))
+        collector = AsyncMock(side_effect=[valid_plan, valid_scene, valid_scene])
+        dialogue_error = chapter_analysis_module._ContractValidationError(
+            "场景1-镜头2 对白无法在镜头时长内自然说完：中文/日韩字符 23，"
+            "其他语言词数 0，粗估需要 5750ms，可用 4500ms",
+            "assembled-response",
+        )
+
+        with (
+            patch.object(chain, "_collect_stream", collector),
+            patch.object(
+                chain,
+                "_parse_and_validate",
+                side_effect=[dialogue_error, cloned_story_bible()],
+            ),
+        ):
+            result = await chain.ainvoke("contract", source_units())
+
+        self.assertEqual(1, result.repair_count)
+        self.assertEqual(3, collector.await_count)
+        self.assertIs(chain._scene_repair_chain, collector.await_args_list[2].args[0])
+        self.assertTrue(
+            all(call.args[0] is not chain._repair_chain for call in collector.await_args_list)
+        )
+        invalid_scene = json.loads(
+            collector.await_args_list[2].args[1]["invalid_response"]
+        )
+        self.assertIn("shots", invalid_scene)
+        self.assertNotIn("videoPlan", invalid_scene)
+
+    async def test_failed_dialogue_local_repairs_never_fall_back_to_whole_document(self) -> None:
+        valid_plan = json.dumps(chapter_plan(), ensure_ascii=False)
+        valid_scene = json.dumps(generated_scene(), ensure_ascii=False)
+        overlong_scene = generated_scene()
+        overlong_scene["dialogues"][0]["line"] = "这是一句确定无法在五秒镜头中自然完整说完的超长对白内容"
+        overlong_response = json.dumps(overlong_scene, ensure_ascii=False)
+        chain = build_chapter_analysis_chain(StreamingOnlyResponseSequence("unused"))
+        collector = AsyncMock(
+            side_effect=[
+                valid_plan,
+                valid_scene,
+                overlong_response,
+                overlong_response,
+            ]
+        )
+        dialogue_error = chapter_analysis_module._ContractValidationError(
+            "场景1-镜头2 对白无法在镜头时长内自然说完：中文/日韩字符 23，"
+            "其他语言词数 0，粗估需要 5750ms，可用 4500ms",
+            "assembled-response",
+        )
+
+        with (
+            patch.object(chain, "_collect_stream", collector),
+            patch.object(chain, "_parse_and_validate", side_effect=[dialogue_error]),
+            self.assertRaisesRegex(ChapterAnalysisOutputError, "局部修复仍不符合契约"),
+        ):
+            await chain.ainvoke("contract", source_units())
+
+        self.assertEqual(4, collector.await_count)
+        self.assertTrue(
+            all(call.args[0] is not chain._repair_chain for call in collector.await_args_list)
+        )
+        self.assertIs(chain._scene_repair_chain, collector.await_args_list[2].args[0])
+        self.assertIs(chain._scene_repair_chain, collector.await_args_list[3].args[0])
 
     def test_plan_rejects_a_scene_that_is_too_large_to_split_safely(self) -> None:
         units = [
