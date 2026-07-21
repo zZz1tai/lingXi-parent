@@ -23,10 +23,15 @@ from app.chains.promt import (
     SCENE_REPAIR_PROMPT,
 )
 from app.schemas.chapter import (
+    MAX_SCENE_SOURCE_UNITS,
     validate_chapter_plan_structure,
     validate_story_bible_structure,
 )
-from app.services.chapter_analysis import SourceUnit, validate_document
+from app.services.chapter_analysis import (
+    SourceUnit,
+    build_scene_segments,
+    validate_document,
+)
 
 
 MAX_CHAPTER_OUTPUT_CHARS = 1_000_000
@@ -112,15 +117,11 @@ class ChapterAnalysisChain:
             progress_callback,
         )
 
-        source_unit_by_id = {unit.id: unit for unit in source_units}
         generated_scenes: list[dict[str, Any]] = []
         scene_repair_count = 0
         scene_count = len(analysis_plan["scenes"])
         for scene_index, scene_plan in enumerate(analysis_plan["scenes"], start=1):
-            scene_units = [
-                source_unit_by_id[source_unit_id]
-                for source_unit_id in scene_plan["sourceUnitIds"]
-            ]
+            scene_units = scene_plan["sourceUnits"]
             progress = 30 + ((scene_index - 1) * 40 // max(1, scene_count))
             await self._emit_progress(
                 progress_callback,
@@ -342,12 +343,8 @@ class ChapterAnalysisChain:
                         raise ChapterAnalysisOutputError(
                             f"最终校验定位到场景{scene_index + 1}，但组装结果中不存在该场景"
                         ) from validation_error
-                    source_unit_by_id = {unit.id: unit for unit in source_units}
                     scene_plan = analysis_plan["scenes"][scene_index]
-                    scene_units = [
-                        source_unit_by_id[source_unit_id]
-                        for source_unit_id in scene_plan["sourceUnitIds"]
-                    ]
+                    scene_units = scene_plan["sourceUnits"]
                     repaired_scene, local_repairs = await self._repair_scene_after_final_validation(
                         analysis_plan,
                         scene_plan,
@@ -508,38 +505,20 @@ class ChapterAnalysisChain:
         try:
             parsed = self._json_parser.parse(raw_response)
             plan = validate_chapter_plan_structure(parsed)
-            expected_ids = [unit.id for unit in source_units]
-            valid_ids = set(expected_ids)
-            actual_ids: list[str] = []
-            for scene_index, scene in enumerate(plan["scenes"], start=1):
-                scene["sceneNo"] = scene_index
-                canonical_ids: list[str] = []
-                for raw_id in scene["sourceUnitIds"]:
-                    source_unit_id = str(raw_id).strip().upper()
-                    if source_unit_id not in valid_ids:
-                        raise ValueError(
-                            f"场景{scene_index}引用了不存在的 sourceUnitId：{source_unit_id}"
-                        )
-                    canonical_ids.append(source_unit_id)
-                    actual_ids.append(source_unit_id)
-                scene["sourceUnitIds"] = canonical_ids
-
-            if actual_ids != expected_ids:
-                missing = [source_id for source_id in expected_ids if source_id not in actual_ids]
-                duplicate_ids = sorted(
-                    {source_id for source_id in actual_ids if actual_ids.count(source_id) > 1}
-                )
-                details = []
-                if missing:
-                    details.append("缺少=" + ",".join(missing))
-                if duplicate_ids:
-                    details.append("重复=" + ",".join(duplicate_ids))
-                if not details:
-                    details.append("场景分配顺序与原文不一致")
-                raise ValueError(
-                    "章节骨架必须按原始顺序将全部 source unit 恰好分配一次；"
-                    + "；".join(details)
-                )
+            segments = build_scene_segments(
+                source_units,
+                plan.get("sceneBreaks", []),
+                MAX_SCENE_SOURCE_UNITS,
+            )
+            plan["sceneBreaks"] = [segment[-1].id for segment in segments]
+            plan["scenes"] = [
+                {
+                    "sceneNo": scene_index,
+                    "sourceUnitIds": [unit.id for unit in segment],
+                    "sourceUnits": segment,
+                }
+                for scene_index, segment in enumerate(segments, start=1)
+            ]
             self._validate_plan_domain(plan, source_units)
             return plan
         except (ValidationError, ValueError, TypeError) as exc:
@@ -550,7 +529,7 @@ class ChapterAnalysisChain:
         analysis_plan: dict[str, Any],
         source_units: list[SourceUnit],
     ) -> None:
-        """Fail fast on character identity and scene metadata before scene generation."""
+        """Fail fast on global character identity before scene generation."""
 
         provisional_document = self._base_document_from_plan(analysis_plan)
         provisional_scenes: list[dict[str, Any]] = []
@@ -562,7 +541,13 @@ class ChapterAnalysisChain:
             ]
             provisional_scenes.append(
                 {
-                    **deepcopy(scene_plan),
+                    "sceneNo": scene_plan["sceneNo"],
+                    "title": "规划校验占位场景",
+                    "time": "未指定时间",
+                    "location": "未指定地点",
+                    "atmosphere": "待场景生成阶段确定",
+                    "dramaticGoal": "覆盖已分配的章节原文",
+                    "characters": [],
                     "dialogues": [],
                     "shots": shots,
                 }
@@ -571,7 +556,7 @@ class ChapterAnalysisChain:
         if total_shots < 2:
             provisional_scenes[0]["shots"].append(
                 self._placeholder_shot(
-                    [provisional_scenes[0]["sourceUnitIds"][0]]
+                    [analysis_plan["scenes"][0]["sourceUnitIds"][0]]
                 )
             )
             total_shots += 1
@@ -628,10 +613,14 @@ class ChapterAnalysisChain:
             }
             for unit in scene_units
         ]
+        scene_assignment = {
+            "sceneNo": scene_plan["sceneNo"],
+            "sourceUnitIds": scene_plan["sourceUnitIds"],
+        }
         return {
             "chapter_context": json.dumps(chapter_context, ensure_ascii=False),
             "characters": json.dumps(analysis_plan["characters"], ensure_ascii=False),
-            "scene_plan": json.dumps(scene_plan, ensure_ascii=False),
+            "scene_plan": json.dumps(scene_assignment, ensure_ascii=False),
             "scene_source_units": json.dumps(source_payload, ensure_ascii=False),
             "scene_source_unit_count": len(scene_units),
             "minimum_shot_count": minimum_shot_count,
@@ -650,16 +639,7 @@ class ChapterAnalysisChain:
             if not isinstance(parsed_scene, dict):
                 raise ValueError("场景模型未返回 JSON 对象")
             parsed_scene = dict(parsed_scene)
-            for field_name in (
-                "sceneNo",
-                "title",
-                "time",
-                "location",
-                "atmosphere",
-                "dramaticGoal",
-                "characters",
-            ):
-                parsed_scene[field_name] = deepcopy(scene_plan[field_name])
+            parsed_scene["sceneNo"] = scene_plan["sceneNo"]
 
             provisional_document = self._base_document_from_plan(analysis_plan)
             provisional_document["scenes"] = [parsed_scene]
@@ -675,7 +655,15 @@ class ChapterAnalysisChain:
             validated = validate_document(document, scene_units, video_model)
             return validated["scenes"][0]
         except (ValidationError, ValueError, TypeError) as exc:
-            raise _ContractValidationError(str(exc), raw_response) from exc
+            detail = str(exc)
+            scene_no = int(scene_plan["sceneNo"])
+            if scene_no != 1:
+                detail = re.sub(
+                    r"场景1(?=-|\s|$|的)",
+                    f"场景{scene_no}",
+                    detail,
+                )
+            raise _ContractValidationError(detail, raw_response) from exc
 
     @staticmethod
     def _base_document_from_plan(analysis_plan: dict[str, Any]) -> dict[str, Any]:

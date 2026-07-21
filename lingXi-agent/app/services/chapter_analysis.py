@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -21,9 +20,6 @@ from app.services.video_capabilities import normalize_video_duration_ms
 
 PROMPT_VERSION = "agent-story-bible-v1"
 MAX_SOURCE_UNIT_NON_WHITESPACE_CHARS = 80
-SPOKEN_CJK_CHARACTERS_PER_SECOND = 4.0
-SPOKEN_WORDS_PER_SECOND = 2.5
-DIALOGUE_ACTION_RESERVE_MS = 500
 DEFAULT_IMAGE_NEGATIVE_PROMPT = "text, watermark, logo, blurry, distorted face, extra fingers"
 MAX_FINAL_IMAGE_PROMPT_LENGTH = 1800
 MAX_FINAL_IMAGE_NEGATIVE_PROMPT_LENGTH = 480
@@ -32,10 +28,10 @@ MAX_CHARACTER_REFERENCE_IMAGES = 4
 GENERIC_CHARACTER_ALIASES = {
     "他", "她", "它", "他们", "她们", "它们", "父亲", "母亲", "爸爸", "妈妈", "爸", "妈",
     "老师", "先生", "女士", "医生", "护士", "警察", "老板", "店员", "服务员", "路人",
-    "众人", "人群", "男主", "女主", "主角", "旁白", "未知", "角色",
+    "众人", "人群", "陌生人", "陌生角色", "男主", "女主", "主角", "旁白", "未知", "角色",
     "he", "she", "it", "they", "him", "her", "father", "mother", "dad", "mom",
     "teacher", "sir", "madam", "doctor", "nurse", "boss", "narrator", "protagonist",
-    "man", "woman", "person",
+    "man", "woman", "person", "stranger", "unknown person",
 }
 
 
@@ -47,6 +43,63 @@ class SourceUnit:
     order: int
     paragraph_no: int
     text: str
+
+
+def build_scene_segments(
+    source_units: list[SourceUnit],
+    scene_break_ids: list[str],
+    max_units_per_scene: int,
+) -> list[list[SourceUnit]]:
+    """Expand semantic scene-end hints into an exact source-unit partition.
+
+    Unknown IDs are ignored, duplicates and ordering are normalized, the final
+    unit is always covered, and oversized semantic scenes are split by the
+    server instead of relying on the model to enumerate every source unit.
+    """
+
+    if not source_units:
+        raise ValueError("章节原文为空，无法生成场景分段")
+    if max_units_per_scene < 1:
+        raise ValueError("每场景 source unit 上限必须大于0")
+
+    index_by_id = {
+        str(unit.id).strip().upper(): index
+        for index, unit in enumerate(source_units)
+    }
+    break_indexes = sorted(
+        {
+            index_by_id[canonical_id]
+            for raw_id in scene_break_ids
+            if (canonical_id := str(raw_id).strip().upper()) in index_by_id
+        }
+    )
+    final_index = len(source_units) - 1
+    if final_index not in break_indexes:
+        break_indexes.append(final_index)
+
+    segments: list[list[SourceUnit]] = []
+    start = 0
+    for requested_end in break_indexes:
+        if requested_end < start:
+            continue
+        while requested_end - start + 1 > max_units_per_scene:
+            forced_end = start + max_units_per_scene
+            segments.append(source_units[start:forced_end])
+            start = forced_end
+        if start <= requested_end:
+            segments.append(source_units[start:requested_end + 1])
+            start = requested_end + 1
+
+    while start < len(source_units):
+        end = min(start + max_units_per_scene, len(source_units))
+        segments.append(source_units[start:end])
+        start = end
+
+    expected_ids = [unit.id for unit in source_units]
+    actual_ids = [unit.id for segment in segments for unit in segment]
+    if actual_ids != expected_ids:
+        raise RuntimeError("服务端场景分段未按原始顺序完整覆盖 source unit")
+    return segments
 
 
 @dataclass
@@ -328,59 +381,6 @@ def _is_generic_character_alias(alias: str) -> bool:
     return _normalize_character_key(alias) in GENERIC_CHARACTER_ALIASES
 
 
-def _is_cjk_spoken_character(char: str) -> bool:
-    """Match the Han, Japanese, and Hangul scripts used by the speech rule."""
-
-    code_point = ord(char)
-    return (
-        0x3400 <= code_point <= 0x4DBF
-        or 0x4E00 <= code_point <= 0x9FFF
-        or 0xF900 <= code_point <= 0xFAFF
-        or 0x20000 <= code_point <= 0x2FA1F
-        or 0x3040 <= code_point <= 0x309F
-        or 0x30A0 <= code_point <= 0x30FF
-        or 0x31F0 <= code_point <= 0x31FF
-        or 0x1100 <= code_point <= 0x11FF
-        or 0x3130 <= code_point <= 0x318F
-        or 0xA960 <= code_point <= 0xA97F
-        or 0xAC00 <= code_point <= 0xD7AF
-        or 0xD7B0 <= code_point <= 0xD7FF
-    )
-
-
-def _count_cjk_characters(text: str) -> int:
-    return sum(1 for char in (text or "") if _is_cjk_spoken_character(char))
-
-
-def _count_non_cjk_words(text: str) -> int:
-    count = 0
-    inside_word = False
-    for char in text or "":
-        if _is_cjk_spoken_character(char):
-            inside_word = False
-            continue
-        connector = char in ("'", "\u2019", "-")
-        word_character = char.isalnum() or (inside_word and connector)
-        if word_character and not inside_word:
-            count += 1
-        inside_word = word_character
-    return count
-
-
-def _validate_dialogue_duration(line: str, duration_ms: int, shot_path: str) -> None:
-    cjk_chars = _count_cjk_characters(line)
-    non_cjk_words = _count_non_cjk_words(line)
-    required_seconds = cjk_chars / SPOKEN_CJK_CHARACTERS_PER_SECOND + non_cjk_words / SPOKEN_WORDS_PER_SECOND
-    required_ms = math.ceil(required_seconds * 1000)
-    available_ms = max(0, duration_ms - DIALOGUE_ACTION_RESERVE_MS)
-    if required_ms > available_ms:
-        raise ValueError(
-            f"{shot_path} 对白无法在镜头时长内自然说完：中文/日韩字符 "
-            f"{cjk_chars}，其他语言词数 {non_cjk_words}，粗估需要 {required_ms}ms，"
-            f"可用 {available_ms}ms"
-        )
-
-
 def _sanitize_character_aliases(aliases: Any) -> list[str]:
     if not aliases:
         return []
@@ -450,6 +450,177 @@ def _first_non_blank(*values: Any) -> str:
         if text:
             return text
     return ""
+
+
+def _infer_missing_characters_from_scenes(document: dict) -> None:
+    """Add minimal identities for named people omitted by chapter planning.
+
+    Scene generation sees the assigned source text and can legitimately discover
+    supporting characters that the compact planning response missed.  Keeping
+    this reconciliation deterministic avoids asking the model to rewrite an
+    otherwise valid scene merely to repeat that character in the chapter list.
+    """
+
+    characters = document.get("characters")
+    scenes = document.get("scenes")
+    if not isinstance(characters, list) or not isinstance(scenes, list):
+        return
+
+    known_keys: set[str] = set()
+    for character in characters:
+        if not isinstance(character, dict):
+            continue
+        for value in (
+            character.get("name"),
+            character.get("characterCode"),
+            character.get("character_code"),
+        ):
+            key = _normalize_character_key(str(value or ""))
+            if key:
+                known_keys.add(key)
+        for alias in _sanitize_character_aliases(character.get("aliases")):
+            key = _normalize_character_key(alias)
+            if key:
+                known_keys.add(key)
+
+    candidates: dict[str, dict[str, Any]] = {}
+
+    def collect(raw_character: Any, path: str, context: Any = "") -> None:
+        metadata = raw_character if isinstance(raw_character, dict) else {}
+        name = _first_non_blank(
+            metadata.get("name"),
+            metadata.get("characterName"),
+            metadata.get("speaker"),
+            raw_character if not isinstance(raw_character, dict) else None,
+            metadata.get("characterCode"),
+        )
+        name_key = _normalize_character_key(name)
+        if not name_key or name_key in known_keys or _is_generic_character_alias(name):
+            return
+
+        character_code = _first_non_blank(
+            metadata.get("characterCode"),
+            metadata.get("character_code"),
+        )
+        code_key = _normalize_character_key(character_code)
+        if code_key and code_key in known_keys:
+            return
+
+        candidate = candidates.setdefault(
+            name_key,
+            {
+                "name": name,
+                "metadata": {},
+                "contexts": [],
+                "paths": [],
+            },
+        )
+        candidate["paths"].append(path)
+        context_text = re.sub(r"\s+", " ", str(context or "")).strip()
+        if context_text and context_text not in candidate["contexts"]:
+            candidate["contexts"].append(context_text)
+        for field_name in (
+            "characterCode",
+            "aliases",
+            "gender",
+            "ageRange",
+            "appearance",
+            "personality",
+            "speakingStyle",
+            "visualPromptBase",
+        ):
+            value = metadata.get(field_name)
+            if value not in (None, "", [], {}) and field_name not in candidate["metadata"]:
+                candidate["metadata"][field_name] = value
+
+    for scene_index, scene in enumerate(scenes, start=1):
+        if not isinstance(scene, dict):
+            continue
+        scene_path = f"场景{scene_index}"
+        scene_context = " | ".join(
+            filter(
+                None,
+                (
+                    str(scene.get("location", "")).strip(),
+                    str(scene.get("dramaticGoal", "")).strip(),
+                    str(scene.get("atmosphere", "")).strip(),
+                ),
+            )
+        )
+        for character_index, raw_character in enumerate(scene.get("characters", []), start=1):
+            collect(raw_character, f"{scene_path}-人物{character_index}", scene_context)
+        for dialogue_index, dialogue in enumerate(scene.get("dialogues", []), start=1):
+            if isinstance(dialogue, dict):
+                collect(
+                    {"speaker": dialogue.get("speaker")},
+                    f"{scene_path}-对白{dialogue_index}",
+                    dialogue.get("line"),
+                )
+        for shot_index, shot in enumerate(scene.get("shots", []), start=1):
+            if not isinstance(shot, dict):
+                continue
+            shot_path = f"{scene_path}-镜头{shot_index}"
+            shot_context = " | ".join(
+                filter(
+                    None,
+                    (
+                        str(shot.get("narrativeBeat", "")).strip(),
+                        str(shot.get("action", "")).strip(),
+                        str(shot.get("keyframePrompt", "")).strip(),
+                    ),
+                )
+            )
+            raw_characters = shot.get("characters")
+            if isinstance(raw_characters, list):
+                for character_index, raw_character in enumerate(raw_characters, start=1):
+                    collect(
+                        raw_character,
+                        f"{shot_path}-人物{character_index}",
+                        shot_context,
+                    )
+            raw_dialogues = shot.get("dialogues")
+            if isinstance(raw_dialogues, dict):
+                raw_dialogues = [raw_dialogues]
+            if isinstance(raw_dialogues, list):
+                for dialogue_index, dialogue in enumerate(raw_dialogues, start=1):
+                    if isinstance(dialogue, dict) and dialogue.get("speaker"):
+                        collect(
+                            {"speaker": dialogue.get("speaker")},
+                            f"{shot_path}-对白{dialogue_index}",
+                            dialogue.get("line"),
+                        )
+
+    for candidate in candidates.values():
+        metadata = candidate["metadata"]
+        name = candidate["name"]
+        context = " | ".join(candidate["contexts"][:3])
+        appearance = _first_non_blank(metadata.get("appearance"))
+        visual_prompt_base = _first_non_blank(
+            metadata.get("visualPromptBase"),
+            appearance,
+            (
+                f"Consistent supporting character identity for {name}; preserve the same face, "
+                "hairstyle, body proportions, clothing, colors, and accessories across shots."
+            ),
+        )
+        if context and not metadata.get("visualPromptBase") and not appearance:
+            visual_prompt_base += " Scene evidence: " + context[:500]
+        inferred_character = {
+            "name": name,
+            "aliases": _sanitize_character_aliases(metadata.get("aliases")),
+            "gender": _first_non_blank(metadata.get("gender")),
+            "ageRange": _first_non_blank(metadata.get("ageRange")),
+            "appearance": appearance,
+            "personality": metadata.get("personality", ""),
+            "speakingStyle": _first_non_blank(metadata.get("speakingStyle")),
+            "visualPromptBase": visual_prompt_base,
+            "inferredFromSceneReferences": True,
+            "inferenceSourcePaths": candidate["paths"],
+        }
+        character_code = _first_non_blank(metadata.get("characterCode"))
+        if character_code:
+            inferred_character["characterCode"] = character_code
+        characters.append(inferred_character)
 
 
 def _canonicalize_dialogue_fields(dialogue: dict) -> None:
@@ -567,7 +738,6 @@ def _normalize_shot_dialogue(
     shot: dict,
     registry: SceneDialogueRegistry,
     used_ids: set[str],
-    duration_ms: int,
     shot_path: str,
 ) -> None:
     raw_dialogues = shot.get("dialogues") or shot.get("dialogue")
@@ -588,56 +758,87 @@ def _normalize_shot_dialogue(
     else:
         raise ValueError(f"{shot_path} dialogues 必须是数组、单个对白对象或对白文本")
 
-    if len(dialogue_items) > 1:
-        raise ValueError(f"{shot_path} 对白超过1句，应拆分为多个镜头")
     if len(dialogue_items) == 0:
         shot["dialogues"] = []
         return
 
-    raw_shot_dialogue = dialogue_items[0]
-    if isinstance(raw_shot_dialogue, dict):
-        shot_dialogue = raw_shot_dialogue
-    elif isinstance(raw_shot_dialogue, str):
-        shot_dialogue = {"line": raw_shot_dialogue.strip()}
-    else:
-        raise ValueError(f"{shot_path} 对白必须是对象或文本")
+    normalized_dialogues: list[dict] = []
+    model_declared_dialogues: list[dict] = []
+    inferred_any = False
+    for dialogue_index, raw_shot_dialogue in enumerate(dialogue_items, start=1):
+        dialogue_path = (
+            f"{shot_path}-对白{dialogue_index}"
+            if len(dialogue_items) > 1
+            else f"{shot_path} 对白"
+        )
+        if isinstance(raw_shot_dialogue, dict):
+            shot_dialogue = dict(raw_shot_dialogue)
+        elif isinstance(raw_shot_dialogue, str):
+            shot_dialogue = {"line": raw_shot_dialogue.strip()}
+        else:
+            raise ValueError(f"{dialogue_path} 必须是对象或文本")
 
-    _canonicalize_dialogue_fields(shot_dialogue)
-    referenced_id = str(shot_dialogue.get("dialogueId", "")).strip()
-    canonical_dialogue: Optional[dict] = None
-    inferred = False
+        _canonicalize_dialogue_fields(shot_dialogue)
+        referenced_id = str(shot_dialogue.get("dialogueId", "")).strip()
+        canonical_dialogue: Optional[dict] = None
+        inferred = False
 
-    if referenced_id:
-        if referenced_id in registry.ambiguous_reference_ids:
-            raise ValueError(f"{shot_path} 的 dialogueId 在模型ID与规范ID之间存在歧义：{referenced_id}")
-        canonical_dialogue = registry.by_model_id.get(referenced_id) or registry.by_canonical_id.get(referenced_id)
+        if referenced_id:
+            if referenced_id in registry.ambiguous_reference_ids:
+                raise ValueError(
+                    f"{dialogue_path} 的 dialogueId 在模型ID与规范ID之间存在歧义：{referenced_id}"
+                )
+            canonical_dialogue = (
+                registry.by_model_id.get(referenced_id)
+                or registry.by_canonical_id.get(referenced_id)
+            )
+            if canonical_dialogue is None:
+                raise ValueError(
+                    f"{dialogue_path} 引用了不属于当前场景的 dialogueId：{referenced_id}"
+                )
+        else:
+            canonical_dialogue = _resolve_shot_dialogue_by_content(
+                shot_dialogue,
+                registry,
+                dialogue_path,
+                missing_reference_id=True,
+            )
+            inferred = canonical_dialogue is not None
+
+            if canonical_dialogue is None:
+                remaining_dialogues = [
+                    dialogue
+                    for dialogue in registry.dialogues
+                    if dialogue.get("dialogueId", "") not in used_ids
+                ]
+                if remaining_dialogues:
+                    canonical_dialogue = remaining_dialogues[0]
+                    inferred = True
+                    if len(remaining_dialogues) == 1:
+                        shot["dialogueReferenceInferredFromOnlyRemaining"] = True
+                    else:
+                        shot["dialogueReferenceInferredByOrder"] = True
+                    model_declared_dialogues.append(dict(shot_dialogue))
+
         if canonical_dialogue is None:
-            raise ValueError(f"{shot_path} 引用了不属于当前场景的 dialogueId：{referenced_id}")
-    else:
-        canonical_dialogue = _resolve_shot_dialogue_by_content(
-            shot_dialogue,
-            registry,
-            shot_path,
-            missing_reference_id=True,
-        )
-        inferred = canonical_dialogue is not None
+            raise ValueError(
+                f"{dialogue_path} 缺少 dialogueId，且无法根据 speaker + line 唯一匹配当前场景对白"
+            )
 
-    if canonical_dialogue is None:
-        raise ValueError(
-            f"{shot_path} 对白缺少 dialogueId，且无法根据 speaker + line 唯一匹配当前场景对白"
-        )
+        canonical_id = canonical_dialogue.get("dialogueId", "")
+        if canonical_id in used_ids:
+            raise ValueError(f"{dialogue_path} 重复引用 dialogueId：{canonical_id}")
+        used_ids.add(canonical_id)
+        normalized_dialogues.append(canonical_dialogue.copy())
+        inferred_any = inferred_any or inferred
 
-    canonical_id = canonical_dialogue.get("dialogueId", "")
-    if canonical_id in used_ids:
-        raise ValueError(f"{shot_path} 重复引用 dialogueId：{canonical_id}")
-    used_ids.add(canonical_id)
-
-    line_text = canonical_dialogue.get("line", "")
-    _validate_dialogue_duration(line_text, duration_ms, shot_path)
-
-    shot["dialogues"] = [canonical_dialogue.copy()]
-    if inferred:
+    shot["dialogues"] = normalized_dialogues
+    if inferred_any:
         shot["dialogueReferenceInferred"] = True
+    if len(model_declared_dialogues) == 1 and len(dialogue_items) == 1:
+        shot["modelDeclaredDialogue"] = model_declared_dialogues[0]
+    elif model_declared_dialogues:
+        shot["modelDeclaredDialogues"] = model_declared_dialogues
 
 
 def _materialize_character_reference_order(
@@ -647,8 +848,8 @@ def _materialize_character_reference_order(
 ) -> None:
     """Mirror the exact character-reference order materialized by Java.
 
-    Java sends visible ``shot.characters`` first and then adds the speaker of
-    the shot dialogue when that identity is not already present.  Persisting
+    Java sends visible ``shot.characters`` first and then adds the speakers of
+    the shot dialogues when those identities are not already present. Persisting
     this canonical order lets the keyframe prompt number the same images that
     the media gateway will actually receive.
     """
@@ -965,6 +1166,7 @@ def validate_and_normalize_prompt_contract(
     _preserve_model_declared_value(video_plan, "sourceUnitCount", "modelDeclaredSourceUnitCount")
     _preserve_model_declared_value(video_plan, "minimumShotCount", "modelDeclaredMinimumShotCount")
 
+    _infer_missing_characters_from_scenes(document)
     characters = document.get("characters", [])
     identity_owner_by_key: dict[str, str] = {}
     for idx, character in enumerate(characters):
@@ -1067,7 +1269,7 @@ def validate_and_normalize_prompt_contract(
             for field_name in ["narrativeBeat", "shotSize", "cameraMovement", "composition", "action", "emotion",
                                "keyframePrompt", "imageNegativePrompt", "videoPrompt", "videoNegativePrompt"]:
                 _require_text(shot, field_name, shot_path)
-            _normalize_shot_dialogue(shot, dialogue_registry, used_dialogue_ids, duration_ms, shot_path)
+            _normalize_shot_dialogue(shot, dialogue_registry, used_dialogue_ids, shot_path)
             _materialize_character_reference_order(shot, identity_owner_by_key, shot_path)
 
         scene["sourceParagraphFrom"] = scene_paragraph_from

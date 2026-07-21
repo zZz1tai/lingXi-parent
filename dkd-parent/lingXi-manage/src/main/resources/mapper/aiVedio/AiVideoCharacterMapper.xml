@@ -37,13 +37,15 @@
                or exists (
                     select 1
                     from json_table(coalesce(aliases_json, json_array()), '$[*]'
-                         columns(alias_value varchar(255) path '$')) existing_alias
+                         columns(alias_value varchar(255) character set utf8mb4
+                                 collate utf8mb4_unicode_ci path '$')) existing_alias
                     where lower(trim(existing_alias.alias_value)) = lower(trim(#{characterName}))
                )
                or exists (
                     select 1
                     from json_table(cast(#{aliasesJson} as json), '$[*]'
-                         columns(alias_value varchar(255) path '$')) incoming_alias
+                         columns(alias_value varchar(255) character set utf8mb4
+                                 collate utf8mb4_unicode_ci path '$')) incoming_alias
                     where lower(trim(incoming_alias.alias_value)) = lower(trim(character_name))
                ))
         order by case when character_code = #{characterCode} then 0

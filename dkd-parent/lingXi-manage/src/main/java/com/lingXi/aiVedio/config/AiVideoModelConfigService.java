@@ -18,7 +18,7 @@ import com.lingXi.system.service.ISysConfigService;
 
 /**
  * 从 sys_config 读取 AI 生产链路的运行时配置。
- * 数据库是唯一配置源；API Key 以 AES-GCM 密文保存，接口只返回掩码。
+ * 数据库是唯一配置源；API Key 仅在专用接口中以掩码返回。
  */
 @Service
 public class AiVideoModelConfigService
@@ -39,8 +39,6 @@ public class AiVideoModelConfigService
 
     @Autowired
     private ISysConfigService sysConfigService;
-    @Autowired
-    private AiVideoSecretCipher secretCipher;
     @Autowired
     private AiVideoProviderProperties videoProviderProperties;
 
@@ -72,21 +70,10 @@ public class AiVideoModelConfigService
         {
             throw new ServiceException("请填写 API Key");
         }
-        String encryptedReplacementApiKey = null;
+        upsert(KEY_WORKSPACE_BASE_URL, "AI视频-业务空间地址", normalized.getWorkspaceBaseUrl(), username);
         if (replacementApiKey != null)
         {
-            // 在任何数据库或 Redis 写入之前验证主密钥并完成加密，避免失败时留下脏缓存。
-            encryptedReplacementApiKey = secretCipher.encrypt(replacementApiKey);
-        }
-        else
-        {
-            // 不更换 Key 时也先验证当前密文能被部署环境中的主密钥解开。
-            secretCipher.decrypt(storedApiKey);
-        }
-        upsert(KEY_WORKSPACE_BASE_URL, "AI视频-业务空间地址", normalized.getWorkspaceBaseUrl(), username);
-        if (encryptedReplacementApiKey != null)
-        {
-            upsert(KEY_API_KEY, "AI服务-API Key（密文）", encryptedReplacementApiKey, username);
+            upsert(KEY_API_KEY, "AI服务-API Key（敏感）", replacementApiKey, username);
         }
         upsert(KEY_TEXT_MODEL, "AI视频-章节分析模型", normalized.getTextModel(), username);
         upsert(KEY_IMAGE_MODEL, "AI视频-图片生成模型", normalized.getImageModel(), username);
@@ -109,16 +96,15 @@ public class AiVideoModelConfigService
         config.setVideoResolution(read(KEY_VIDEO_RESOLUTION));
         config.setVideoRatio(read(KEY_VIDEO_RATIO));
         config.setVideoWatermark(parseBoolean(read(KEY_VIDEO_WATERMARK)));
-        String encryptedApiKey = read(KEY_API_KEY);
-        boolean apiKeyConfigured = StringUtils.isNotEmpty(encryptedApiKey);
+        String storedApiKey = read(KEY_API_KEY);
+        boolean apiKeyConfigured = StringUtils.isNotEmpty(storedApiKey);
         config.setApiKeyConfigured(Boolean.valueOf(apiKeyConfigured));
         if (apiKeyConfigured)
         {
-            String apiKey = secretCipher.decrypt(encryptedApiKey);
-            config.setApiKeyMasked(maskApiKey(apiKey));
+            config.setApiKeyMasked(maskApiKey(storedApiKey));
             if (includeSecret)
             {
-                config.setApiKey(apiKey);
+                config.setApiKey(storedApiKey);
             }
         }
         return config;
@@ -290,7 +276,7 @@ public class AiVideoModelConfigService
             created.setConfigName(name);
             created.setConfigKey(key);
             created.setConfigValue(value);
-            created.setConfigType("N");
+            created.setConfigType(KEY_API_KEY.equals(key) ? "Y" : "N");
             created.setCreateBy(username);
             created.setRemark("AI视频模型配置页面维护");
             if (sysConfigService.insertConfig(created) != 1)
@@ -301,7 +287,7 @@ public class AiVideoModelConfigService
         }
         existing.setConfigName(name);
         existing.setConfigValue(value);
-        existing.setConfigType("N");
+        existing.setConfigType(KEY_API_KEY.equals(key) ? "Y" : "N");
         existing.setUpdateBy(username);
         if (sysConfigService.updateConfig(existing) != 1)
         {

@@ -1029,11 +1029,11 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         }
         KeyframeReferenceOverride override = new KeyframeReferenceOverride(
                 sceneReference, characterReferences);
-        validateReferenceVersionIdentities(source, override);
+        validateReferenceSceneIdentity(source, override);
         return override;
     }
 
-    private void validateReferenceVersionIdentities(AiVideoAsset keyframe,
+    private void validateReferenceSceneIdentity(AiVideoAsset keyframe,
             KeyframeReferenceOverride binding)
     {
         if (keyframe.getSceneId() == null
@@ -1041,45 +1041,6 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         {
             throw new ServiceException("场景参考图必须属于当前分镜的同一场景");
         }
-        List<AiVideoAsset> currentCharacters = new ArrayList<>();
-        for (AiVideoAsset current : assetRelationMapper
-                .selectActiveReferenceAssetsByTargetAssetId(keyframe.getAssetId()))
-        {
-            if ("CHARACTER_REFERENCE".equals(current.getAssetType())) currentCharacters.add(current);
-        }
-        if (binding.getCharacterReferences().size() != currentCharacters.size())
-        {
-            throw new ServiceException("只能为当前分镜中的人物切换图片版本，不能增删人物");
-        }
-        List<AiVideoAsset> unmatchedCharacters = new ArrayList<>(currentCharacters);
-        for (AiVideoAsset selected : binding.getCharacterReferences())
-        {
-            int matchedIndex = -1;
-            for (int i = 0; i < unmatchedCharacters.size(); i++)
-            {
-                if (sameCharacterIdentity(unmatchedCharacters.get(i), selected))
-                {
-                    matchedIndex = i;
-                    break;
-                }
-            }
-            if (matchedIndex < 0)
-            {
-                throw new ServiceException("人物参考图只能切换为同一人物的其他版本");
-            }
-            unmatchedCharacters.remove(matchedIndex);
-        }
-    }
-
-    private boolean sameCharacterIdentity(AiVideoAsset current, AiVideoAsset selected)
-    {
-        if (current.getCharacterId() != null || selected.getCharacterId() != null)
-        {
-            return current.getCharacterId() != null
-                    && current.getCharacterId().equals(selected.getCharacterId());
-        }
-        return current.getAssetCode() != null
-                && current.getAssetCode().equals(selected.getAssetCode());
     }
 
     private AiVideoAsset lockAndValidateOverrideReference(AiVideoAsset target,

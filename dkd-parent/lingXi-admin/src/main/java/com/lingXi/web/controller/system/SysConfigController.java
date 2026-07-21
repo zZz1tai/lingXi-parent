@@ -31,6 +31,9 @@ import com.lingXi.system.service.ISysConfigService;
 @RequestMapping("/system/config")
 public class SysConfigController extends BaseController
 {
+    private static final String AI_VIDEO_API_KEY = "aivideo.model.apiKey";
+    private static final String MASKED_SECRET = "******";
+
     @Autowired
     private ISysConfigService configService;
 
@@ -43,6 +46,7 @@ public class SysConfigController extends BaseController
     {
         startPage();
         List<SysConfig> list = configService.selectConfigList(config);
+        maskSensitiveConfigs(list);
         return getDataTable(list);
     }
 
@@ -52,6 +56,7 @@ public class SysConfigController extends BaseController
     public void export(HttpServletResponse response, SysConfig config)
     {
         List<SysConfig> list = configService.selectConfigList(config);
+        maskSensitiveConfigs(list);
         ExcelUtil<SysConfig> util = new ExcelUtil<SysConfig>(SysConfig.class);
         util.exportExcel(response, list, "参数数据");
     }
@@ -63,7 +68,9 @@ public class SysConfigController extends BaseController
     @GetMapping(value = "/{configId}")
     public AjaxResult getInfo(@PathVariable Long configId)
     {
-        return success(configService.selectConfigById(configId));
+        SysConfig config = configService.selectConfigById(configId);
+        maskSensitiveConfig(config);
+        return success(config);
     }
 
     /**
@@ -72,6 +79,10 @@ public class SysConfigController extends BaseController
     @GetMapping(value = "/configKey/{configKey}")
     public AjaxResult getConfigKey(@PathVariable String configKey)
     {
+        if (isSensitiveKey(configKey))
+        {
+            return success(MASKED_SECRET);
+        }
         return success(configService.selectConfigByKey(configKey));
     }
 
@@ -79,10 +90,15 @@ public class SysConfigController extends BaseController
      * 新增参数配置
      */
     @PreAuthorize("@ss.hasPermi('system:config:add')")
-    @Log(title = "参数管理", businessType = BusinessType.INSERT)
+    @Log(title = "参数管理", businessType = BusinessType.INSERT,
+            isSaveRequestData = false)
     @PostMapping
     public AjaxResult add(@Validated @RequestBody SysConfig config)
     {
+        if (isSensitiveKey(config.getConfigKey()))
+        {
+            return error("AI 服务 API Key 只能在 AI 模型配置页面维护");
+        }
         if (!configService.checkConfigKeyUnique(config))
         {
             return error("新增参数'" + config.getConfigName() + "'失败，参数键名已存在");
@@ -95,10 +111,16 @@ public class SysConfigController extends BaseController
      * 修改参数配置
      */
     @PreAuthorize("@ss.hasPermi('system:config:edit')")
-    @Log(title = "参数管理", businessType = BusinessType.UPDATE)
+    @Log(title = "参数管理", businessType = BusinessType.UPDATE,
+            isSaveRequestData = false)
     @PutMapping
     public AjaxResult edit(@Validated @RequestBody SysConfig config)
     {
+        SysConfig existing = configService.selectConfigById(config.getConfigId());
+        if (isSensitiveKey(config.getConfigKey()) || isSensitiveConfig(existing))
+        {
+            return error("AI 服务 API Key 只能在 AI 模型配置页面维护");
+        }
         if (!configService.checkConfigKeyUnique(config))
         {
             return error("修改参数'" + config.getConfigName() + "'失败，参数键名已存在");
@@ -115,6 +137,13 @@ public class SysConfigController extends BaseController
     @DeleteMapping("/{configIds}")
     public AjaxResult remove(@PathVariable Long[] configIds)
     {
+        for (Long configId : configIds)
+        {
+            if (isSensitiveConfig(configService.selectConfigById(configId)))
+            {
+                return error("AI 服务 API Key 只能在 AI 模型配置页面维护");
+            }
+        }
         configService.deleteConfigByIds(configIds);
         return success();
     }
@@ -129,5 +158,32 @@ public class SysConfigController extends BaseController
     {
         configService.resetConfigCache();
         return success();
+    }
+
+    private void maskSensitiveConfigs(List<SysConfig> configs)
+    {
+        if (configs == null) return;
+        for (SysConfig config : configs)
+        {
+            maskSensitiveConfig(config);
+        }
+    }
+
+    private void maskSensitiveConfig(SysConfig config)
+    {
+        if (isSensitiveConfig(config))
+        {
+            config.setConfigValue(MASKED_SECRET);
+        }
+    }
+
+    private boolean isSensitiveConfig(SysConfig config)
+    {
+        return config != null && isSensitiveKey(config.getConfigKey());
+    }
+
+    private boolean isSensitiveKey(String configKey)
+    {
+        return AI_VIDEO_API_KEY.equals(configKey);
     }
 }

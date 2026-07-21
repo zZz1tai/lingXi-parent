@@ -36,6 +36,48 @@ class ChapterAnalysisContractTests(unittest.TestCase):
         self.assertEqual("S1D1", dialogue["dialogueId"])
         self.assertTrue(result["scenes"][0]["shots"][1]["dialogueReferenceInferred"])
 
+    def test_only_remaining_dialogue_is_bound_when_model_omits_usable_reference(self) -> None:
+        document = cloned_story_bible()
+        shot = document["scenes"][0]["shots"][1]
+        shot["dialogues"] = [{"line": "模型输出了无法精确匹配的略写对白"}]
+
+        result = validate_document(document, source_units())
+
+        normalized_shot = result["scenes"][0]["shots"][1]
+        self.assertEqual("S1D1", normalized_shot["dialogues"][0]["dialogueId"])
+        self.assertTrue(normalized_shot["dialogueReferenceInferred"])
+        self.assertTrue(normalized_shot["dialogueReferenceInferredFromOnlyRemaining"])
+        self.assertEqual(
+            "模型输出了无法精确匹配的略写对白",
+            normalized_shot["modelDeclaredDialogue"]["line"],
+        )
+
+    def test_multiple_remaining_dialogues_fall_back_to_narrative_order(self) -> None:
+        document = cloned_story_bible()
+        document["scenes"][0]["dialogues"].append(
+            {
+                "dialogueId": "model-dialogue-2",
+                "speaker": "陈默",
+                "line": "早上好。",
+                "emotion": "平静",
+                "action": "回应",
+            }
+        )
+        document["scenes"][0]["shots"][0]["dialogues"] = [
+            {"line": "无法匹配任何候选对白"}
+        ]
+        document["scenes"][0]["shots"][1]["dialogues"] = [
+            {"dialogueId": "model-dialogue-2"}
+        ]
+
+        result = validate_document(document, source_units())
+
+        first_shot = result["scenes"][0]["shots"][0]
+        second_shot = result["scenes"][0]["shots"][1]
+        self.assertEqual("S1D1", first_shot["dialogues"][0]["dialogueId"])
+        self.assertEqual("S1D2", second_shot["dialogues"][0]["dialogueId"])
+        self.assertTrue(first_shot["dialogueReferenceInferredByOrder"])
+
     def test_explicit_unknown_dialogue_id_fails(self) -> None:
         document = cloned_story_bible()
         document["scenes"][0]["shots"][1]["dialogues"] = [
@@ -98,12 +140,40 @@ class ChapterAnalysisContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "每句对白必须恰好分配"):
             validate_document(document, source_units())
 
-    def test_dialogue_duration_is_strict_and_counts_hangul(self) -> None:
+    def test_multiple_dialogues_in_one_shot_are_preserved(self) -> None:
         document = cloned_story_bible()
-        document["scenes"][0]["dialogues"][0]["line"] = "가" * 11
+        scene = document["scenes"][0]
+        scene["dialogues"].append(
+            {
+                "dialogueId": "model-dialogue-2",
+                "speaker": "陈默",
+                "line": "欢迎。",
+                "emotion": "友好",
+                "action": "回应",
+            }
+        )
+        scene["shots"][1]["dialogues"] = [
+            {"dialogueId": "model-dialogue-1"},
+            {"dialogueId": "model-dialogue-2"},
+        ]
 
-        with self.assertRaisesRegex(ValueError, "对白无法在镜头时长内自然说完"):
-            validate_document(document, source_units())
+        result = validate_document(document, source_units())
+
+        normalized_shot = result["scenes"][0]["shots"][1]
+        self.assertEqual(
+            ["S1D1", "S1D2"],
+            [dialogue["dialogueId"] for dialogue in normalized_shot["dialogues"]],
+        )
+        self.assertEqual(["林夏", "陈默"], normalized_shot["characterReferenceOrder"])
+
+    def test_dialogue_duration_is_advisory(self) -> None:
+        document = cloned_story_bible()
+        long_line = "这句对白即使按照粗略语速估算超过镜头时长也不应导致整章分析失败"
+        document["scenes"][0]["dialogues"][0]["line"] = long_line
+
+        result = validate_document(document, source_units())
+
+        self.assertEqual(long_line, result["scenes"][0]["shots"][1]["dialogues"][0]["line"])
 
     def test_shot_duration_is_normalized_for_configured_video_model(self) -> None:
         document = cloned_story_bible()
@@ -178,6 +248,25 @@ class ChapterAnalysisContractTests(unittest.TestCase):
         self.assertIn("Reference image 2: identity reference for 林夏", normalized_shot["keyframePrompt"])
         self.assertIn("Reference image 3: scene environment", normalized_shot["keyframePrompt"])
         self.assertIn("Visible characters: 陈默.", normalized_shot["keyframePrompt"])
+
+    def test_named_visible_character_missing_from_plan_is_inferred(self) -> None:
+        document = cloned_story_bible()
+        shot = document["scenes"][0]["shots"][0]
+        shot["characters"] = ["林夏", "周元"]
+
+        result = validate_document(document, source_units())
+
+        inferred = next(
+            character
+            for character in result["characters"]
+            if character["name"] == "周元"
+        )
+        normalized_shot = result["scenes"][0]["shots"][0]
+        self.assertTrue(inferred["inferredFromSceneReferences"])
+        self.assertTrue(inferred["visualPromptBase"])
+        self.assertIn("Professional character reference sheet", inferred["characterReferencePrompt"])
+        self.assertEqual(["林夏", "周元"], normalized_shot["characters"])
+        self.assertEqual(["林夏", "周元"], normalized_shot["characterReferenceOrder"])
 
     def test_missing_character_and_scene_prompts_use_deterministic_fallbacks(self) -> None:
         document = cloned_story_bible()

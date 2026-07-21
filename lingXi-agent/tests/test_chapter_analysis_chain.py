@@ -114,7 +114,7 @@ class EndlessStreamingModel(Runnable[Any, str]):
 
 
 class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
-    def test_scene_prompts_include_explicit_dialogue_character_limits(self) -> None:
+    def test_scene_prompts_treat_dialogue_timing_as_guidance(self) -> None:
         prompt_values = {
             "chapter_context": "{}",
             "characters": "[]",
@@ -135,10 +135,10 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         for prompt_text in prompt_texts:
-            self.assertIn("3000ms allows at most 10", prompt_text)
-            self.assertIn("4000ms at most 14", prompt_text)
-            self.assertIn("5000ms at most 18", prompt_text)
-            self.assertIn("splitting it into multiple scene dialogues", prompt_text)
+            self.assertIn("soft pacing guideline, not an output contract", prompt_text)
+            self.assertIn("Never truncate or distort important dialogue", prompt_text)
+            self.assertIn("multiple references in narrative order are allowed", prompt_text)
+            self.assertNotIn("hard contract", prompt_text)
 
     async def test_continuous_stream_is_cancelled_by_wall_clock_deadline(self) -> None:
         model = EndlessStreamingModel()
@@ -241,18 +241,7 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
             SourceUnit(id="U4", order=4, paragraph_no=2, text="阳光照进房间。"),
         ]
         plan = chapter_plan()
-        first_scene_plan = deepcopy(plan["scenes"][0])
-        first_scene_plan["sourceUnitIds"] = ["U1", "U2"]
-        second_scene_plan = deepcopy(first_scene_plan)
-        second_scene_plan.update(
-            {
-                "sceneNo": 2,
-                "title": "窗边晨光",
-                "time": "清晨",
-                "sourceUnitIds": ["U3", "U4"],
-            }
-        )
-        plan["scenes"] = [first_scene_plan, second_scene_plan]
+        plan["sceneBreaks"] = ["U2", "U4"]
 
         first_scene = generated_scene()
         second_scene = deepcopy(first_scene)
@@ -285,14 +274,12 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, len(result.story_bible["scenes"]))
         self.assertEqual(4, result.story_bible["videoPlan"]["shotCount"])
 
-    async def test_invalid_source_partition_repairs_the_plan_before_scene_generation(self) -> None:
-        invalid_plan = chapter_plan()
-        invalid_plan["scenes"][0]["sourceUnitIds"] = ["U1"]
-        valid_plan = chapter_plan()
+    async def test_missing_final_scene_break_is_completed_without_plan_repair(self) -> None:
+        incomplete_plan = chapter_plan()
+        incomplete_plan["sceneBreaks"] = []
         valid_scene = generated_scene()
         model = StreamingOnlyResponseSequence(
-            json.dumps(invalid_plan, ensure_ascii=False),
-            json.dumps(valid_plan, ensure_ascii=False),
+            json.dumps(incomplete_plan, ensure_ascii=False),
             json.dumps(valid_scene, ensure_ascii=False),
         )
         chain = build_chapter_analysis_chain(model)
@@ -307,9 +294,10 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
             progress_callback=report,
         )
 
-        self.assertEqual(1, result.repair_count)
-        self.assertIn("PLANNING_REPAIR", [stage for stage, _, _ in events])
-        self.assertEqual(3, model.stream_calls)
+        self.assertEqual(0, result.repair_count)
+        self.assertNotIn("PLANNING_REPAIR", [stage for stage, _, _ in events])
+        self.assertEqual(2, model.stream_calls)
+        self.assertEqual(2, result.story_bible["videoPlan"]["sourceUnitCount"])
 
     async def test_final_dialogue_duration_error_repairs_only_the_target_scene(self) -> None:
         valid_plan = json.dumps(chapter_plan(), ensure_ascii=False)
@@ -344,54 +332,153 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("shots", invalid_scene)
         self.assertNotIn("videoPlan", invalid_scene)
 
-    async def test_failed_dialogue_local_repairs_never_fall_back_to_whole_document(self) -> None:
+    async def test_long_dialogue_does_not_trigger_repair(self) -> None:
         valid_plan = json.dumps(chapter_plan(), ensure_ascii=False)
-        valid_scene = json.dumps(generated_scene(), ensure_ascii=False)
         overlong_scene = generated_scene()
-        overlong_scene["dialogues"][0]["line"] = "这是一句确定无法在五秒镜头中自然完整说完的超长对白内容"
+        long_line = "这是一句按照粗略语速估算无法在五秒镜头中自然完整说完但仍应保留的超长对白内容"
+        overlong_scene["dialogues"][0]["line"] = long_line
         overlong_response = json.dumps(overlong_scene, ensure_ascii=False)
         chain = build_chapter_analysis_chain(StreamingOnlyResponseSequence("unused"))
+        collector = AsyncMock(side_effect=[valid_plan, overlong_response])
+
+        with patch.object(chain, "_collect_stream", collector):
+            result = await chain.ainvoke("contract", source_units())
+
+        self.assertEqual(0, result.repair_count)
+        self.assertEqual(2, collector.await_count)
+        self.assertEqual(
+            long_line,
+            result.story_bible["scenes"][0]["shots"][1]["dialogues"][0]["line"],
+        )
+
+    async def test_multiple_dialogues_in_one_shot_do_not_trigger_repair(self) -> None:
+        valid_plan = json.dumps(chapter_plan(), ensure_ascii=False)
+        scene = generated_scene()
+        scene["dialogues"].append(
+            {
+                "dialogueId": "model-dialogue-2",
+                "speaker": "陈默",
+                "line": "欢迎。",
+                "emotion": "友好",
+                "action": "回应",
+            }
+        )
+        scene["shots"][1]["dialogues"] = [
+            {"dialogueId": "model-dialogue-1"},
+            {"dialogueId": "model-dialogue-2"},
+        ]
         collector = AsyncMock(
-            side_effect=[
-                valid_plan,
-                valid_scene,
-                overlong_response,
-                overlong_response,
-            ]
+            side_effect=[valid_plan, json.dumps(scene, ensure_ascii=False)]
         )
-        dialogue_error = chapter_analysis_module._ContractValidationError(
-            "场景1-镜头2 对白无法在镜头时长内自然说完：中文/日韩字符 23，"
-            "其他语言词数 0，粗估需要 5750ms，可用 4500ms",
-            "assembled-response",
+        chain = build_chapter_analysis_chain(StreamingOnlyResponseSequence("unused"))
+
+        with patch.object(chain, "_collect_stream", collector):
+            result = await chain.ainvoke("contract", source_units())
+
+        self.assertEqual(0, result.repair_count)
+        self.assertEqual(2, collector.await_count)
+        self.assertEqual(
+            ["S1D1", "S1D2"],
+            [
+                dialogue["dialogueId"]
+                for dialogue in result.story_bible["scenes"][0]["shots"][1]["dialogues"]
+            ],
         )
 
-        with (
-            patch.object(chain, "_collect_stream", collector),
-            patch.object(chain, "_parse_and_validate", side_effect=[dialogue_error]),
-            self.assertRaisesRegex(ChapterAnalysisOutputError, "局部修复仍不符合契约"),
-        ):
-            await chain.ainvoke("contract", source_units())
-
-        self.assertEqual(4, collector.await_count)
-        self.assertTrue(
-            all(call.args[0] is not chain._repair_chain for call in collector.await_args_list)
+    async def test_named_scene_character_missing_from_plan_does_not_trigger_repair(self) -> None:
+        valid_plan = json.dumps(chapter_plan(), ensure_ascii=False)
+        scene = generated_scene()
+        scene["shots"][0]["characters"] = ["林夏", "周元"]
+        collector = AsyncMock(
+            side_effect=[valid_plan, json.dumps(scene, ensure_ascii=False)]
         )
-        self.assertIs(chain._scene_repair_chain, collector.await_args_list[2].args[0])
-        self.assertIs(chain._scene_repair_chain, collector.await_args_list[3].args[0])
+        chain = build_chapter_analysis_chain(StreamingOnlyResponseSequence("unused"))
 
-    def test_plan_rejects_a_scene_that_is_too_large_to_split_safely(self) -> None:
+        with patch.object(chain, "_collect_stream", collector):
+            result = await chain.ainvoke("contract", source_units())
+
+        inferred = next(
+            character
+            for character in result.story_bible["characters"]
+            if character["name"] == "周元"
+        )
+        self.assertEqual(0, result.repair_count)
+        self.assertEqual(2, collector.await_count)
+        self.assertTrue(inferred["inferredFromSceneReferences"])
+        self.assertEqual(
+            ["林夏", "周元"],
+            result.story_bible["scenes"][0]["shots"][0]["characterReferenceOrder"],
+        )
+
+    def test_plan_splits_an_oversized_semantic_scene_deterministically(self) -> None:
         units = [
             SourceUnit(id=f"U{index}", order=index, paragraph_no=index, text=f"事件{index}")
             for index in range(1, 14)
         ]
         plan = chapter_plan()
-        plan["scenes"][0]["sourceUnitIds"] = [unit.id for unit in units]
+        plan["sceneBreaks"] = ["U13"]
         chain = build_chapter_analysis_chain(StreamingOnlyResponseSequence("unused"))
 
-        with self.assertRaises(chapter_analysis_module._ContractValidationError):
-            chain._parse_and_validate_plan(
-                json.dumps(plan, ensure_ascii=False),
+        parsed = chain._parse_and_validate_plan(
+            json.dumps(plan, ensure_ascii=False),
+            units,
+        )
+
+        self.assertEqual([12, 1], [len(scene["sourceUnitIds"]) for scene in parsed["scenes"]])
+        self.assertEqual(
+            [unit.id for unit in units],
+            [source_id for scene in parsed["scenes"] for source_id in scene["sourceUnitIds"]],
+        )
+
+    def test_plan_that_stops_at_u62_still_covers_through_u70(self) -> None:
+        units = [
+            SourceUnit(id=f"U{index}", order=index, paragraph_no=index, text=f"事件{index}")
+            for index in range(1, 71)
+        ]
+        plan = chapter_plan()
+        plan["sceneBreaks"] = ["U12", "U24", "U36", "U48", "U62"]
+        chain = build_chapter_analysis_chain(StreamingOnlyResponseSequence("unused"))
+
+        parsed = chain._parse_and_validate_plan(
+            json.dumps(plan, ensure_ascii=False),
+            units,
+        )
+
+        assigned_ids = [
+            source_id
+            for scene in parsed["scenes"]
+            for source_id in scene["sourceUnitIds"]
+        ]
+        self.assertEqual([unit.id for unit in units], assigned_ids)
+        self.assertEqual("U70", parsed["scenes"][-1]["sourceUnitIds"][-1])
+        self.assertTrue(
+            all(len(scene["sourceUnitIds"]) <= 12 for scene in parsed["scenes"])
+        )
+
+    def test_local_scene_validation_reports_the_actual_scene_number(self) -> None:
+        units = source_units()
+        chain = build_chapter_analysis_chain(StreamingOnlyResponseSequence("unused"))
+        plan = chain._parse_and_validate_plan(
+            json.dumps(chapter_plan(), ensure_ascii=False),
+            units,
+        )
+        scene_plan = deepcopy(plan["scenes"][0])
+        scene_plan["sceneNo"] = 2
+        invalid_scene = generated_scene()
+        invalid_scene["shots"][1]["dialogues"] = [
+            {"dialogueId": "does-not-exist"}
+        ]
+
+        with self.assertRaisesRegex(
+            chapter_analysis_module._ContractValidationError,
+            "场景2-镜头2",
+        ):
+            chain._parse_and_validate_scene(
+                json.dumps(invalid_scene, ensure_ascii=False),
+                plan,
+                scene_plan,
                 units,
+                "",
             )
 
     async def test_structural_failure_is_repaired_once(self) -> None:

@@ -1,10 +1,13 @@
 <template>
   <div class="studio-page">
     <header class="studio-header">
-      <div>
-        <p class="eyebrow">AI VIDEO STUDIO</p>
-        <h1>小说视频工作台</h1>
-        <p class="subtitle">从章节、人物和场景资产开始组织你的自动化生产流程。</p>
+      <div class="studio-heading">
+        <div class="studio-mark" aria-hidden="true"><span /></div>
+        <div>
+          <p class="eyebrow">AI video studio</p>
+          <h1>小说视频工作台</h1>
+          <p class="subtitle">管理项目、章节与视觉资产，让每一步制作都有清晰去向。</p>
+        </div>
       </div>
       <div class="header-actions">
         <el-button v-hasPermi="['aivideo:project:edit']" size="large" :icon="Connection" @click="router.push('/aiVedio/model-config/index')">
@@ -16,612 +19,122 @@
       </div>
     </header>
 
-    <section class="toolbar">
-      <el-input
-        v-model="queryParams.projectName"
-        clearable
-        placeholder="搜索项目名称"
-        :prefix-icon="Search"
-        @keyup.enter="handleQuery"
+    <div class="studio-shell">
+      <project-rail
+        :projects="projectList"
+        :selected-id="selectedProject?.projectId"
+        :total="total"
+        :loading="loading"
+        v-model:search="queryParams.projectName"
+        v-model:status="queryParams.status"
+        @select="selectProject"
+        @search="handleQuery"
+        @reset="resetQuery"
       />
-      <el-select v-model="queryParams.status" clearable placeholder="全部状态" @change="handleQuery">
-        <el-option label="草稿" value="DRAFT" />
-        <el-option label="制作中" value="ACTIVE" />
-        <el-option label="已暂停" value="PAUSED" />
-        <el-option label="已归档" value="ARCHIVED" />
-      </el-select>
-      <el-button :icon="Refresh" circle @click="resetQuery" />
-    </section>
 
-    <main v-loading="loading" class="project-grid">
-      <article v-for="project in projectList" :key="project.projectId" class="project-card">
-        <div class="card-topline">
-          <span class="ratio">{{ project.defaultAspectRatio || '16:9' }}</span>
-          <el-tag :type="statusTagType(project.status)" effect="dark" round>{{ statusLabel(project.status) }}</el-tag>
-        </div>
-        <div class="poster">
-          <span>{{ project.projectName.slice(0, 1) }}</span>
-          <div class="poster-glow" />
-        </div>
-        <h2>{{ project.projectName }}</h2>
-        <p class="style-line">{{ project.visualStyle || '尚未设定视觉风格' }}</p>
-        <div class="project-meta">
-          <span>{{ project.adaptationMode === 'ADAPTIVE' ? '改编模式' : '忠实模式' }}</span>
-          <span>{{ project.defaultLanguage || 'zh-CN' }}</span>
-          <span>{{ parseTime(project.updateTime, '{y}-{m}-{d}') }}</span>
-        </div>
-        <div class="card-actions">
-          <el-button type="primary" plain @click="openChapterDrawer(project)">章节工作台</el-button>
-          <el-dropdown @command="command => handleProjectCommand(command, project)">
-            <el-button text :icon="MoreFilled" aria-label="项目更多操作" />
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="edit">编辑项目</el-dropdown-item>
-                <el-dropdown-item command="delete" divided>删除项目</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-      </article>
+      <main class="project-workspace">
+        <template v-if="selectedProject">
+          <section class="project-hero">
+            <div class="hero-ambient" aria-hidden="true" />
+            <div class="hero-topline">
+              <span class="project-status"><i :class="`status-${selectedProject.status?.toLowerCase() || 'draft'}`" />{{ statusLabel(selectedProject.status) }}</span>
+              <div class="hero-tools">
+                <el-dropdown @command="command => handleProjectCommand(command, selectedProject)">
+                  <el-button text :icon="MoreFilled" aria-label="项目更多操作" />
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="edit">编辑项目</el-dropdown-item>
+                      <el-dropdown-item command="delete" divided>删除项目</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
+            </div>
 
-      <button v-if="!loading" class="create-card" @click="handleAddProject">
-        <el-icon><Plus /></el-icon>
-        <strong>创建新的影视项目</strong>
-        <span>导入小说章节，建立角色和场景资产</span>
-      </button>
-    </main>
+            <div class="hero-content">
+              <div class="hero-poster">
+                <img v-if="selectedProject.coverUrl" :src="resolveProjectCoverUrl(selectedProject.coverUrl)" :alt="`${selectedProject.projectName}项目封面`" />
+                <span v-else aria-hidden="true">{{ selectedProject.projectName.slice(0, 1) }}</span>
+              </div>
+              <div class="hero-copy">
+                <p>当前项目</p>
+                <h2>{{ selectedProject.projectName }}</h2>
+                <span>{{ selectedProject.visualStyle || '尚未设定视觉风格，可在项目设置中补充。' }}</span>
+                <div class="hero-meta">
+                  <span>{{ selectedProject.defaultLanguage || 'zh-CN' }}</span>
+                  <span>更新于 {{ parseTime(selectedProject.updateTime, '{y}-{m}-{d}') }}</span>
+                </div>
+              </div>
+            </div>
 
-    <pagination
-      v-show="total > 0"
-      :total="total"
-      v-model:page="queryParams.pageNum"
-      v-model:limit="queryParams.pageSize"
-      @pagination="getProjectList"
-    />
+            <div class="hero-actions">
+              <el-button type="primary" size="large" :icon="VideoPlay" @click="openChapterDrawer(selectedProject)">进入章节工作台</el-button>
+              <el-button size="large" @click="handleProjectCommand('edit', selectedProject)">项目设置</el-button>
+            </div>
+          </section>
+
+          <section class="workflow-panel">
+            <div class="section-title">
+              <div><p class="eyebrow">Production flow</p><h3>从文本到视频</h3></div>
+              <span>按顺序完成，素材引用关系会自动保留</span>
+            </div>
+            <ol class="workflow-steps">
+              <li class="active"><span>01</span><div><strong>导入章节</strong><small>粘贴小说原文</small></div></li>
+              <li><span>02</span><div><strong>解析故事</strong><small>人物、场景与分镜</small></div></li>
+              <li><span>03</span><div><strong>确认素材</strong><small>参考图与关键帧</small></div></li>
+              <li><span>04</span><div><strong>生成视频</strong><small>镜头版本与成片</small></div></li>
+            </ol>
+          </section>
+
+          <section class="workspace-cards">
+            <article class="workspace-card workspace-card-primary">
+              <span class="workspace-card-index">NEXT</span>
+              <div><h3>继续本项目的章节制作</h3><p>导入新章节、查看解析进度，或进入已有章节的素材工作区。</p></div>
+              <el-button type="primary" @click="openChapterDrawer(selectedProject)">打开章节</el-button>
+            </article>
+            <article class="workspace-card">
+              <span class="workspace-card-index">ASSETS</span>
+              <div><h3>人物与场景资产</h3><p>集中管理参考图、提示词以及已批准的生成版本。</p></div>
+              <el-button text type="primary" @click="openChapterDrawer(selectedProject)">从章节进入</el-button>
+            </article>
+            <article class="workspace-card">
+              <span class="workspace-card-index">OUTPUT</span>
+              <div><h3>关键帧与视频</h3><p>逐镜头核对引用关系，再提交视频生成任务。</p></div>
+              <el-button text type="primary" @click="openChapterDrawer(selectedProject)">查看制作流程</el-button>
+            </article>
+          </section>
+        </template>
+
+        <section v-else-if="!loading" class="workspace-empty">
+          <div class="empty-symbol"><el-icon><Plus /></el-icon></div>
+          <p class="eyebrow">Start a project</p>
+          <h2>{{ total ? '没有符合条件的项目' : '创建第一个视频项目' }}</h2>
+          <p>{{ total ? '尝试清除筛选条件，继续已有项目。' : '上传封面、设置视觉风格，然后导入小说章节开始制作。' }}</p>
+          <div>
+            <el-button v-if="total" size="large" @click="resetQuery">清除筛选</el-button>
+            <el-button type="primary" size="large" :icon="Plus" @click="handleAddProject">新建项目</el-button>
+          </div>
+        </section>
+      </main>
+    </div>
 
     <el-dialog v-model="projectDialog.open" :title="projectDialog.title" width="560px" append-to-body>
       <el-form ref="projectFormRef" :model="projectForm" :rules="projectRules" label-position="top">
         <el-form-item label="项目名称" prop="projectName">
           <el-input v-model="projectForm.projectName" maxlength="128" show-word-limit placeholder="例如：雨夜病历" />
         </el-form-item>
-        <div class="form-grid">
-          <el-form-item label="改编方式" prop="adaptationMode">
-            <el-select v-model="projectForm.adaptationMode">
-              <el-option label="忠实还原" value="FAITHFUL" />
-              <el-option label="保守改编" value="ADAPTIVE" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="默认画幅" prop="defaultAspectRatio">
-            <el-select v-model="projectForm.defaultAspectRatio">
-              <el-option label="横版 16:9" value="16:9" />
-              <el-option label="竖版 9:16" value="9:16" />
-              <el-option label="方形 1:1" value="1:1" />
-            </el-select>
-          </el-form-item>
-        </div>
+        <el-form-item label="项目封面">
+          <image-upload v-model="projectForm.coverUrl" class="project-cover-upload" :limit="1" :file-size="10" :file-type="['png', 'jpg', 'jpeg', 'webp']" />
+        </el-form-item>
         <el-form-item label="视觉风格">
           <el-input v-model="projectForm.visualStyle" placeholder="例如：电影写实、冷蓝色雨夜光影" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="projectDialog.open = false">取消</el-button>
-        <el-button type="primary" @click="submitProject">保存项目</el-button>
+        <el-button :disabled="projectDialog.submitting" @click="projectDialog.open = false">取消</el-button>
+        <el-button type="primary" :loading="projectDialog.submitting" @click="submitProject">保存项目</el-button>
       </template>
     </el-dialog>
-
-    <el-drawer v-model="chapterDrawer.open" size="min(820px, 96vw)" :with-header="false" append-to-body @closed="stopChapterPolling">
-      <div class="chapter-workspace">
-        <div class="drawer-header">
-          <div>
-            <p class="eyebrow">CHAPTERS</p>
-            <h2>{{ chapterDrawer.project?.projectName }}</h2>
-            <p>原文会在下一步自动解析为故事圣经、场景和分镜。</p>
-          </div>
-          <div class="drawer-actions">
-            <el-button @click="openAssetDrawer()">资产库</el-button>
-            <el-button type="primary" :icon="Plus" @click="openChapterDialog">导入章节</el-button>
-          </div>
-        </div>
-        <el-empty v-if="!chapterDrawer.loading && !chapterDrawer.chapters.length" description="还没有导入章节" />
-        <div v-loading="chapterDrawer.loading" class="chapter-list">
-          <article v-for="chapter in chapterDrawer.chapters" :key="chapter.chapterId" class="chapter-item">
-            <div class="chapter-number">{{ String(chapter.chapterNo).padStart(2, '0') }}</div>
-            <div class="chapter-content">
-              <button type="button" class="chapter-title-button" @click="openChapterVideoWorkspace(chapter)">
-                {{ chapter.chapterTitle || `第 ${chapter.chapterNo} 章` }}
-              </button>
-              <p>{{ chapter.wordCount || 0 }} 字 · {{ pipelineLabel(chapter.pipelineStatus) }}</p>
-              <div
-                v-if="chapter.parseStatus === 'RUNNING'"
-                class="chapter-analysis-progress"
-                data-testid="chapter-analysis-progress"
-              >
-                <div class="chapter-analysis-progress__heading">
-                  <span class="chapter-analysis-progress__stage">
-                    {{ chapterAnalysisStageTitle(chapter.analysisTask) }}
-                  </span>
-                  <strong>{{ chapterAnalysisProgress(chapter.analysisTask) }}%</strong>
-                </div>
-                <p class="chapter-analysis-progress__detail">
-                  {{ chapter.analysisTask?.stageLabel || '正在启动章节分析' }}
-                </p>
-                <el-progress
-                  :percentage="chapterAnalysisProgress(chapter.analysisTask)"
-                  :show-text="false"
-                  :stroke-width="8"
-                  :aria-label="`章节分析进度 ${chapterAnalysisProgress(chapter.analysisTask)}%`"
-                />
-                <ol class="chapter-analysis-phases" aria-label="章节分析阶段">
-                  <li
-                    v-for="(phase, phaseIndex) in CHAPTER_ANALYSIS_PHASES"
-                    :key="phase.key"
-                    :class="`is-${chapterAnalysisPhaseState(chapter.analysisTask, phaseIndex)}`"
-                  >
-                    <span>{{ phaseIndex + 1 }}</span>
-                    <small>{{ phase.label }}</small>
-                  </li>
-                </ol>
-              </div>
-              <div v-else-if="chapter.parseStatus === 'FAILED' && chapter.analysisTask?.errorMessage" class="chapter-analysis-error">
-                <strong>章节分析失败</strong>
-                <span>{{ chapter.analysisTask.errorMessage }}</span>
-                <small v-if="chapter.analysisTask.errorCode">{{ chapter.analysisTask.errorCode }}</small>
-              </div>
-            </div>
-            <el-tag effect="plain" :type="chapter.parseStatus === 'FAILED' ? 'danger' : 'info'">{{ chapter.parseStatus }}</el-tag>
-            <div class="chapter-item-actions">
-              <el-button v-if="chapter.parseStatus !== 'RUNNING'" text type="primary" @click="analyzeChapter(chapter)">解析</el-button>
-              <el-button v-if="chapter.pipelineStatus === 'SCRIPT_READY'" text type="success" @click="openStoryBible(chapter)">查看结果</el-button>
-              <el-button
-                type="primary"
-                plain
-                :icon="VideoPlay"
-                :loading="preparingChapterId === chapter.chapterId"
-                @click="prepareChapterVideoWorkspace(chapter)"
-              >生成视频</el-button>
-              <el-button text type="danger" :icon="Delete" aria-label="删除章节" @click="removeChapter(chapter)" />
-            </div>
-          </article>
-        </div>
-      </div>
-    </el-drawer>
-
-    <el-drawer
-      v-model="chapterVideoDrawer.open"
-      size="min(1180px, 98vw)"
-      append-to-body
-      @closed="handleChapterVideoDrawerClosed"
-    >
-      <template #header>
-        <div>
-          <p class="eyebrow">CHAPTER MATERIALS</p>
-          <h2>{{ chapterVideoTitle }} · 章节素材工作台</h2>
-        </div>
-      </template>
-
-      <div class="chapter-video-toolbar">
-        <el-alert
-          title="这里汇总本章的场景图、分镜关键帧和全部视频版本"
-          description="打开工作台不会调用模型。图片需先查看提示词并手动生成；关键帧同意后才可准备视频提示词，最终仍需二次确认才会调用视频生成服务。"
-          type="info"
-          :closable="false"
-          show-icon
-        />
-        <div class="chapter-material-stats" aria-label="章节素材统计">
-          <button type="button" :class="{ active: chapterVideoDrawer.activeTab === 'scenes' }" @click="chapterVideoDrawer.activeTab = 'scenes'">
-            <strong>{{ chapterSceneGroups.length }}</strong>
-            <span>场景</span>
-            <small>{{ chapterVideoDrawer.sceneAssets.length }} 个版本</small>
-          </button>
-          <button type="button" :class="{ active: chapterVideoDrawer.activeTab === 'shots' }" @click="chapterVideoDrawer.activeTab = 'shots'">
-            <strong>{{ chapterShotCount }}</strong>
-            <span>分镜</span>
-            <small>{{ chapterVideoDrawer.keyframeAssets.length }} 张关键帧</small>
-          </button>
-          <button type="button" :class="{ active: chapterVideoDrawer.activeTab === 'videos' }" @click="chapterVideoDrawer.activeTab = 'videos'">
-            <strong>{{ chapterVideoShotCount }}</strong>
-            <span>视频镜头</span>
-            <small>{{ chapterVideoDrawer.assets.length }} 个版本</small>
-          </button>
-        </div>
-        <el-alert
-          v-if="chapterVideoDrawer.preparing"
-          :title="chapterVideoDrawer.prepareTotal ? `正在准备视频提示词草稿（${chapterVideoDrawer.preparedCount}/${chapterVideoDrawer.prepareTotal}）` : '正在检查本章已同意的关键帧'"
-          description="这里只会创建或复用草稿；已有视频版本的镜头会跳过，不会提交视频生成任务。"
-          type="warning"
-          :closable="false"
-          show-icon
-        />
-        <div class="chapter-video-toolbar-actions">
-          <el-button @click="openChapterKeyframeAssets">打开筛选资产库</el-button>
-          <el-button
-            type="primary"
-            plain
-            :icon="VideoPlay"
-            :loading="chapterVideoDrawer.preparing"
-            @click="prepareChapterVideoWorkspace(chapterVideoDrawer.chapter)"
-          >准备视频提示词</el-button>
-          <el-button :icon="Refresh" :loading="chapterVideoDrawer.loading" :disabled="chapterVideoDrawer.preparing" @click="loadChapterVideoAssets">刷新全部素材</el-button>
-        </div>
-      </div>
-
-      <el-alert v-if="chapterVideoDrawer.loadError" :title="chapterVideoDrawer.loadError" type="error" :closable="false" show-icon />
-      <el-alert v-else-if="chapterVideoDrawer.referenceLoadError" :title="chapterVideoDrawer.referenceLoadError" type="warning" :closable="false" show-icon />
-
-      <el-tabs v-model="chapterVideoDrawer.activeTab" class="chapter-material-tabs">
-        <el-tab-pane name="scenes">
-          <template #label>场景参考图（{{ chapterSceneGroups.length }}）</template>
-          <el-empty
-            v-if="!chapterVideoDrawer.loading && !chapterVideoDrawer.loadError && !chapterVideoDrawer.sceneAssets.length"
-            description="本章还没有场景参考图提示词"
-          />
-          <div v-loading="chapterVideoDrawer.loading" class="chapter-reference-scenes">
-            <section v-for="scene in chapterSceneGroups" :key="scene.key" class="chapter-video-scene">
-              <div class="chapter-video-scene-heading">
-                <div>
-                  <span>{{ scene.sceneNo ? `场景 ${scene.sceneNo}` : '场景参考' }}</span>
-                  <h3>{{ scene.label }}</h3>
-                </div>
-                <small>{{ scene.versions.length }} 个版本 · 新版本优先</small>
-              </div>
-              <div class="chapter-material-card-grid">
-                <article v-for="asset in scene.versions" :key="asset.assetId" class="chapter-material-card">
-                  <div class="chapter-material-preview">
-                    <el-image
-                      v-if="asset.previewObjectKey || asset.objectKey"
-                      :src="asset.previewObjectKey || asset.objectKey"
-                      fit="cover"
-                      :preview-src-list="[asset.objectKey || asset.previewObjectKey]"
-                    />
-                    <span v-else>{{ assetPreviewPlaceholder(asset) }}</span>
-                  </div>
-                  <div class="chapter-material-card-body">
-                    <div class="chapter-video-version-tags">
-                      <el-tag size="small" effect="plain">v{{ asset.versionNo || 1 }}</el-tag>
-                      <el-tag size="small" :type="assetStatusTagType(asset.status)" effect="light">{{ assetStatusLabel(asset) }}</el-tag>
-                      <el-tag v-if="isLatestAssetVersion(asset, scene.versions)" size="small" type="primary" effect="plain">最新版本</el-tag>
-                      <el-tag v-if="assetAnalysisVersion(asset)" size="small" type="info" effect="plain">
-                        分析 v{{ assetAnalysisVersion(asset) }}{{ isCurrentAnalysisAsset(asset, chapterVideoDrawer.chapter) ? ' · 当前' : ' · 历史' }}
-                      </el-tag>
-                    </div>
-                    <h4>{{ asset.assetName }}</h4>
-                    <p>场景参考图 · {{ assetDimensionLabel(asset) }}</p>
-                    <div class="asset-prompt-preview chapter-material-prompt">
-                      <strong>图片提示词</strong>
-                      <p>{{ asset.promptText || '尚未填写提示词' }}</p>
-                      <strong v-if="asset.negativePromptText">负向提示词</strong>
-                      <p v-if="asset.negativePromptText">{{ asset.negativePromptText }}</p>
-                    </div>
-                    <el-button class="video-action" size="small" type="primary" plain @click="openPromptDialog(asset)">
-                      {{ asset.status === 'DRAFT' || asset.status === 'REJECTED' ? '查看 / 修改提示词并生成' : '查看生成提示词' }}
-                    </el-button>
-                    <div class="asset-version-actions">
-                      <el-button
-                        size="small"
-                        :loading="regeneratingAssetId === asset.assetId"
-                        :disabled="isAssetBusy(asset, chapterVideoDrawer.taskByAssetId[asset.assetId])"
-                        @click="createRegenerationDraft(asset)"
-                      >重新生成</el-button>
-                      <el-button
-                        v-if="!isAssetBusy(asset, chapterVideoDrawer.taskByAssetId[asset.assetId])"
-                        size="small"
-                        type="danger"
-                        plain
-                        :loading="deletingAssetId === asset.assetId"
-                        @click="deleteAssetVersion(asset)"
-                      >删除此版本</el-button>
-                    </div>
-                  </div>
-                </article>
-              </div>
-            </section>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane name="shots">
-          <template #label>分镜关键帧（{{ chapterShotCount }}）</template>
-          <el-empty
-            v-if="!chapterVideoDrawer.loading && !chapterVideoDrawer.loadError && !chapterVideoDrawer.keyframeAssets.length"
-            description="本章还没有分镜关键帧提示词；请先完成章节解析"
-          />
-          <div v-loading="chapterVideoDrawer.loading" class="chapter-video-scenes">
-            <section v-for="scene in chapterShotGroups" :key="scene.key" class="chapter-video-scene">
-              <div class="chapter-video-scene-heading">
-                <div>
-                  <span>{{ scene.orderLabel }}</span>
-                  <h3>{{ scene.label }}</h3>
-                </div>
-                <small>{{ scene.shots.length }} 个分镜</small>
-              </div>
-
-              <article v-for="shot in scene.shots" :key="shot.key" class="chapter-video-shot chapter-keyframe-shot">
-                <div class="chapter-video-shot-heading">
-                  <strong>{{ shot.label }}</strong>
-                  <span>{{ shot.versions.length }} 个关键帧版本 · 新版本优先</span>
-                </div>
-
-                <div class="shot-reference-heading">
-                  <div>
-                    <strong>本分镜引用资产</strong>
-                    <span>场景参考图与人物三视图会作为 Qwen 生成关键帧时的实际参考图输入</span>
-                  </div>
-                  <div class="shot-reference-tags">
-                    <el-tag size="small" :type="shot.referencesApproved ? 'success' : 'warning'" effect="light">
-                      {{ shot.referencesApproved ? '引用图已全部 APPROVED' : '引用图未完成' }}
-                    </el-tag>
-                    <el-tag size="small" :type="shot.hasExplicitReferenceIds ? 'primary' : 'danger'" effect="plain">
-                      {{ shot.hasExplicitReferenceIds ? '精确资产引用' : '精确引用 metadata 不完整' }}
-                    </el-tag>
-                  </div>
-                </div>
-                <p v-if="!shot.referencesApproved" class="shot-reference-warning">{{ shot.referenceStatusMessage }}</p>
-                <div class="shot-reference-strip">
-                  <button
-                    type="button"
-                    class="shot-reference-card"
-                    :class="{ missing: !shot.sceneReference }"
-                    :disabled="!shot.sceneReference"
-                    @click="shot.sceneReference && openPromptDialog(shot.sceneReference)"
-                  >
-                    <span class="shot-reference-kind">场景参考</span>
-                    <div class="shot-reference-preview">
-                      <el-image
-                        v-if="shot.sceneReference && (shot.sceneReference.previewObjectKey || shot.sceneReference.objectKey)"
-                        :src="shot.sceneReference.previewObjectKey || shot.sceneReference.objectKey"
-                        fit="cover"
-                      />
-                      <span v-else>{{ shot.sceneReference ? assetPreviewPlaceholder(shot.sceneReference) : '场景参考图未创建' }}</span>
-                    </div>
-                    <strong>{{ shot.sceneReference?.assetName || '缺少场景参考图' }}</strong>
-                    <el-tag v-if="shot.sceneReference" size="small" :type="assetStatusTagType(shot.sceneReference.status)" effect="light">
-                      {{ assetStatusLabel(shot.sceneReference) }}
-                    </el-tag>
-                    <el-tag v-else size="small" type="danger" effect="plain">未创建</el-tag>
-                  </button>
-
-                  <button
-                    v-for="reference in shot.characterReferences"
-                    :key="reference.key"
-                    type="button"
-                    class="shot-reference-card"
-                    :class="{ missing: !reference.asset }"
-                    :disabled="!reference.asset"
-                    @click="reference.asset && openPromptDialog(reference.asset)"
-                  >
-                    <span class="shot-reference-kind">人物三视图</span>
-                    <div class="shot-reference-preview character">
-                      <el-image
-                        v-if="reference.asset && (reference.asset.previewObjectKey || reference.asset.objectKey)"
-                        :src="reference.asset.previewObjectKey || reference.asset.objectKey"
-                        fit="contain"
-                      />
-                      <span v-else>{{ reference.asset ? assetPreviewPlaceholder(reference.asset) : '人物参考图未创建' }}</span>
-                    </div>
-                    <strong>{{ reference.name }}</strong>
-                    <el-tag v-if="reference.asset" size="small" :type="assetStatusTagType(reference.asset.status)" effect="light">
-                      {{ assetStatusLabel(reference.asset) }}
-                    </el-tag>
-                    <el-tag v-else size="small" type="danger" effect="plain">缺少资产</el-tag>
-                  </button>
-
-                  <div v-if="!shot.characterReferences.length" class="shot-reference-card empty-reference">
-                    <span class="shot-reference-kind">人物参考</span>
-                    <strong>{{ shot.characterReferenceNote }}</strong>
-                    <small>不影响查看关键帧提示词</small>
-                  </div>
-                </div>
-
-                <div class="chapter-material-card-grid keyframe-version-grid">
-                  <article v-for="asset in shot.versions" :key="asset.assetId" class="chapter-material-card">
-                    <div class="chapter-material-preview keyframe-preview">
-                      <el-image
-                        v-if="asset.previewObjectKey || asset.objectKey"
-                        :src="asset.previewObjectKey || asset.objectKey"
-                        fit="cover"
-                        :preview-src-list="[asset.objectKey || asset.previewObjectKey]"
-                      />
-                      <span v-else>{{ assetPreviewPlaceholder(asset) }}</span>
-                    </div>
-                    <div class="chapter-material-card-body">
-                      <div class="chapter-video-version-tags">
-                        <el-tag size="small" effect="plain">v{{ asset.versionNo || 1 }}</el-tag>
-                        <el-tag size="small" :type="assetStatusTagType(asset.status)" effect="light">{{ assetStatusLabel(asset) }}</el-tag>
-                        <el-tag v-if="isLatestAssetVersion(asset, shot.versions)" size="small" type="primary" effect="plain">最新版本</el-tag>
-                        <el-tag v-if="assetAnalysisVersion(asset)" size="small" type="info" effect="plain">
-                          分析 v{{ assetAnalysisVersion(asset) }}{{ isCurrentAnalysisAsset(asset, chapterVideoDrawer.chapter) ? ' · 当前' : ' · 历史' }}
-                        </el-tag>
-                        <el-tag size="small" :type="bindingMode(asset, 'referenceBindingMode') === 'MANUAL' ? 'warning' : 'success'" effect="plain">
-                          {{ bindingModeLabel(bindingMode(asset, 'referenceBindingMode')) }}参考
-                        </el-tag>
-                      </div>
-                      <h4>{{ asset.assetName }}</h4>
-                      <p>{{ assetDimensionLabel(asset) }}</p>
-                      <p class="asset-binding-summary">{{ keyframeBindingSummary(asset) }}</p>
-                      <div class="asset-prompt-preview chapter-material-prompt">
-                        <strong>关键帧提示词</strong>
-                        <p>{{ asset.promptText || '尚未填写提示词' }}</p>
-                        <strong v-if="asset.negativePromptText">负向提示词</strong>
-                        <p v-if="asset.negativePromptText">{{ asset.negativePromptText }}</p>
-                      </div>
-                      <p v-if="asset.status !== 'APPROVED'" class="asset-task-status">{{ assetTaskMessage(asset, chapterVideoDrawer) }}</p>
-                      <div
-                        v-if="asset.status === 'DRAFT' || asset.status === 'REJECTED'"
-                        class="keyframe-action-row"
-                      >
-                        <el-button size="small" plain @click="openPromptDialog(asset, shot)">查看 / 修改关键帧提示词</el-button>
-                        <el-tooltip
-                          :disabled="shot.referencesApproved"
-                          :content="shot.referenceStatusMessage"
-                          placement="top"
-                        >
-                          <span class="keyframe-generate-button-wrap">
-                            <el-button
-                              size="small"
-                              :type="asset.status === 'REJECTED' ? 'danger' : 'primary'"
-                              :plain="asset.status === 'REJECTED'"
-                              :disabled="!shot.referencesApproved"
-                              @click="openPromptDialog(asset, shot)"
-                            >{{ asset.status === 'REJECTED' ? '重新生成关键帧图片' : '生成关键帧图片' }}</el-button>
-                          </span>
-                        </el-tooltip>
-                      </div>
-                      <el-button
-                        v-if="asset.status !== 'DRAFT' && asset.status !== 'REJECTED'"
-                        class="video-action"
-                        size="small"
-                        plain
-                        @click="openPromptDialog(asset, shot)"
-                      >查看当时关键帧提示词</el-button>
-                      <el-button
-                        v-if="asset.status === 'GENERATED'"
-                        class="video-action"
-                        size="small"
-                        type="primary"
-                        :loading="preparingVideoDraftId === asset.assetId"
-                        @click="approveAndPrepareVideoPrompt(asset)"
-                      >同意画面并提炼视频提示词</el-button>
-                      <el-button
-                        v-if="asset.status === 'APPROVED'"
-                        class="video-action"
-                        size="small"
-                        type="primary"
-                        plain
-                        :loading="preparingVideoDraftId === asset.assetId"
-                        @click="prepareVideoPromptDraft(asset)"
-                      >提炼 / 查看视频提示词</el-button>
-                      <div class="asset-version-actions">
-                        <el-button
-                          size="small"
-                          :loading="regeneratingAssetId === asset.assetId"
-                          :disabled="isAssetBusy(asset, chapterVideoDrawer.taskByAssetId[asset.assetId])"
-                          @click="createRegenerationDraft(asset)"
-                        >编辑参考绑定 / 新版本</el-button>
-                        <el-button
-                          v-if="!isAssetBusy(asset, chapterVideoDrawer.taskByAssetId[asset.assetId])"
-                          size="small"
-                          type="danger"
-                          plain
-                          :loading="deletingAssetId === asset.assetId"
-                          @click="deleteAssetVersion(asset)"
-                        >删除此版本</el-button>
-                      </div>
-                    </div>
-                  </article>
-                </div>
-              </article>
-            </section>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane name="videos">
-          <template #label>视频片段（{{ chapterVideoDrawer.assets.length }}）</template>
-      <el-empty
-        v-if="!chapterVideoDrawer.loading && !chapterVideoDrawer.preparing && !chapterVideoDrawer.loadError && !chapterVideoDrawer.assets.length"
-        description="本章还没有视频草稿。请先检查并同意关键帧，再提炼视频提示词。"
-      >
-        <el-button type="primary" plain @click="openChapterKeyframeAssets">去审批关键帧</el-button>
-      </el-empty>
-
-      <div v-loading="chapterVideoDrawer.loading" class="chapter-video-scenes">
-        <section v-for="scene in chapterVideoGroups" :key="scene.key" class="chapter-video-scene">
-          <div class="chapter-video-scene-heading">
-            <div>
-              <span>{{ scene.orderLabel }}</span>
-              <h3>{{ scene.label }}</h3>
-            </div>
-            <small>{{ scene.shots.length }} 个镜头</small>
-          </div>
-
-          <article v-for="shot in scene.shots" :key="shot.key" class="chapter-video-shot">
-            <div class="chapter-video-shot-heading">
-              <strong>{{ shot.label }}</strong>
-              <span>{{ shot.versions.length }} 个版本 · 新版本优先</span>
-            </div>
-
-            <div class="chapter-video-version-grid">
-              <div v-for="asset in shot.versions" :key="asset.assetId" class="chapter-video-version-card">
-                <div class="chapter-video-preview">
-                  <video v-if="asset.objectKey || asset.previewObjectKey" :src="asset.objectKey || asset.previewObjectKey" controls preload="metadata" />
-                  <span v-else>{{ assetPreviewPlaceholder(asset) }}</span>
-                </div>
-                <div class="chapter-video-version-body">
-                  <div class="chapter-video-version-tags">
-                    <el-tag size="small" effect="plain">v{{ asset.versionNo || 1 }}</el-tag>
-                    <el-tag size="small" :type="assetStatusTagType(asset.status)" effect="light">{{ assetStatusLabel(asset) }}</el-tag>
-                    <el-tag v-if="isLatestAssetVersion(asset, shot.versions)" size="small" type="primary" effect="plain">最新版本</el-tag>
-                    <el-tag v-if="assetAnalysisVersion(asset)" size="small" type="info" effect="plain">
-                      分析 v{{ assetAnalysisVersion(asset) }}{{ isCurrentAnalysisAsset(asset, chapterVideoDrawer.chapter) ? ' · 当前' : ' · 历史' }}
-                    </el-tag>
-                    <el-tag v-if="asset.canonicalFlag === 1" size="small" type="success" effect="plain">规范资产</el-tag>
-                    <el-tag size="small" :type="bindingMode(asset, 'sourceBindingMode') === 'MANUAL' ? 'warning' : 'success'" effect="plain">
-                      {{ bindingModeLabel(bindingMode(asset, 'sourceBindingMode')) }}关键帧
-                    </el-tag>
-                  </div>
-                  <h4>{{ asset.assetName }}</h4>
-                  <p>{{ assetDimensionLabel(asset) }}</p>
-                  <p class="asset-binding-summary">{{ videoBindingSummary(asset) }}</p>
-                  <p class="asset-binding-summary inherited">{{ videoInheritedReferenceSummary(asset) }}</p>
-                  <div class="asset-prompt-preview chapter-video-prompt-preview">
-                    <strong>视频提示词</strong>
-                    <p>{{ asset.promptText || '尚未填写提示词' }}</p>
-                  </div>
-                  <p v-if="asset.status !== 'APPROVED'" class="asset-task-status">{{ assetTaskMessage(asset, chapterVideoDrawer) }}</p>
-
-                  <el-button
-                    v-if="asset.status === 'DRAFT' || asset.status === 'REJECTED'"
-                    class="video-action"
-                    size="small"
-                    type="primary"
-                    @click="openVideoPromptDialog(asset)"
-                  >查看 / 修改视频提示词</el-button>
-                  <el-button
-                    v-else
-                    class="video-action"
-                    size="small"
-                    plain
-                    @click="openVideoPromptDialog(asset)"
-                  >查看视频提示词</el-button>
-                  <el-button
-                    v-if="chapterVideoDrawer.taskByAssetId[asset.assetId]?.status === 'NEEDS_REVIEW'"
-                    class="video-action"
-                    size="small"
-                    type="warning"
-                    @click="resumeVideoSubmission(asset, chapterVideoDrawer)"
-                  >填写任务ID并恢复轮询</el-button>
-                  <el-button
-                    v-if="chapterVideoDrawer.taskByAssetId[asset.assetId]?.status === 'NEEDS_REVIEW' && !chapterVideoDrawer.taskByAssetId[asset.assetId]?.providerTaskId"
-                    class="video-action"
-                    size="small"
-                    type="danger"
-                    plain
-                    @click="confirmVideoNotSubmitted(asset)"
-                  >确认未提交并解锁</el-button>
-
-                  <div class="asset-version-actions">
-                    <el-button
-                      size="small"
-                      :loading="regeneratingAssetId === asset.assetId"
-                      :disabled="isAssetBusy(asset, chapterVideoDrawer.taskByAssetId[asset.assetId])"
-                      @click="createRegenerationDraft(asset)"
-                    >更换关键帧 / 新版本</el-button>
-                    <el-button
-                      v-if="!isAssetBusy(asset, chapterVideoDrawer.taskByAssetId[asset.assetId])"
-                      size="small"
-                      type="danger"
-                      plain
-                      :loading="deletingAssetId === asset.assetId"
-                      @click="deleteAssetVersion(asset)"
-                    >删除此版本</el-button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </article>
-        </section>
-      </div>
-        </el-tab-pane>
-      </el-tabs>
-    </el-drawer>
 
     <el-drawer v-model="storyBibleDrawer.open" size="780px" append-to-body>
       <template #header>
@@ -1126,7 +639,9 @@
 </template>
 
 <script setup name="AiVedioProject">
-import { Connection, Delete, MoreFilled, Plus, Refresh, Search, VideoPlay } from '@element-plus/icons-vue'
+import { Connection, Delete, MoreFilled, Plus, VideoPlay } from '@element-plus/icons-vue'
+import { isExternal } from '@/utils/validate'
+import ProjectRail from './components/ProjectRail.vue'
 import {
   addAiVideoChapter,
   addAiVideoProject,
@@ -1162,12 +677,14 @@ const { proxy } = getCurrentInstance()
 const router = useRouter()
 const loading = ref(false)
 const projectList = ref([])
+const selectedProjectId = ref(null)
+const selectedProject = computed(() => projectList.value.find(project => project.projectId === selectedProjectId.value) || null)
 const total = ref(0)
 const projectFormRef = ref()
 const chapterFormRef = ref()
 
-const queryParams = reactive({ pageNum: 1, pageSize: 12, projectName: '', status: '' })
-const projectDialog = reactive({ open: false, title: '' })
+const queryParams = reactive({ projectName: '', status: '' })
+const projectDialog = reactive({ open: false, title: '', submitting: false })
 const chapterDialog = reactive({ open: false })
 const chapterDrawer = reactive({ open: false, loading: false, project: null, chapters: [] })
 const chapterVideoDrawer = reactive({
@@ -1319,10 +836,7 @@ function resetProjectForm() {
   Object.assign(projectForm, {
     projectId: null,
     projectName: '',
-    sourceType: 'NOVEL',
-    adaptationMode: 'FAITHFUL',
-    defaultAspectRatio: '16:9',
-    defaultLanguage: 'zh-CN',
+    coverUrl: '',
     visualStyle: ''
   })
 }
@@ -1332,11 +846,17 @@ function getProjectList() {
   listAiVideoProject(queryParams).then(response => {
     projectList.value = response.rows || []
     total.value = Number(response.total) || 0
+    if (!projectList.value.some(project => project.projectId === selectedProjectId.value)) {
+      selectedProjectId.value = projectList.value[0]?.projectId || null
+    }
   }).finally(() => { loading.value = false })
 }
 
+function selectProject(project) {
+  selectedProjectId.value = project?.projectId || null
+}
+
 function handleQuery() {
-  queryParams.pageNum = 1
   getProjectList()
 }
 
@@ -1355,6 +875,7 @@ function handleAddProject() {
 function handleProjectCommand(command, project) {
   if (command === 'edit') {
     getAiVideoProject(project.projectId).then(response => {
+      resetProjectForm()
       Object.assign(projectForm, response.data)
       projectDialog.title = '编辑影视项目'
       projectDialog.open = true
@@ -1371,24 +892,50 @@ function submitProject() {
   projectFormRef.value.validate(valid => {
     if (!valid) return
     const request = projectForm.projectId ? updateAiVideoProject : addAiVideoProject
-    request(projectForm).then(() => {
+    const payload = {
+      projectId: projectForm.projectId || undefined,
+      projectName: projectForm.projectName,
+      coverUrl: projectForm.coverUrl || null,
+      visualStyle: projectForm.visualStyle
+    }
+    projectDialog.submitting = true
+    request(payload).then(() => {
       proxy.$modal.msgSuccess('项目已保存')
       projectDialog.open = false
       getProjectList()
-    })
+    }).finally(() => { projectDialog.submitting = false })
   })
 }
 
-function openChapterDrawer(project) {
-  if (chapterDrawer.project?.projectId !== project.projectId) {
-    resetAssetDrawerData()
-    resetChapterVideoDrawerData()
-    chapterVideoDrawer.open = false
-    chapterVideoDrawer.chapter = null
-  }
+function resolveProjectCoverUrl(value) {
+  if (!value) return ''
+  const cover = String(value).split(',')[0]
+  return isExternal(cover) ? cover : import.meta.env.VITE_APP_BASE_API + cover
+}
+
+async function openChapterDrawer(project) {
+  if (!project?.projectId) return
   chapterDrawer.project = project
-  chapterDrawer.open = true
-  loadChapters()
+  chapterDrawer.open = false
+  chapterDrawer.loading = true
+  try {
+    const response = await listAiVideoChapter(project.projectId)
+    const chapters = response.rows || response.data || []
+    chapterDrawer.chapters = chapters
+    if (!chapters.length) {
+      openChapterDialog()
+      return
+    }
+    const firstChapter = [...chapters].sort((left, right) => Number(left.chapterNo || 0) - Number(right.chapterNo || 0))[0]
+    router.push({
+      name: 'AiVedioChapterWorkspace',
+      params: { projectId: project.projectId, chapterId: firstChapter.chapterId }
+    })
+  } catch (error) {
+    proxy.$modal.msgError(error?.response?.data?.msg || error?.message || '章节列表读取失败')
+  } finally {
+    chapterDrawer.loading = false
+  }
 }
 
 function loadChapters({ silent = false } = {}) {
@@ -1465,10 +1012,18 @@ function openChapterDialog() {
 function submitChapter() {
   chapterFormRef.value.validate(valid => {
     if (!valid) return
-    addAiVideoChapter(chapterDrawer.project.projectId, chapterForm).then(() => {
+    const projectId = chapterDrawer.project.projectId
+    addAiVideoChapter(projectId, chapterForm).then(() => {
       proxy.$modal.msgSuccess('章节已导入，等待解析')
       chapterDialog.open = false
-      loadChapters()
+      return listAiVideoChapter(projectId)
+    }).then(response => {
+      const chapters = response.rows || response.data || []
+      chapterDrawer.chapters = chapters
+      const newestChapter = [...chapters].sort((left, right) => Number(right.chapterNo || 0) - Number(left.chapterNo || 0))[0]
+      if (newestChapter?.chapterId) {
+        router.push({ name: 'AiVedioChapterWorkspace', params: { projectId, chapterId: newestChapter.chapterId } })
+      }
     })
   })
 }
@@ -1532,9 +1087,9 @@ function openStoryBible(chapter) {
 }
 
 function openChapterVideoWorkspace(chapter) {
-  if (!activateChapterVideoWorkspace(chapter) || chapterVideoDrawer.preparing) return
-  chapterVideoDrawer.activeTab = 'shots'
-  loadChapterVideoAssets()
+  const projectId = chapter?.projectId || chapterDrawer.project?.projectId
+  if (!projectId || !chapter?.chapterId) return
+  router.push({ name: 'AiVedioChapterWorkspace', params: { projectId, chapterId: chapter.chapterId } })
 }
 
 function activateChapterVideoWorkspace(chapter) {
@@ -1550,56 +1105,15 @@ function activateChapterVideoWorkspace(chapter) {
 }
 
 function prepareChapterVideoWorkspace(chapter) {
-  if (!activateChapterVideoWorkspace(chapter) || chapterVideoDrawer.preparing) return
-  chapterVideoDrawer.activeTab = 'videos'
-  const projectId = chapterDrawer.project?.projectId
-  const chapterId = chapter.chapterId
-  if (!projectId) return
-  stopChapterVideoPolling()
-  preparingChapterId.value = chapterId
-  Object.assign(chapterVideoDrawer, {
-    preparing: true,
-    loading: true,
-    prepareTotal: 0,
-    preparedCount: 0,
-    prepareErrorCount: 0,
-    loadError: ''
-  })
-  Promise.all([
-    fetchAllAiVideoAssets({ projectId, chapterId, assetType: 'SHOT_KEYFRAME', status: 'APPROVED' }),
-    fetchAllAiVideoAssets({ projectId, chapterId, assetType: 'VIDEO_CLIP' })
-  ]).then(([keyframeAssets, videoAssets]) => {
-    const keyframes = selectLatestApprovedKeyframes(keyframeAssets
-      .filter(asset => isCurrentAnalysisAsset(asset, chapter)))
-    const videos = videoAssets
-    chapterVideoDrawer.assets = videos
-    chapterVideoDrawer.loading = false
-    const candidates = keyframes.filter(keyframe => !hasVideoForKeyframe(keyframe, videos))
-    chapterVideoDrawer.prepareTotal = candidates.length
-    if (!keyframes.length) {
-      proxy.$modal.msgWarning('本章还没有已同意的关键帧，请先检查并审批关键帧图片')
-      return null
-    }
-    if (!candidates.length) {
-      proxy.$modal.msgSuccess('本章已同意的镜头均已有视频版本，未重复创建草稿')
-      return null
-    }
-    return prepareVideoDraftsSequentially(candidates)
-  }).then(() => {
-    if (!chapterVideoDrawer.prepareTotal) return
-    if (chapterVideoDrawer.preparedCount) {
-      proxy.$modal.msgSuccess(`已准备 ${chapterVideoDrawer.preparedCount} 个视频提示词草稿，尚未调用视频生成服务`)
-    }
-    if (chapterVideoDrawer.prepareErrorCount) {
-      proxy.$modal.msgWarning(`${chapterVideoDrawer.prepareErrorCount} 个镜头未能创建草稿，请按接口提示检查后重试`)
-    }
-  }).catch(() => {
-    chapterVideoDrawer.loadError = '本章关键帧或视频版本加载失败，请检查服务状态后重试'
+  const projectId = chapter?.projectId || chapterDrawer.project?.projectId
+  if (!projectId || !chapter?.chapterId) return
+  preparingChapterId.value = chapter.chapterId
+  router.push({
+    name: 'AiVedioChapterWorkspace',
+    params: { projectId, chapterId: chapter.chapterId },
+    query: { prepare: '1' }
   }).finally(() => {
-    chapterVideoDrawer.preparing = false
-    chapterVideoDrawer.loading = false
-    if (preparingChapterId.value === chapterId) preparingChapterId.value = null
-    if (chapterVideoDrawer.open && chapterVideoDrawer.chapter?.chapterId === chapterId) loadChapterVideoAssets()
+    preparingChapterId.value = null
   })
 }
 
@@ -3001,22 +2515,115 @@ getProjectList()
 </script>
 
 <style scoped>
-.studio-page { min-height: calc(100vh - 84px); padding: 32px; color: #edf1f7; background: #101318; }
-.studio-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; max-width: 1440px; margin: 0 auto 28px; }
+.studio-page {
+  --studio-canvas: #0c1118;
+  --studio-surface: #141b24;
+  --studio-surface-raised: #1a222d;
+  --studio-border: #273241;
+  --studio-border-soft: #202a36;
+  --studio-text: #f3f5f7;
+  --studio-muted: #919dac;
+  --studio-accent: #e5904a;
+  --studio-accent-strong: #f0a15d;
+  position: relative;
+  min-height: calc(100dvh - 84px);
+  padding: clamp(22px, 3vw, 42px);
+  overflow: hidden;
+  color: var(--studio-text);
+  background:
+    radial-gradient(circle at 88% -8%, rgb(229 144 74 / 12%), transparent 30rem),
+    radial-gradient(circle at 15% 50%, rgb(75 101 132 / 8%), transparent 36rem),
+    var(--studio-canvas);
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.studio-page::before { position: absolute; inset: 0; opacity: .28; background-image: linear-gradient(rgb(255 255 255 / 2%) 1px, transparent 1px), linear-gradient(90deg, rgb(255 255 255 / 2%) 1px, transparent 1px); background-size: 38px 38px; content: ''; pointer-events: none; mask-image: linear-gradient(to bottom, #000, transparent 76%); }
+.studio-page > * { position: relative; z-index: 1; }
+.studio-page :deep(.el-button) { --el-button-bg-color: transparent; --el-button-border-color: #354153; --el-button-text-color: #dce2e9; --el-button-hover-bg-color: #202a36; --el-button-hover-border-color: #566478; --el-button-hover-text-color: #fff; }
+.studio-page :deep(.el-button--primary) { --el-button-bg-color: var(--studio-accent); --el-button-border-color: var(--studio-accent); --el-button-text-color: #17120e; --el-button-hover-bg-color: var(--studio-accent-strong); --el-button-hover-border-color: var(--studio-accent-strong); --el-button-hover-text-color: #17120e; box-shadow: 0 10px 26px rgb(229 144 74 / 18%); }
+.studio-page :deep(.el-input__wrapper), .studio-page :deep(.el-select__wrapper) { color: var(--studio-text); background: #101720; box-shadow: 0 0 0 1px var(--studio-border) inset; }
+.studio-page :deep(.el-input__inner), .studio-page :deep(.el-select__placeholder), .studio-page :deep(.el-select__selected-item) { color: #d8dee7; }
+.studio-page :deep(.el-input__inner::placeholder) { color: #697687; }
+.studio-header { display: flex; max-width: 1500px; align-items: flex-end; justify-content: space-between; gap: 30px; margin: 0 auto 26px; }
+.studio-heading { display: flex; align-items: center; gap: 16px; }
+.studio-mark { display: grid; width: 48px; height: 56px; place-items: center; border: 1px solid #3a312a; border-radius: 9px 20px 9px 9px; background: linear-gradient(145deg, #29231e, #161b22); box-shadow: inset 0 1px rgb(255 255 255 / 7%), 0 16px 40px rgb(0 0 0 / 22%); }
+.studio-mark span { width: 9px; height: 25px; border-radius: 2px; background: var(--studio-accent); box-shadow: 13px 7px 0 rgb(229 144 74 / 35%), -13px -6px 0 rgb(229 144 74 / 16%); transform: rotate(28deg); }
 .header-actions { display: flex; align-items: center; gap: 10px; }
-.eyebrow { margin: 0 0 8px; color: #f39a4a; font-size: 12px; font-weight: 700; letter-spacing: .14em; }
-h1, h2, h3, p { margin-top: 0; } h1 { margin-bottom: 8px; font-size: 32px; } .subtitle, .style-line, .project-meta, .chapter-content p, .drawer-header p { color: #9aa5b5; }
-.toolbar { display: flex; gap: 12px; max-width: 1440px; margin: 0 auto 24px; } .toolbar .el-input { width: 320px; } .toolbar .el-select { width: 140px; }
-.project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(252px, 1fr)); gap: 18px; max-width: 1440px; margin: 0 auto; }
-.project-card, .create-card { min-height: 330px; padding: 16px; border: 1px solid #2a3340; border-radius: 16px; text-align: left; background: #181d25; transition: transform .2s, border-color .2s; }
-.project-card:hover, .create-card:hover { transform: translateY(-3px); border-color: #f39a4a; } .create-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #edf1f7; cursor: pointer; }
-.create-card .el-icon { color: #f39a4a; font-size: 36px; } .create-card span { color: #9aa5b5; font-size: 13px; }
-.card-topline, .card-actions, .project-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; } .ratio { color: #9aa5b5; font-family: monospace; font-size: 12px; }
-.poster { position: relative; display: flex; align-items: center; justify-content: center; height: 122px; margin: 14px 0 18px; overflow: hidden; border-radius: 10px; background: linear-gradient(135deg, #343d4c, #17202c); font-size: 54px; font-weight: 700; }
-.poster-glow { position: absolute; width: 160px; height: 160px; border-radius: 50%; background: #f39a4a; opacity: .22; filter: blur(25px); transform: translate(58px, 46px); } .poster span { z-index: 1; }
-.project-card h2 { overflow: hidden; margin-bottom: 7px; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; } .style-line { min-height: 40px; margin-bottom: 15px; font-size: 13px; line-height: 20px; }
-.project-meta { padding-top: 12px; border-top: 1px solid #2a3340; font-size: 11px; } .card-actions { margin-top: 16px; } .card-actions .el-button:first-child { flex: 1; }
+.eyebrow { margin: 0 0 7px; color: var(--studio-accent); font-size: 11px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+h1, h2, h3, p { margin-top: 0; }
+h1 { margin-bottom: 5px; font-size: clamp(27px, 2.4vw, 36px); font-weight: 720; line-height: 1.08; letter-spacing: -.045em; }
+.subtitle, .chapter-content p, .drawer-header p { color: var(--studio-muted); }
+.subtitle { max-width: 42rem; margin-bottom: 0; font-size: 14px; line-height: 1.65; }
+.studio-shell { display: grid; grid-template-columns: minmax(270px, 310px) minmax(0, 1fr); max-width: 1500px; min-height: 650px; gap: 18px; margin: 0 auto; }
+.project-rail, .project-workspace { border: 1px solid var(--studio-border); background: rgb(20 27 36 / 88%); box-shadow: inset 0 1px rgb(255 255 255 / 4%), 0 24px 70px rgb(0 0 0 / 22%); backdrop-filter: blur(18px); }
+.project-rail { display: flex; min-height: 0; flex-direction: column; padding: 17px; border-radius: 18px 10px 10px 18px; }
+.rail-heading { padding: 3px 3px 16px; border-bottom: 1px solid var(--studio-border-soft); }
+.rail-heading > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.rail-heading span { font-size: 15px; font-weight: 700; }
+.rail-heading strong { color: var(--studio-accent); font-size: 22px; font-variant-numeric: tabular-nums; }
+.rail-heading small { display: block; margin-top: 3px; color: #748193; font-size: 11px; }
+.toolbar { display: grid; gap: 9px; padding: 14px 0; }
+.toolbar-row { display: grid; grid-template-columns: minmax(0, 1fr) 40px; gap: 8px; }
+.toolbar .el-input, .toolbar .el-select { width: 100%; }
+.project-list { display: grid; min-height: 180px; max-height: calc(100dvh - 390px); flex: 1; align-content: start; gap: 7px; padding-right: 3px; overflow-y: auto; }
+.project-list-item { display: grid; grid-template-columns: 45px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 10px; border: 1px solid transparent; border-radius: 10px; color: #dce2e9; background: transparent; font: inherit; text-align: left; cursor: pointer; transition: transform .2s ease, border-color .2s ease, background-color .2s ease; }
+.project-list-item:hover { border-color: #303b4a; background: #19212c; transform: translateX(2px); }
+.project-list-item.active { border-color: #4b3b2f; background: linear-gradient(90deg, rgb(229 144 74 / 14%), rgb(25 33 44 / 86%) 58%); box-shadow: inset 3px 0 var(--studio-accent); }
+.project-monogram { display: grid; width: 45px; height: 52px; place-items: center; border-radius: 7px 14px 7px 7px; color: #f4ece5; background: radial-gradient(circle at 80% 85%, rgb(229 144 74 / 24%), transparent 45%), #242d39; font-size: 19px; font-weight: 750; }
+.project-list-copy { display: grid; min-width: 0; gap: 3px; }
+.project-list-copy > strong, .project-list-copy > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-list-copy > strong { font-size: 13px; }
+.project-list-copy > small { color: #758295; font-size: 10px; }
+.project-list-meta { display: flex; align-items: center; gap: 5px; color: #9aa5b3; font-size: 10px; font-variant-numeric: tabular-nums; }
+.project-list-meta i, .project-status i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #7d8997; box-shadow: 0 0 0 3px rgb(125 137 151 / 10%); }
+.project-list-meta i.status-active, .project-status i.status-active { background: #7aaa91; box-shadow: 0 0 0 3px rgb(122 170 145 / 12%); }
+.project-list-meta i.status-paused, .project-status i.status-paused { background: var(--studio-accent); box-shadow: 0 0 0 3px rgb(229 144 74 / 12%); }
+.rail-empty { display: grid; place-items: center; gap: 4px; padding: 34px 12px; color: #a3adba; text-align: center; }
+.rail-empty small { color: #697687; line-height: 1.5; }
+.project-workspace { min-width: 0; padding: clamp(18px, 2.2vw, 30px); border-radius: 10px 18px 18px 10px; }
+.project-hero { position: relative; min-height: 340px; padding: clamp(20px, 2.8vw, 34px); overflow: hidden; border: 1px solid #303b4a; border-radius: 14px; background: radial-gradient(circle at 79% 80%, rgb(229 144 74 / 17%), transparent 24rem), linear-gradient(145deg, #1b2430, #121820 68%); box-shadow: inset 0 1px rgb(255 255 255 / 5%); }
+.hero-ambient { position: absolute; right: -90px; bottom: -160px; width: 410px; height: 410px; border: 1px solid rgb(229 144 74 / 10%); border-radius: 47% 53% 55% 45%; box-shadow: 0 0 0 42px rgb(229 144 74 / 3%), 0 0 0 88px rgb(229 144 74 / 2%); transform: rotate(-18deg); }
+.hero-topline { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.project-status { display: inline-flex; align-items: center; gap: 8px; color: #bac3cf; font-size: 12px; font-weight: 650; }
+.hero-tools { display: flex; align-items: center; gap: 8px; }
+.hero-content { position: relative; display: flex; max-width: 820px; align-items: center; gap: clamp(22px, 3vw, 42px); margin-top: 32px; }
+.hero-poster { position: relative; display: grid; width: 148px; aspect-ratio: .82; flex: 0 0 auto; place-items: center; overflow: hidden; border: 1px solid #3b4655; border-radius: 12px 30px 12px 12px; background: radial-gradient(circle at 70% 75%, rgb(229 144 74 / 34%), transparent 43%), linear-gradient(145deg, #333e4c, #17202a 70%); box-shadow: 0 24px 48px rgb(0 0 0 / 32%); }
+.hero-poster::before { position: absolute; z-index: 1; inset: 10px; border: 1px solid rgb(255 255 255 / 10%); border-radius: 7px 22px 7px 7px; content: ''; pointer-events: none; }
+.hero-poster > img { width: 100%; height: 100%; object-fit: cover; }
+.hero-poster > span { font-size: 62px; font-weight: 780; text-shadow: 0 8px 25px rgb(0 0 0 / 35%); }
+.hero-copy { min-width: 0; }
+.hero-copy > p { margin-bottom: 8px; color: var(--studio-accent); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.hero-copy h2 { overflow: hidden; margin-bottom: 11px; font-size: clamp(29px, 3.4vw, 48px); line-height: 1.05; letter-spacing: -.045em; text-overflow: ellipsis; white-space: nowrap; }
+.hero-copy > span { display: block; max-width: 55ch; color: #9ba7b6; font-size: 14px; line-height: 1.65; }
+.hero-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 20px; color: #778496; font-size: 11px; }
+.hero-meta span + span { position: relative; }
+.hero-meta span + span::before { position: absolute; top: 50%; left: -10px; width: 2px; height: 2px; border-radius: 50%; background: #566273; content: ''; }
+.hero-actions { position: relative; display: flex; gap: 10px; margin-top: 28px; margin-left: 190px; }
+.workflow-panel { margin-top: 18px; padding: 20px 22px 22px; border: 1px solid var(--studio-border-soft); border-radius: 12px; background: rgb(17 23 31 / 76%); }
+.section-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+.section-title h3 { margin-bottom: 0; font-size: 18px; }
+.section-title > span { color: #6f7c8d; font-size: 11px; }
+.workflow-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0; padding: 0; list-style: none; }
+.workflow-steps li { position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; padding-right: 20px; color: #778496; }
+.workflow-steps li::after { position: absolute; top: 16px; right: 7px; left: 42px; height: 1px; background: #313b49; content: ''; }
+.workflow-steps li:last-child::after { display: none; }
+.workflow-steps li > span { z-index: 1; display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; border: 1px solid #3b4654; border-radius: 9px; background: #161e27; font-family: monospace; font-size: 9px; }
+.workflow-steps li.active > span { border-color: #74543b; color: #17120e; background: var(--studio-accent); box-shadow: 0 0 0 5px rgb(229 144 74 / 8%); }
+.workflow-steps li > div { z-index: 1; display: grid; min-width: 0; gap: 2px; padding-right: 8px; background: #11171f; }
+.workflow-steps strong { overflow: hidden; color: #cbd2da; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-steps small { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-cards { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 12px; margin-top: 12px; }
+.workspace-card { display: flex; min-width: 0; min-height: 166px; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px; border: 1px solid var(--studio-border-soft); border-radius: 10px; background: #121922; transition: border-color .2s ease, transform .2s ease, background-color .2s ease; }
+.workspace-card:hover { border-color: #3b4654; background: #161e28; transform: translateY(-2px); }
+.workspace-card-primary { background: linear-gradient(135deg, rgb(229 144 74 / 10%), #151b23 68%); }
+.workspace-card-index { color: var(--studio-accent); font-family: monospace; font-size: 9px; font-weight: 700; letter-spacing: .1em; }
+.workspace-card h3 { margin-bottom: 6px; color: #e9edf1; font-size: 14px; }
+.workspace-card p { margin-bottom: 0; color: #7f8b9b; font-size: 11px; line-height: 1.6; }
+.workspace-empty { display: grid; min-height: 580px; place-items: center; align-content: center; padding: 40px; text-align: center; }
+.empty-symbol { display: grid; width: 76px; height: 76px; place-items: center; margin-bottom: 22px; border: 1px solid #574333; border-radius: 18px 34px 18px 18px; color: #19130f; background: var(--studio-accent); box-shadow: 0 20px 60px rgb(229 144 74 / 20%); font-size: 30px; }
+.workspace-empty h2 { margin-bottom: 10px; font-size: 28px; }
+.workspace-empty > p:not(.eyebrow) { max-width: 34rem; margin-bottom: 24px; color: #8490a0; line-height: 1.7; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } .form-grid .el-form-item { min-width: 0; }
+.project-cover-upload :deep(.el-upload--picture-card), .project-cover-upload :deep(.el-upload-list__item) { width: 126px; height: 154px; }
 .chapter-workspace { min-height: 100%; padding: 30px; color: #1d2735; } .drawer-header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; padding-bottom: 24px; border-bottom: 1px solid #e9edf3; } .drawer-header h2 { margin-bottom: 8px; } .drawer-actions { display: flex; gap: 8px; white-space: nowrap; }
 .chapter-list { margin-top: 18px; } .chapter-item { display: flex; align-items: center; gap: 14px; padding: 16px 0; border-bottom: 1px solid #edf0f4; } .chapter-number { min-width: 38px; color: #f39a4a; font-family: monospace; font-size: 17px; font-weight: 700; } .chapter-content { flex: 1; min-width: 180px; } .chapter-content p { margin-bottom: 0; font-size: 12px; } .chapter-title-button { max-width: 100%; overflow: hidden; margin: 0 0 5px; padding: 0; border: 0; color: #1d2735; background: transparent; font: inherit; font-size: 15px; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; } .chapter-title-button:hover, .chapter-title-button:focus-visible { color: #d97824; text-decoration: underline; } .chapter-item-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; } .chapter-item-actions :deep(.el-button + .el-button) { margin-left: 0; }
 .chapter-analysis-progress { max-width: 520px; margin-top: 10px; padding: 12px 14px; border: 1px solid #f1dfcc; border-radius: 12px; background: linear-gradient(135deg, #fffaf4, #fff); box-shadow: 0 7px 20px rgb(126 77 31 / 7%); }
@@ -3105,7 +2712,22 @@ button.shot-reference-card:disabled { cursor: default; }
 .duration-editor { display: flex; align-items: center; gap: 9px; }
 .duration-editor > span { color: #566173; }
 .duration-editor > small { color: #8793a3; }
+@media (max-width: 1100px) {
+  .studio-shell { grid-template-columns: 260px minmax(0, 1fr); }
+  .hero-poster { width: 116px; }
+  .hero-actions { margin-left: 150px; }
+  .workspace-cards { grid-template-columns: 1fr 1fr; }
+  .workspace-card-primary { grid-column: 1 / -1; min-height: 138px; }
+  .workflow-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 0; }
+  .workflow-steps li:nth-child(2)::after { display: none; }
+}
+@media (max-width: 820px) {
+  .studio-shell { grid-template-columns: 1fr; }
+  .project-rail, .project-workspace { border-radius: 15px; }
+  .project-list { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 300px; }
+}
 @media (max-width: 700px) { .studio-page { padding: 20px; } .studio-header { align-items: flex-start; flex-direction: column; } .header-actions { width: 100%; } .header-actions .el-button { flex: 1; } .toolbar .el-input { width: 100%; } .toolbar { flex-wrap: wrap; } .form-grid, .video-summary-grid, .chapter-video-version-grid { grid-template-columns: 1fr; gap: 0; } .video-summary-grid, .chapter-video-version-grid { gap: 8px; } .video-summary-heading, .duration-editor, .chapter-video-shot-heading { align-items: flex-start; flex-direction: column; } .chapter-item { align-items: flex-start; flex-wrap: wrap; } .chapter-item-actions { width: 100%; justify-content: flex-start; } .chapter-video-scene-heading { align-items: flex-start; } .chapter-video-scene-heading div { align-items: flex-start; flex-direction: column; gap: 3px; } .chapter-video-toolbar-actions { justify-content: stretch; } .chapter-video-toolbar-actions .el-button { flex: 1; } }
+@media (max-width: 700px) { .studio-heading { align-items: flex-start; } .studio-mark { width: 42px; height: 48px; flex: 0 0 auto; } .studio-header { margin-bottom: 18px; } .project-rail, .project-workspace { padding: 14px; } .project-list { grid-template-columns: 1fr; max-height: 330px; } .project-hero { min-height: 0; padding: 20px; } .hero-content { align-items: flex-start; gap: 18px; margin-top: 24px; } .hero-poster { width: 82px; border-radius: 9px 20px 9px 9px; } .hero-poster > span { font-size: 36px; } .hero-copy h2 { font-size: 27px; white-space: normal; } .hero-copy > span { font-size: 12px; } .hero-meta { gap: 6px 14px; } .hero-actions { flex-wrap: wrap; margin: 22px 0 0; } .hero-actions .el-button:first-child { flex: 1; } .section-title { align-items: flex-start; flex-direction: column; gap: 4px; } .workflow-steps { grid-template-columns: 1fr; gap: 14px; } .workflow-steps li::after { top: 31px; right: auto; bottom: -15px; left: 16px; width: 1px; height: 16px; } .workflow-steps li:nth-child(2)::after { display: block; } .workflow-steps li:last-child::after { display: none; } .workspace-cards { grid-template-columns: 1fr; } .workspace-card-primary { grid-column: auto; } }
 @media (max-width: 700px) { .chapter-content { width: calc(100% - 52px); } .chapter-analysis-progress { max-width: none; } .chapter-analysis-phases li { align-items: center; flex-direction: column; gap: 3px; text-align: center; } .chapter-analysis-phases li::after { top: 9px; right: -50%; left: 50%; } .chapter-analysis-phases li small { width: 100%; padding: 0; background: transparent; } }
 @media (max-width: 700px) { .chapter-material-stats, .chapter-material-card-grid, .keyframe-action-row { grid-template-columns: 1fr; } .chapter-material-card-grid { padding: 12px; } .shot-reference-heading { align-items: flex-start; flex-direction: column; } .shot-reference-tags { justify-content: flex-start; } .shot-reference-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .chapter-video-toolbar-actions { flex-wrap: wrap; } }
 </style>

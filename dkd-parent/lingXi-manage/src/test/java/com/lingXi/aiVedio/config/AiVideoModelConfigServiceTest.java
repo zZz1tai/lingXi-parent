@@ -1,7 +1,6 @@
 package com.lingXi.aiVedio.config;
 
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,10 +49,8 @@ class AiVideoModelConfigServiceTest
             return 1;
         });
 
-        String masterKey = Base64.getEncoder().encodeToString(new byte[32]);
         service = new AiVideoModelConfigService();
         ReflectionTestUtils.setField(service, "sysConfigService", sysConfigService);
-        ReflectionTestUtils.setField(service, "secretCipher", new AiVideoSecretCipher(masterKey));
         ReflectionTestUtils.setField(service, "videoProviderProperties", providerProperties);
     }
 
@@ -68,7 +65,7 @@ class AiVideoModelConfigServiceTest
     }
 
     @Test
-    void savesEncryptedKeyReturnsOnlyMaskAndPreservesKeyWhenUnchanged() throws Exception
+    void savesDatabaseKeyReturnsOnlyMaskAndPreservesKeyWhenUnchanged() throws Exception
     {
         String apiKey = "sk-page-secret-1234567890";
         AiVideoModelConfig input = validInput();
@@ -77,8 +74,7 @@ class AiVideoModelConfigServiceTest
         AiVideoModelConfig display = service.updateConfig(input, "tester");
 
         String stored = values.get("aivideo.model.apiKey");
-        assertTrue(stored.startsWith("enc:v1:"));
-        assertFalse(stored.contains(apiKey));
+        assertEquals(apiKey, stored);
         assertTrue(Boolean.TRUE.equals(display.getApiKeyConfigured()));
         assertEquals("sk-p********7890", display.getApiKeyMasked());
         assertNull(display.getApiKey());

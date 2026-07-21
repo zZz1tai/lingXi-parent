@@ -55,11 +55,15 @@ public class AiVideoProjectServiceImpl implements IAiVideoProjectService
         {
             throw new ServiceException("项目ID不能为空");
         }
-        checkProjectOwner(project.getProjectId());
+        AiVideoProject existing = projectMapper.selectAiVideoProjectByProjectId(project.getProjectId());
+        checkProjectOwner(existing);
         validateProject(project);
-        project.setUpdateBy(SecurityUtils.getUsername());
-        project.setUpdateTime(DateUtils.getNowDate());
-        return projectMapper.updateAiVideoProject(project);
+        existing.setProjectName(project.getProjectName());
+        existing.setCoverUrl(project.getCoverUrl());
+        existing.setVisualStyle(project.getVisualStyle());
+        existing.setUpdateBy(SecurityUtils.getUsername());
+        existing.setUpdateTime(DateUtils.getNowDate());
+        return projectMapper.updateAiVideoProject(existing);
     }
 
     @Override
@@ -95,6 +99,10 @@ public class AiVideoProjectServiceImpl implements IAiVideoProjectService
         if (project.getProjectName().length() > 128)
         {
             throw new ServiceException("项目名称不能超过128个字符");
+        }
+        if (!StringUtils.isEmpty(project.getCoverUrl()) && project.getCoverUrl().length() > 1024)
+        {
+            throw new ServiceException("项目封面地址不能超过1024个字符");
         }
     }
 

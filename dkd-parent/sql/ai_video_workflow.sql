@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS ai_video_project (
   adaptation_mode VARCHAR(32) NOT NULL DEFAULT 'FAITHFUL' COMMENT '改编模式:FAITHFUL/ADAPTIVE',
   status VARCHAR(32) NOT NULL DEFAULT 'DRAFT' COMMENT '状态:DRAFT/ACTIVE/PAUSED/ARCHIVED',
   owner_user_id BIGINT NOT NULL COMMENT '所属用户ID',
+  cover_url VARCHAR(1024) DEFAULT NULL COMMENT '项目封面图片URL',
   visual_style VARCHAR(255) DEFAULT NULL COMMENT '视觉风格摘要',
   style_guide_json JSON DEFAULT NULL COMMENT '全局风格、色板、摄影规则',
   default_aspect_ratio VARCHAR(16) NOT NULL DEFAULT '16:9' COMMENT '默认画幅',

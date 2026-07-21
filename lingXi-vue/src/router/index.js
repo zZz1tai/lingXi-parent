@@ -135,6 +135,20 @@ export const constantRoutes = [
 // 动态路由，基于用户权限动态去加载
 export const dynamicRoutes = [
   {
+    path: '/aiVedio/chapter-workspace',
+    component: Layout,
+    hidden: true,
+    permissions: ['aivideo:project:list'],
+    children: [
+      {
+        path: ':projectId(\\d+)/:chapterId(\\d+)',
+        component: () => import('@/views/aiVedio/chapterWorkspace/index'),
+        name: 'AiVedioChapterWorkspace',
+        meta: { title: '章节素材工作台', activeMenu: '/aiVedio/project', noCache: true }
+      }
+    ]
+  },
+  {
     path: '/aiVedio/model-config',
     component: Layout,
     hidden: true,

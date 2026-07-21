@@ -81,7 +81,7 @@
           </el-form-item>
           <div class="security-note">
             <el-icon><Lock /></el-icon>
-            API Key 会加密保存；重新打开页面只显示首尾字符，中间以 ** 隐藏，接口不会回传明文。
+            API Key 保存后只显示首尾字符，中间以 ** 隐藏，接口不会回传完整内容。
           </div>
         </section>
 

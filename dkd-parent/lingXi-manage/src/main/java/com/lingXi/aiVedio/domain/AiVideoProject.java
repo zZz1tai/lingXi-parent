@@ -18,6 +18,7 @@ public class AiVideoProject extends BaseEntity
     private String adaptationMode;
     private String status;
     private Long ownerUserId;
+    private String coverUrl;
     private String visualStyle;
     private String styleGuideJson;
     private String defaultAspectRatio;

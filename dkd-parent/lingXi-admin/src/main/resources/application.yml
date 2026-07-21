@@ -172,9 +172,6 @@ video:
 
 # AI 视频图片任务节流配置
 aivideo:
-  secret:
-    # 仅用于加密页面保存的 API Key；必须通过环境变量提供 Base64 编码的 32 字节密钥。
-    encryption-key: ${AIVIDEO_CONFIG_ENCRYPTION_KEY:}
   video:
     provider: happyhorse
     poll-interval-ms: 15000

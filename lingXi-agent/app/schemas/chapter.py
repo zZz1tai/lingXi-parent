@@ -233,25 +233,12 @@ class ChapterStoryBible(ChapterContractModel):
     scenes: list[ChapterScene] = Field(min_length=1)
 
 
-class ChapterScenePlan(ChapterContractModel):
-    """Small scene boundary produced before expensive shot generation."""
-
-    scene_no: Optional[int] = Field(default=None, alias="sceneNo")
-    title: NonBlankText
-    time: NonBlankText
-    location: NonBlankText
-    atmosphere: NonBlankText
-    dramatic_goal: NonBlankText = Field(alias="dramaticGoal")
-    characters: list[Any] = Field(default_factory=list)
-    source_unit_ids: list[NonBlankText] = Field(
-        alias="sourceUnitIds",
-        min_length=1,
-        max_length=MAX_SCENE_SOURCE_UNITS,
-    )
-
-
 class ChapterAnalysisPlan(ChapterContractModel):
-    """Validated chapter skeleton used to generate one bounded scene at a time."""
+    """Global chapter facts plus semantic scene-end suggestions from the model.
+
+    Source-unit membership is deliberately not model-owned. The service turns
+    these optional break suggestions into a complete, ordered partition.
+    """
 
     summary: NonBlankText
     world_setting: NonBlankText = Field(alias="worldSetting")
@@ -260,7 +247,7 @@ class ChapterAnalysisPlan(ChapterContractModel):
     immutable_facts: list[Any] = Field(alias="immutableFacts")
     segmentation_rationale: NonBlankText = Field(alias="segmentationRationale")
     characters: list[ChapterCharacter]
-    scenes: list[ChapterScenePlan] = Field(min_length=1)
+    scene_breaks: list[NonBlankText] = Field(default_factory=list, alias="sceneBreaks")
 
 
 def validate_chapter_plan_structure(document: Any) -> dict[str, Any]:
