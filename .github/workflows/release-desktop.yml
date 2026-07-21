@@ -1,0 +1,56 @@
+name: Release Windows Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: lingXi-vue
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: lingXi-vue/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Build signed installer
+        run: npm run build:exe
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Create updater manifest
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem 'src-tauri/target/release/bundle/nsis/*-setup.exe' | Select-Object -First 1
+          $signature = Get-Content "$($installer.FullName).sig" -Raw
+          $tag = '${{ github.ref_name }}'
+          $manifest = @{
+            version = $tag.TrimStart('v')
+            notes = "GitHub Release $tag"
+            pub_date = (Get-Date).ToUniversalTime().ToString('o')
+            platforms = @{
+              'windows-x86_64' = @{
+                signature = $signature.Trim()
+                url = "https://github.com/zZz1tai/lingXi-parent/releases/download/$tag/$($installer.Name)"
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+          Set-Content -Path 'latest.json' -Value $manifest -Encoding utf8
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            lingXi-vue/src-tauri/target/release/bundle/nsis/*-setup.exe
+            lingXi-vue/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
+            lingXi-vue/latest.json

@@ -136,12 +136,13 @@
                   <el-option label="1080P" value="1080P" />
                 </el-select>
               </el-form-item>
-              <el-form-item label="画面比例" prop="videoRatio">
+              <el-form-item label="成片画幅" prop="videoRatio">
                 <el-select v-model="form.videoRatio">
                   <el-option v-for="ratio in ratios" :key="ratio" :label="ratio" :value="ratio" />
                 </el-select>
               </el-form-item>
             </div>
+            <p class="adapter-note">场景图和关键帧会跟随成片方向生成；人物三视图为保证正面、侧面、背面并排展示，始终使用 16:9。</p>
             <div class="switch-row">
               <div><strong>供应商水印</strong><span>在视频右下角添加 Happy Horse 标识</span></div>
               <el-switch v-model="form.videoWatermark" />

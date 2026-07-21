@@ -9,6 +9,8 @@
       <div><small>当前项目</small><h2>{{ project?.projectName || '正在读取项目' }}</h2></div>
     </div>
 
+    <el-button class="add-chapter-button" :icon="Plus" @click="$emit('add')">添加新章节</el-button>
+
     <div class="chapter-heading">
       <div><span>章节目录</span><strong>{{ chapters.length }}</strong></div>
       <small>选择章节查看素材和视频版本</small>
@@ -47,7 +49,7 @@
 </template>
 
 <script setup>
-import { ArrowLeft } from '@element-plus/icons-vue'
+import { ArrowLeft, Plus } from '@element-plus/icons-vue'
 
 defineProps({
   project: { type: Object, default: null },
@@ -57,7 +59,7 @@ defineProps({
   error: { type: String, default: '' }
 })
 
-defineEmits(['back', 'select', 'retry'])
+defineEmits(['back', 'add', 'select', 'retry'])
 
 function pipelineLabel(status) {
   return { IMPORTED: '待解析', PARSING: '解析中', SCRIPT_READY: '素材已准备', VIDEO_READY: '视频已准备' }[status] || status || '待处理'
@@ -80,6 +82,8 @@ function statusClass(chapter) {
 .project-heading div { min-width: 0; }
 .project-heading small { color: #e5904a; font-size: 9px; font-weight: 700; letter-spacing: .08em; }
 .project-heading h2 { overflow: hidden; margin: 3px 0 0; color: #edf1f5; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.add-chapter-button { width: 100%; margin-top: 18px; border-color: #59422f; color: #efaa6d; background: rgb(229 144 74 / 7%); }
+.add-chapter-button:hover, .add-chapter-button:focus { border-color: #e5904a; color: #17120e; background: #e5904a; }
 .chapter-heading { padding: 20px 2px 13px; }
 .chapter-heading > div { display: flex; align-items: baseline; justify-content: space-between; }
 .chapter-heading span { color: #dce2e9; font-size: 14px; font-weight: 700; }

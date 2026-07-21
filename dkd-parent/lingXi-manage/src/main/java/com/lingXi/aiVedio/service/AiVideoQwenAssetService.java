@@ -8,10 +8,9 @@ import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
-import com.lingXi.aiVedio.domain.AiVideoProject;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
-import com.lingXi.aiVedio.mapper.AiVideoProjectMapper;
+import com.lingXi.aiVedio.util.AiVideoImageAspectRatioPolicy;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 import com.lingXi.aiVedio.service.AiVideoImageReferenceService.ResolvedImageReferences;
 
@@ -23,8 +22,6 @@ public class AiVideoQwenAssetService
     private AiVideoAssetMapper assetMapper;
     @Autowired
     private AiVideoGenerationTaskMapper taskMapper;
-    @Autowired
-    private AiVideoProjectMapper projectMapper;
     @Autowired
     private VideoClient videoClient;
     @Autowired
@@ -127,15 +124,10 @@ public class AiVideoQwenAssetService
     {
         try
         {
-            AiVideoProject project = projectMapper.selectAiVideoProjectByProjectId(asset.getProjectId());
-            String aspectRatio = project == null ? null : project.getDefaultAspectRatio();
-            if (aspectRatio != null)
-            {
-                aspectRatio = aspectRatio.trim();
-                if (aspectRatio.isEmpty()) aspectRatio = null;
-            }
             ResolvedImageReferences references = imageReferenceService.resolveAndValidate(asset);
             AiVideoModelConfig runtimeConfig = modelConfigService.getRequiredConfig();
+            String aspectRatio = AiVideoImageAspectRatioPolicy.resolve(
+                    asset.getAssetType(), runtimeConfig.getVideoRatio());
             String imageModel = runtimeConfig.getImageModel();
             String requestJson = AiVideoJsonMetadata.imageGenerationRequest(asset.getPromptText(),
                     asset.getNegativePromptText(), imageModel, asset.getAssetType(), aspectRatio,

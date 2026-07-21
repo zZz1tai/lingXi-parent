@@ -8,6 +8,7 @@
         :loading="chapterLoading"
         :error="chapterError"
         @back="goBack"
+        @add="openChapterDialog"
         @select="selectChapter"
         @retry="loadContext"
       />
@@ -20,10 +21,33 @@
             <p>先锁定人物三视图与空场景，再为每个镜头绑定参考资产并生成关键帧。</p>
           </div>
           <div class="header-actions">
+            <el-button
+              type="warning"
+              plain
+              :icon="Reading"
+              :loading="analyzing"
+              :disabled="!currentChapter || analysisRunning"
+              @click="analyzeCurrentChapter"
+            >
+              {{ analysisRunning ? '解析进行中' : '解析章节' }}
+            </el-button>
             <el-button :icon="Refresh" :loading="assetLoading" @click="loadAssets">刷新</el-button>
             <el-button type="primary" :icon="VideoPlay" :loading="preparing" @click="prepareVideoDrafts">准备视频草稿</el-button>
           </div>
         </header>
+
+        <section v-if="analysisRunning" class="analysis-progress" :class="`is-${String(chapterTask?.status || 'running').toLowerCase()}`">
+          <div class="analysis-progress__heading">
+            <div>
+              <small>CHAPTER ANALYSIS</small>
+              <strong>{{ analysisStageLabel }}</strong>
+            </div>
+            <span>{{ analysisProgress }}%</span>
+          </div>
+          <el-progress :percentage="analysisProgress" :show-text="false" :stroke-width="7" />
+          <p v-if="chapterTask?.errorMessage">{{ chapterTask.errorMessage }}</p>
+          <p v-else>{{ analysisRunning ? '正在提取人物、场景与分镜信息，完成后素材区会自动刷新。' : '章节解析状态已更新，可以继续处理人物、场景和分镜素材。' }}</p>
+        </section>
 
         <el-alert
           v-if="contextError"
@@ -50,13 +74,6 @@
             <small>04 · VIDEO TAKES</small><strong>{{ videoAssets.length }}</strong><span>视频候选</span>
           </button>
         </section>
-
-        <nav class="workspace-tabs" aria-label="素材类型">
-          <button :class="{ active: activeTab === 'characters' }" @click="activeTab = 'characters'">人物三视图</button>
-          <button :class="{ active: activeTab === 'scenes' }" @click="activeTab = 'scenes'">空场景图</button>
-          <button :class="{ active: activeTab === 'shots' }" @click="activeTab = 'shots'">关键帧与绑定</button>
-          <button :class="{ active: activeTab === 'videos' }" @click="activeTab = 'videos'">视频候选</button>
-        </nav>
 
         <asset-panel
           v-if="activeTab === 'characters'"
@@ -131,6 +148,40 @@
         />
       </main>
     </div>
+
+    <el-dialog
+      v-model="chapterDialog.open"
+      title="导入小说章节"
+      width="min(700px, calc(100vw - 24px))"
+      append-to-body
+      :close-on-click-modal="!chapterDialog.submitting"
+      :show-close="!chapterDialog.submitting"
+    >
+      <el-form ref="chapterFormRef" :model="chapterForm" :rules="chapterRules" label-position="top">
+        <div class="chapter-form-grid">
+          <el-form-item label="章节序号" prop="chapterNo">
+            <el-input-number v-model="chapterForm.chapterNo" :min="1" :precision="0" controls-position="right" />
+          </el-form-item>
+          <el-form-item label="章节标题">
+            <el-input v-model="chapterForm.chapterTitle" maxlength="200" placeholder="例如：雨夜的病历" />
+          </el-form-item>
+        </div>
+        <el-form-item label="小说原文" prop="sourceText">
+          <el-input
+            v-model="chapterForm.sourceText"
+            type="textarea"
+            :rows="12"
+            maxlength="100000"
+            show-word-limit
+            placeholder="粘贴本章节正文；保存后将作为可追溯的生成依据。"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button :disabled="chapterDialog.submitting" @click="chapterDialog.open = false">取消</el-button>
+        <el-button type="primary" :loading="chapterDialog.submitting" @click="submitChapter">保存并进入章节</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="promptDialog.open" :title="promptDialog.title" width="min(720px, calc(100vw - 24px))" append-to-body>
       <el-alert
@@ -220,11 +271,13 @@
 </template>
 
 <script setup name="AiVedioChapterWorkspace">
-import { Refresh, VideoPlay } from '@element-plus/icons-vue'
+import { Reading, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import ChapterRail from './components/ChapterRail.vue'
 import AssetPanel from './components/AssetPanel.vue'
 import VideoVersionPanel from './components/VideoVersionPanel.vue'
 import {
+  addAiVideoChapter,
+  analyzeAiVideoChapter,
   approveAiVideoAsset,
   createAiVideoAssetVideoDraft,
   delAiVideoAsset,
@@ -245,6 +298,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const { proxy } = getCurrentInstance()
+const chapterFormRef = ref()
 
 const project = ref(null)
 const chapters = ref([])
@@ -252,18 +306,32 @@ const assets = ref([])
 const taskByAssetId = ref({})
 const chapterLoading = ref(false)
 const assetLoading = ref(false)
+const analyzing = ref(false)
 const preparing = ref(false)
+const chapterTask = ref(null)
 const chapterError = ref('')
 const assetError = ref('')
 const contextError = ref('')
 const activeTab = ref('characters')
-let pollTimer = null
+const chapterDialog = reactive({ open: false, submitting: false })
+const chapterForm = reactive({ chapterNo: 1, chapterTitle: '', sourceText: '' })
+const chapterRules = {
+  chapterNo: [{ required: true, message: '请输入章节序号', trigger: 'change' }],
+  sourceText: [{ required: true, message: '请粘贴章节原文', trigger: 'blur' }]
+}
 let autoPrepareKey = ''
+let analysisPollTimer = null
 
 const projectId = computed(() => route.params.projectId)
 const chapterId = computed(() => route.params.chapterId)
 const currentChapter = computed(() => chapters.value.find(chapter => String(chapter.chapterId) === String(chapterId.value)) || null)
 const chapterTitle = computed(() => currentChapter.value?.chapterTitle || (currentChapter.value ? `第 ${currentChapter.value.chapterNo} 章` : '章节素材工作台'))
+const analysisRunning = computed(() => currentChapter.value?.parseStatus === 'RUNNING' || ['QUEUED', 'RUNNING'].includes(chapterTask.value?.status))
+const analysisProgress = computed(() => {
+  const value = Number(chapterTask.value?.progress ?? chapterTask.value?.progressPercent)
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : 0
+})
+const analysisStageLabel = computed(() => chapterTask.value?.stageLabel || ({ QUEUED: '等待分析任务执行', RUNNING: '正在解析章节', SUCCEEDED: '章节解析已完成', FAILED: '章节解析失败' }[chapterTask.value?.status] || '正在准备章节解析'))
 const characterReferenceAssets = computed(() => assets.value.filter(asset => asset.assetType === 'CHARACTER_REFERENCE'))
 const sceneReferenceAssets = computed(() => assets.value.filter(asset => asset.assetType === 'SCENE_REFERENCE'))
 const keyframeAssets = computed(() => assets.value.filter(asset => asset.assetType === 'SHOT_KEYFRAME'))
@@ -312,6 +380,54 @@ const bindingSelectionReady = computed(() => {
     && selectedCharacters.every(asset => asset.status === 'APPROVED')
 })
 
+function openChapterDialog() {
+  const chapterNumbers = chapters.value.map(chapter => Number(chapter.chapterNo)).filter(Number.isFinite)
+  Object.assign(chapterForm, {
+    chapterNo: chapterNumbers.length ? Math.max(...chapterNumbers) + 1 : 1,
+    chapterTitle: '',
+    sourceText: ''
+  })
+  chapterDialog.open = true
+  nextTick(() => chapterFormRef.value?.clearValidate())
+}
+
+async function submitChapter() {
+  if (chapterDialog.submitting) return
+  try {
+    await chapterFormRef.value?.validate()
+  } catch (error) {
+    return
+  }
+  chapterDialog.submitting = true
+  try {
+    const response = await addAiVideoChapter(projectId.value, {
+      chapterNo: chapterForm.chapterNo,
+      chapterTitle: chapterForm.chapterTitle,
+      sourceText: chapterForm.sourceText
+    })
+    const chapterResponse = await listAiVideoChapter(projectId.value)
+    const chapterRows = chapterResponse.rows || chapterResponse.data || []
+    chapters.value = chapterRows
+    const responseData = response?.data
+    const createdId = responseData?.chapterId ?? (typeof responseData === 'number' || typeof responseData === 'string' ? responseData : null)
+    const createdChapter = chapterRows.find(chapter => String(chapter.chapterId) === String(createdId))
+      || [...chapterRows]
+        .filter(chapter => Number(chapter.chapterNo) === Number(chapterForm.chapterNo))
+        .sort((left, right) => Number(right.chapterId) - Number(left.chapterId))[0]
+    if (!createdChapter?.chapterId) throw new Error('章节已保存，但未能定位新章节')
+    chapterDialog.open = false
+    proxy.$modal.msgSuccess('新章节已添加')
+    await router.push({
+      name: 'AiVedioChapterWorkspace',
+      params: { projectId: projectId.value, chapterId: createdChapter.chapterId }
+    })
+  } catch (error) {
+    proxy.$modal.msgError(errorMessage(error, '新章节添加失败'))
+  } finally {
+    chapterDialog.submitting = false
+  }
+}
+
 async function loadContext() {
   chapterLoading.value = true
   chapterError.value = ''
@@ -355,28 +471,96 @@ async function fetchAllAssets(query) {
   return result
 }
 
-async function loadAssets() {
+async function loadAssets({ silent = false } = {}) {
   if (!projectId.value || !chapterId.value) return
-  assetLoading.value = true
+  const wasAnalysisRunning = analysisRunning.value
+  if (!silent) assetLoading.value = true
   assetError.value = ''
   try {
-    const [chapterAssetRows, characterAssetRows, taskResponse] = await Promise.all([
+    const [chapterAssetRows, characterAssetRows, taskResponse, chapterResponse] = await Promise.all([
       fetchAllAssets({ projectId: projectId.value, chapterId: chapterId.value }),
       fetchAllAssets({ projectId: projectId.value, assetType: 'CHARACTER_REFERENCE' }),
-      listAiVideoTask(projectId.value)
+      listAiVideoTask(projectId.value),
+      listAiVideoChapter(projectId.value)
     ])
+    chapters.value = chapterResponse.rows || chapterResponse.data || []
     const assetById = new Map()
     const combinedAssetRows = [...characterAssetRows, ...chapterAssetRows]
     combinedAssetRows.forEach(asset => assetById.set(String(asset.assetId), asset))
     assets.value = Array.from(assetById.values())
     const tasks = taskResponse.rows || taskResponse.data || []
     taskByAssetId.value = Object.fromEntries(tasks.filter(task => task.assetId).map(task => [task.assetId, task]))
-    schedulePolling()
+    const latestChapterTask = tasks
+      .filter(task => task.taskType === 'STORY_BIBLE' && String(task.chapterId) === String(chapterId.value))
+      .sort((left, right) => Number(right.taskId) - Number(left.taskId))[0]
+    chapterTask.value = latestChapterTask ? normalizeAnalysisTask(latestChapterTask) : null
+    if (wasAnalysisRunning && !analysisRunning.value) {
+      if (chapterTask.value?.status === 'SUCCEEDED') proxy.$modal.msgSuccess('章节解析成功')
+      if (chapterTask.value?.status === 'FAILED') proxy.$modal.msgError(chapterTask.value.errorMessage || '章节解析失败')
+    }
+    scheduleAnalysisPolling()
   } catch (error) {
     assetError.value = errorMessage(error, '章节素材读取失败')
   } finally {
-    assetLoading.value = false
+    if (!silent) assetLoading.value = false
   }
+}
+
+function normalizeAnalysisTask(task) {
+  let stage = {}
+  try {
+    stage = typeof task.requestJson === 'string' ? JSON.parse(task.requestJson || '{}') : (task.requestJson || {})
+  } catch (error) {
+    stage = {}
+  }
+  return {
+    ...task,
+    progress: Math.max(0, Math.min(100, Number(task.progress ?? task.progressPercent) || 0)),
+    stageCode: stage.stageCode || task.stageCode || (task.status === 'QUEUED' ? 'QUEUED' : ''),
+    stageLabel: stage.stageLabel || task.stageLabel || '',
+    errorMessage: String(task.errorMessage || '').replace(/^retryable=(true|false)\s*\|\s*/i, '')
+  }
+}
+
+async function analyzeCurrentChapter() {
+  if (!currentChapter.value || analysisRunning.value || analyzing.value) return
+  analyzing.value = true
+  try {
+    const response = await analyzeAiVideoChapter(projectId.value, chapterId.value)
+    const taskId = response.taskId ?? response.data?.taskId
+    currentChapter.value.parseStatus = 'RUNNING'
+    chapterTask.value = {
+      taskId,
+      chapterId: chapterId.value,
+      taskType: 'STORY_BIBLE',
+      status: 'QUEUED',
+      progress: 0,
+      stageCode: 'QUEUED',
+      stageLabel: '任务已提交，等待分析线程执行',
+      errorMessage: ''
+    }
+    proxy.$modal.msgSuccess(taskId ? `已创建解析任务 #${taskId}` : '章节解析任务已创建')
+    scheduleAnalysisPolling()
+    await loadAssets({ silent: true })
+  } catch (error) {
+    proxy.$modal.msgError(errorMessage(error, '章节解析任务创建失败'))
+  } finally {
+    analyzing.value = false
+  }
+}
+
+function scheduleAnalysisPolling() {
+  stopAnalysisPolling()
+  const hasGeneratingAsset = assets.value.some(asset => asset.status === 'GENERATING')
+  if (analysisRunning.value || hasGeneratingAsset) {
+    analysisPollTimer = setTimeout(() => loadAssets({ silent: true }), 2500)
+  }
+}
+
+function stopAnalysisPolling() {
+  if (!analysisPollTimer) return
+  clearTimeout(analysisPollTimer)
+  analysisPollTimer = null
 }
 
 async function openKeyframeBinding(asset) {
@@ -607,24 +791,16 @@ function goBack() {
   router.push('/aiVedio/project')
 }
 
-function schedulePolling() {
-  stopPolling()
-  const busy = assets.value.some(asset => asset.status === 'GENERATING') || Object.values(taskByAssetId.value).some(task => ['PENDING', 'RUNNING', 'PROCESSING', 'GENERATING', 'SUBMITTED'].includes(task.status))
-  if (busy) pollTimer = setTimeout(loadAssets, 5000)
-}
-
-function stopPolling() {
-  if (pollTimer) clearTimeout(pollTimer)
-  pollTimer = null
-}
-
 function errorMessage(error, fallback) {
   return error?.response?.data?.msg || error?.message || error?.msg || fallback
 }
 
-watch(() => [route.params.projectId, route.params.chapterId], loadContext)
-onBeforeUnmount(stopPolling)
-loadContext()
+watch(() => [route.params.projectId, route.params.chapterId], () => {
+  stopAnalysisPolling()
+  chapterTask.value = null
+  loadContext()
+}, { immediate: true })
+onBeforeUnmount(stopAnalysisPolling)
 </script>
 
 <style scoped>
@@ -635,9 +811,20 @@ loadContext()
 .eyebrow { margin: 0 0 7px; color: #e5904a; font-size: 10px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
 .workspace-header h1 { margin: 0 0 7px; font-size: clamp(28px, 3vw, 42px); line-height: 1.08; letter-spacing: -.04em; }
 .workspace-header p:not(.eyebrow) { margin: 0; color: #8490a0; font-size: 13px; }
-.header-actions { display: flex; gap: 9px; }
+.header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; }
 .chapter-studio :deep(.el-button--primary) { --el-button-bg-color: #e5904a; --el-button-border-color: #e5904a; --el-button-text-color: #17120e; --el-button-hover-bg-color: #f0a15d; --el-button-hover-border-color: #f0a15d; --el-button-hover-text-color: #17120e; }
 .context-alert { margin: 18px 0; }
+.analysis-progress { margin: 18px 0 0; padding: 14px 16px; border: 1px solid #3a4655; border-radius: 10px; background: linear-gradient(135deg, rgb(229 144 74 / 10%), #101720); }
+.analysis-progress__heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 11px; }
+.analysis-progress__heading div { display: grid; gap: 4px; }
+.analysis-progress__heading small { color: #b57845; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
+.analysis-progress__heading strong { color: #e6ebf0; font-size: 13px; }
+.analysis-progress__heading > span { color: #e5904a; font-family: Consolas, monospace; font-size: 18px; font-weight: 700; }
+.analysis-progress p { margin: 9px 0 0; color: #7f8b9b; font-size: 11px; line-height: 1.5; }
+.analysis-progress.is-failed { border-color: rgb(199 91 91 / 55%); }
+.analysis-progress.is-failed p { color: #dc8d8d; }
+.analysis-progress :deep(.el-progress-bar__outer) { background: #293440; }
+.analysis-progress :deep(.el-progress-bar__inner) { background: linear-gradient(90deg, #d67831, #efa15e); }
 .overview-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 20px 0 16px; }
 .overview-grid button { display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; gap: 4px 12px; padding: 15px 16px; border: 1px solid #293443; border-radius: 10px; color: #7d8999; background: #101720; font: inherit; text-align: left; cursor: pointer; transition: border-color .2s ease, transform .2s ease, background-color .2s ease; }
 .overview-grid button:hover, .overview-grid button.active { border-color: #59422f; background: rgb(229 144 74 / 6%); transform: translateY(-1px); }
@@ -652,7 +839,9 @@ loadContext()
 .binding-alert { margin-bottom: 12px; }
 .binding-form :deep(.el-select) { width: 100%; }
 .binding-help { display: block; margin-top: 8px; color: #7a8695; font-size: 11px; line-height: 1.6; }
+.chapter-form-grid { display: grid; grid-template-columns: minmax(150px, .6fr) minmax(0, 1.4fr); gap: 16px; }
+.chapter-form-grid :deep(.el-input-number) { width: 100%; }
 @media (max-width: 900px) { .workspace-shell { grid-template-columns: 1fr; } .workspace-main { min-height: auto; border-radius: 15px; } }
 @media (max-width: 1100px) { .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 680px) { .chapter-studio { padding: 12px; } .workspace-main { padding: 16px; } .workspace-header { align-items: flex-start; flex-direction: column; } .header-actions { width: 100%; } .header-actions :deep(.el-button) { flex: 1; } .overview-grid { grid-template-columns: 1fr; } .workspace-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .binding-status-row { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 680px) { .chapter-studio { padding: 12px; } .workspace-main { padding: 16px; } .workspace-header { align-items: flex-start; flex-direction: column; } .header-actions { width: 100%; justify-content: stretch; } .header-actions :deep(.el-button) { flex: 1; } .overview-grid { grid-template-columns: 1fr; } .workspace-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .binding-status-row { align-items: flex-start; flex-direction: column; } .chapter-form-grid { grid-template-columns: 1fr; gap: 0; } }
 </style>
