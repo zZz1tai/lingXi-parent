@@ -64,4 +64,21 @@
         order by relation_row.relation_order asc, relation_row.relation_id asc
     </select>
 
+    <select id="selectAutoKeyframeIdsReferencingAssetFamily" resultType="java.lang.Long">
+        select distinct target.asset_id
+        from ai_video_asset_relation relation_row
+        inner join ai_video_asset source
+                on source.asset_id = relation_row.from_asset_id and source.del_flag = '0'
+        inner join ai_video_asset target
+                on target.asset_id = relation_row.to_asset_id and target.del_flag = '0'
+        where source.project_id = #{projectId} and source.asset_code = #{assetCode}
+          and source.asset_id != #{currentAssetId}
+          and relation_row.relation_type = 'REFERENCE_IMAGE'
+          and target.asset_type = 'SHOT_KEYFRAME'
+          and target.status in ('DRAFT', 'REJECTED', 'GENERATED', 'APPROVED')
+          and coalesce(json_unquote(json_extract(target.metadata_json, '$.archived')), 'false') not in ('true', '1')
+          and upper(coalesce(json_unquote(json_extract(target.metadata_json, '$.referenceBindingMode')), 'AUTO')) = 'AUTO'
+        order by target.asset_id
+    </select>
+
 </mapper>

@@ -78,6 +78,15 @@ public interface AiVideoAssetMapper
 
     int logicallyDeleteAiVideoAsset(@Param("assetId") Long assetId, @Param("updateBy") String updateBy);
 
+    int archiveOtherAssetVersions(@Param("projectId") Long projectId,
+            @Param("assetCode") String assetCode, @Param("currentAssetId") Long currentAssetId,
+            @Param("updateBy") String updateBy);
+
+    int activateAiVideoAssetVersion(@Param("assetId") Long assetId, @Param("updateBy") String updateBy);
+
+    List<Long> selectAutoVideoIdsUsingKeyframeFamily(@Param("projectId") Long projectId,
+            @Param("assetCode") String assetCode, @Param("currentAssetId") Long currentAssetId);
+
     int countActiveVideoAssetsBySourceAssetId(Long sourceAssetId);
 
     int countOtherActiveAssetsByStoragePath(@Param("assetId") Long assetId,

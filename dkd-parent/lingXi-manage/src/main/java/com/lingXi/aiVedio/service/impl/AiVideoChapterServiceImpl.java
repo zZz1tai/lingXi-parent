@@ -155,13 +155,25 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
             throw new ServiceException("章节不存在或不属于当前项目");
         }
         String key = "chapter-analysis-" + chapterId + "-" + chapter.getSourceHash();
-        AiVideoGenerationTask existing = taskMapper.selectAiVideoGenerationTaskByIdempotencyKey(key);
+        AiVideoGenerationTask existing = taskMapper.selectLatestStoryBibleTaskByKeyPrefix(key);
         if (existing != null && ("QUEUED".equals(existing.getStatus()) || "RUNNING".equals(existing.getStatus())))
         {
             if ("QUEUED".equals(existing.getStatus()))
             {
                 startAnalysisAfterCommit(existing.getTaskId(), chapterId);
             }
+            return existing.getTaskId();
+        }
+        if (existing != null && "PAUSED".equals(existing.getStatus()))
+        {
+            String username = SecurityUtils.getUsername();
+            if (taskMapper.resumeStoryBibleTask(existing.getTaskId(), username) != 1)
+            {
+                throw new ServiceException("章节解析暂停状态已变化，请刷新后重试");
+            }
+            chapterMapper.updateAiVideoChapterAnalysisStatus(chapterId, "RUNNING", "RUNNING", null,
+                    chapter.getCurrentBibleVersion());
+            startAnalysisAfterCommit(existing.getTaskId(), chapterId);
             return existing.getTaskId();
         }
         if ("RUNNING".equals(chapter.getParseStatus()))
@@ -186,6 +198,32 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         taskMapper.insertAiVideoGenerationTask(task);
         chapterMapper.updateAiVideoChapterAnalysisStatus(chapterId, "RUNNING", "RUNNING", null, chapter.getCurrentBibleVersion());
         startAnalysisAfterCommit(task.getTaskId(), chapterId);
+        return task.getTaskId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long pauseChapterAnalysis(Long projectId, Long chapterId)
+    {
+        projectService.checkProjectOwner(projectId);
+        AiVideoChapter chapter = chapterArchiveMapper.selectAiVideoChapterForUpdate(projectId, chapterId);
+        if (chapter == null || !projectId.equals(chapter.getProjectId()))
+        {
+            throw new ServiceException("章节不存在或不属于当前项目");
+        }
+        String key = "chapter-analysis-" + chapterId + "-" + chapter.getSourceHash();
+        AiVideoGenerationTask task = taskMapper.selectLatestStoryBibleTaskByKeyPrefix(key);
+        if (task == null || !("QUEUED".equals(task.getStatus()) || "RUNNING".equals(task.getStatus())))
+        {
+            throw new ServiceException("当前没有可暂停的章节解析任务");
+        }
+        String username = SecurityUtils.getUsername();
+        if (taskMapper.pauseStoryBibleTask(task.getTaskId(), username) != 1)
+        {
+            throw new ServiceException("章节解析状态已变化，请刷新后重试");
+        }
+        chapterMapper.updateAiVideoChapterAnalysisStatus(chapterId, "PAUSED", "PAUSED", null,
+                chapter.getCurrentBibleVersion());
         return task.getTaskId();
     }
 

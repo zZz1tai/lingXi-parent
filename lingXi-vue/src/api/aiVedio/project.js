@@ -67,6 +67,13 @@ export function analyzeAiVideoChapter(projectId, chapterId) {
   })
 }
 
+export function pauseAiVideoChapterAnalysis(projectId, chapterId) {
+  return request({
+    url: '/aivideo/project/' + projectId + '/chapter/' + chapterId + '/analysis/pause',
+    method: 'post'
+  })
+}
+
 export function getAiVideoStoryBible(projectId, chapterId) {
   return request({
     url: '/aivideo/project/' + projectId + '/chapter/' + chapterId + '/story-bible',
@@ -138,6 +145,13 @@ export function createAiVideoAssetRegenerationDraft(assetId, data) {
     url: '/aivideo/asset/' + assetId + '/regeneration-draft',
     method: 'post',
     data
+  })
+}
+
+export function activateAiVideoAssetVersion(assetId) {
+  return request({
+    url: '/aivideo/asset/' + assetId + '/activate',
+    method: 'post'
   })
 }
 

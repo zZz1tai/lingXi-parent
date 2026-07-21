@@ -41,8 +41,18 @@
             <el-button v-if="asset.status === 'GENERATED'" type="success" size="small" @click="$emit('approve', asset)">确认使用</el-button>
             <el-button v-if="asset.status === 'REJECTED'" type="warning" size="small" @click="$emit('retry', asset)">重新生成</el-button>
             <el-button v-if="asset.status === 'APPROVED'" text type="primary" size="small" @click="$emit('edit', asset)">查看详情</el-button>
+            <el-button
+              v-if="canCreateNewVersion(asset)"
+              text
+              type="warning"
+              size="small"
+              :loading="String(regeneratingId) === String(asset.assetId)"
+              :disabled="regeneratingId !== null"
+              @click="$emit('regenerate', asset)"
+            >重新生成</el-button>
             <el-button v-if="showBinding && asset.assetType === 'SHOT_KEYFRAME'" text type="warning" size="small" @click="$emit('bind', asset)">参考绑定</el-button>
-            <el-button text type="danger" size="small" @click="$emit('delete', asset)">删除</el-button>
+            <el-button text type="info" size="small" @click="$emit('history', asset)">版本历史</el-button>
+            <el-button v-if="canDeleteAsset(asset)" text type="danger" size="small" @click="$emit('delete', asset)">删除</el-button>
           </div>
         </div>
       </article>
@@ -57,6 +67,7 @@ defineProps({
   description: { type: String, default: '' },
   assets: { type: Array, default: () => [] },
   taskByAssetId: { type: Object, default: () => ({}) },
+  regeneratingId: { type: [Number, String], default: null },
   loading: { type: Boolean, default: false },
   error: { type: String, default: '' },
   showBinding: { type: Boolean, default: false },
@@ -65,7 +76,15 @@ defineProps({
   emptyDescription: { type: String, default: '完成章节解析后，素材会显示在这里。' }
 })
 
-defineEmits(['retry-load', 'edit', 'approve', 'retry', 'delete', 'bind'])
+defineEmits(['retry-load', 'edit', 'approve', 'retry', 'regenerate', 'history', 'delete', 'bind'])
+
+function canCreateNewVersion(asset) {
+  return ['GENERATED', 'APPROVED'].includes(asset.status)
+}
+
+function canDeleteAsset(asset) {
+  return ['DRAFT', 'GENERATED', 'REJECTED'].includes(asset.status)
+}
 
 function statusLabel(asset) {
   if (asset.status === 'APPROVED') return '已确认'
@@ -119,7 +138,7 @@ function promptPreview(asset) {
 .asset-kicker { color: #b67742; font-size: 9px; font-weight: 700; letter-spacing: .05em; }
 .asset-body h3 { overflow: hidden; margin: 7px 0 6px; color: #e7ebef; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .asset-body p { display: -webkit-box; min-height: 35px; overflow: hidden; margin: 0; color: #768394; font-size: 10px; line-height: 1.7; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.asset-actions { display: flex; align-items: center; gap: 5px; margin-top: 13px; }
+.asset-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 13px; }
 .asset-actions :deep(.el-button + .el-button) { margin-left: 0; }
 .asset-actions :deep(.el-button:last-child) { margin-left: auto; }
 .panel-state { display: grid; min-height: 360px; place-items: center; align-content: center; padding: 36px; border: 1px dashed #2c3745; border-radius: 12px; color: #aeb7c2; text-align: center; }

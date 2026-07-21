@@ -40,6 +40,10 @@ public class AiVideoAsset extends BaseEntity
     private String negativePromptText;
     private String generationParamsJson;
     private String metadataJson;
+    /** 由 metadataJson 中的 archived 标记派生，不改变资产原始生成状态。 */
+    private Boolean archived;
+    /** 查询参数：是否包含已归档版本。 */
+    private Boolean includeArchived;
     private String approvedBy;
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private Date approvedTime;

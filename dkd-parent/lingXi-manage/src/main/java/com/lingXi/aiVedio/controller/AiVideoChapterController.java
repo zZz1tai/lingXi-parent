@@ -51,6 +51,14 @@ public class AiVideoChapterController extends BaseController
         return success().put("taskId", chapterService.startChapterAnalysis(projectId, chapterId));
     }
 
+    @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
+    @Log(title = "暂停AI视频章节解析", businessType = BusinessType.OTHER)
+    @PostMapping("/{chapterId}/analysis/pause")
+    public AjaxResult pauseAnalysis(@PathVariable Long projectId, @PathVariable Long chapterId)
+    {
+        return success().put("taskId", chapterService.pauseChapterAnalysis(projectId, chapterId));
+    }
+
     @PreAuthorize("@ss.hasPermi('aivideo:project:query')")
     @GetMapping("/{chapterId}/story-bible")
     public AjaxResult storyBible(@PathVariable Long projectId, @PathVariable Long chapterId)

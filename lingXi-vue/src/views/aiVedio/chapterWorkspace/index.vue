@@ -29,14 +29,21 @@
               :disabled="!currentChapter || analysisRunning"
               @click="analyzeCurrentChapter"
             >
-              {{ analysisRunning ? '解析进行中' : '解析章节' }}
+              {{ analysisRunning ? '解析进行中' : (analysisPaused ? '继续解析' : '解析章节') }}
             </el-button>
+            <el-button
+              v-if="analysisRunning"
+              type="warning"
+              plain
+              :loading="pausingAnalysis"
+              @click="pauseCurrentChapterAnalysis"
+            >暂停解析</el-button>
             <el-button :icon="Refresh" :loading="assetLoading" @click="loadAssets">刷新</el-button>
             <el-button type="primary" :icon="VideoPlay" :loading="preparing" @click="prepareVideoDrafts">准备视频草稿</el-button>
           </div>
         </header>
 
-        <section v-if="analysisRunning" class="analysis-progress" :class="`is-${String(chapterTask?.status || 'running').toLowerCase()}`">
+        <section v-if="analysisRunning || analysisPaused" class="analysis-progress" :class="`is-${String(chapterTask?.status || 'running').toLowerCase()}`">
           <div class="analysis-progress__heading">
             <div>
               <small>CHAPTER ANALYSIS</small>
@@ -46,7 +53,7 @@
           </div>
           <el-progress :percentage="analysisProgress" :show-text="false" :stroke-width="7" />
           <p v-if="chapterTask?.errorMessage">{{ chapterTask.errorMessage }}</p>
-          <p v-else>{{ analysisRunning ? '正在提取人物、场景与分镜信息，完成后素材区会自动刷新。' : '章节解析状态已更新，可以继续处理人物、场景和分镜素材。' }}</p>
+          <p v-else>{{ analysisPaused ? '任务已暂停，后端重启后也不会自动继续；点击“继续解析”可重新排队。' : '正在提取人物、场景与分镜信息，完成后素材区会自动刷新。' }}</p>
         </section>
 
         <el-alert
@@ -82,6 +89,7 @@
           description="人物资产属于整个项目。先生成并锁定正面、侧面、背面和固定服装，后续章节复用同一人物身份。"
           :assets="characterReferenceAssets"
           :task-by-asset-id="taskByAssetId"
+          :regenerating-id="regeneratingAssetId"
           :loading="assetLoading"
           :error="assetError"
           empty-mark="人"
@@ -91,6 +99,8 @@
           @edit="openPrompt"
           @approve="approveAsset"
           @retry="retryAsset"
+          @regenerate="createRegenerationDraft"
+          @history="openAssetHistory"
           @delete="deleteAsset"
         />
 
@@ -101,6 +111,7 @@
           description="场景参考图只定义空间、陈设、光线和色彩，必须保持空景，不包含人物、文字或水印。"
           :assets="sceneReferenceAssets"
           :task-by-asset-id="taskByAssetId"
+          :regenerating-id="regeneratingAssetId"
           :loading="assetLoading"
           :error="assetError"
           empty-mark="景"
@@ -110,6 +121,8 @@
           @edit="openPrompt"
           @approve="approveAsset"
           @retry="retryAsset"
+          @regenerate="createRegenerationDraft"
+          @history="openAssetHistory"
           @delete="deleteAsset"
         />
 
@@ -120,6 +133,7 @@
           description="每张关键帧必须绑定 1 个本场景空景版本，以及镜头中实际出现人物的三视图版本；支持自动匹配和人工换版。"
           :assets="keyframeAssets"
           :task-by-asset-id="taskByAssetId"
+          :regenerating-id="regeneratingAssetId"
           :loading="assetLoading"
           :error="assetError"
           show-binding
@@ -130,7 +144,9 @@
           @edit="openPrompt"
           @approve="approveAsset"
           @retry="retryAsset"
+          @regenerate="createRegenerationDraft"
           @bind="openKeyframeBinding"
+          @history="openAssetHistory"
           @delete="deleteAsset"
         />
 
@@ -148,6 +164,45 @@
         />
       </main>
     </div>
+
+    <el-dialog
+      v-model="assetHistory.open"
+      :title="assetHistory.title"
+      width="min(760px, calc(100vw - 24px))"
+      append-to-body
+    >
+      <div v-if="assetHistory.loading" class="history-state"><el-icon class="is-loading"><Loading /></el-icon><span>正在读取版本历史</span></div>
+      <el-alert v-else-if="assetHistory.error" :title="assetHistory.error" type="error" :closable="false" show-icon>
+        <template #default><el-button size="small" @click="loadAssetHistory">重新加载</el-button></template>
+      </el-alert>
+      <div v-else class="version-history-list">
+        <article v-for="version in assetHistory.rows" :key="version.assetId" class="version-history-item">
+          <el-image
+            v-if="version.previewObjectKey || version.objectKey"
+            :src="version.previewObjectKey || version.objectKey"
+            fit="cover"
+            :preview-src-list="[version.objectKey || version.previewObjectKey]"
+            preview-teleported
+          />
+          <div v-else class="history-placeholder">暂无预览</div>
+          <div class="version-history-copy">
+            <div><strong>v{{ version.versionNo || 1 }}</strong><span :class="{ archived: version.archived }">{{ version.archived ? '历史版本' : (version.status === 'APPROVED' ? '当前版本' : '候选版本') }}</span></div>
+            <h3>{{ version.assetName || `素材 #${version.assetId}` }}</h3>
+            <p>{{ historyStatusLabel(version) }} · {{ version.createTime || '时间未知' }}</p>
+          </div>
+          <el-button
+            v-if="version.archived && version.status === 'APPROVED'"
+            type="primary"
+            plain
+            :loading="String(assetHistory.activatingId) === String(version.assetId)"
+            :disabled="assetHistory.activatingId !== null"
+            @click="activateHistoryVersion(version)"
+          >设为当前版本</el-button>
+          <el-tag v-else-if="!version.archived && version.status === 'APPROVED'" type="success">使用中</el-tag>
+        </article>
+        <el-empty v-if="!assetHistory.rows.length" description="暂无版本记录" />
+      </div>
+    </el-dialog>
 
     <el-dialog
       v-model="chapterDialog.open"
@@ -271,14 +326,17 @@
 </template>
 
 <script setup name="AiVedioChapterWorkspace">
-import { Reading, Refresh, VideoPlay } from '@element-plus/icons-vue'
+import { Loading, Reading, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import ChapterRail from './components/ChapterRail.vue'
 import AssetPanel from './components/AssetPanel.vue'
 import VideoVersionPanel from './components/VideoVersionPanel.vue'
 import {
+  activateAiVideoAssetVersion,
   addAiVideoChapter,
   analyzeAiVideoChapter,
+  pauseAiVideoChapterAnalysis,
   approveAiVideoAsset,
+  createAiVideoAssetRegenerationDraft,
   createAiVideoAssetVideoDraft,
   delAiVideoAsset,
   generateAiVideoAssetImage,
@@ -307,12 +365,15 @@ const taskByAssetId = ref({})
 const chapterLoading = ref(false)
 const assetLoading = ref(false)
 const analyzing = ref(false)
+const pausingAnalysis = ref(false)
+const regeneratingAssetId = ref(null)
 const preparing = ref(false)
 const chapterTask = ref(null)
 const chapterError = ref('')
 const assetError = ref('')
 const contextError = ref('')
 const activeTab = ref('characters')
+const assetHistory = reactive({ open: false, loading: false, activatingId: null, title: '版本历史', asset: null, rows: [], error: '' })
 const chapterDialog = reactive({ open: false, submitting: false })
 const chapterForm = reactive({ chapterNo: 1, chapterTitle: '', sourceText: '' })
 const chapterRules = {
@@ -327,11 +388,12 @@ const chapterId = computed(() => route.params.chapterId)
 const currentChapter = computed(() => chapters.value.find(chapter => String(chapter.chapterId) === String(chapterId.value)) || null)
 const chapterTitle = computed(() => currentChapter.value?.chapterTitle || (currentChapter.value ? `第 ${currentChapter.value.chapterNo} 章` : '章节素材工作台'))
 const analysisRunning = computed(() => currentChapter.value?.parseStatus === 'RUNNING' || ['QUEUED', 'RUNNING'].includes(chapterTask.value?.status))
+const analysisPaused = computed(() => currentChapter.value?.parseStatus === 'PAUSED' || chapterTask.value?.status === 'PAUSED')
 const analysisProgress = computed(() => {
   const value = Number(chapterTask.value?.progress ?? chapterTask.value?.progressPercent)
   return Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : 0
 })
-const analysisStageLabel = computed(() => chapterTask.value?.stageLabel || ({ QUEUED: '等待分析任务执行', RUNNING: '正在解析章节', SUCCEEDED: '章节解析已完成', FAILED: '章节解析失败' }[chapterTask.value?.status] || '正在准备章节解析'))
+const analysisStageLabel = computed(() => chapterTask.value?.stageLabel || ({ QUEUED: '等待分析任务执行', RUNNING: '正在解析章节', PAUSED: '章节解析已暂停', SUCCEEDED: '章节解析已完成', FAILED: '章节解析失败' }[chapterTask.value?.status] || '正在准备章节解析'))
 const characterReferenceAssets = computed(() => assets.value.filter(asset => asset.assetType === 'CHARACTER_REFERENCE'))
 const sceneReferenceAssets = computed(() => assets.value.filter(asset => asset.assetType === 'SCENE_REFERENCE'))
 const keyframeAssets = computed(() => assets.value.filter(asset => asset.assetType === 'SHOT_KEYFRAME'))
@@ -389,6 +451,66 @@ function openChapterDialog() {
   })
   chapterDialog.open = true
   nextTick(() => chapterFormRef.value?.clearValidate())
+}
+
+function openAssetHistory(asset) {
+  assetHistory.asset = asset
+  assetHistory.title = `${asset.assetName || '素材'} · 版本历史`
+  assetHistory.rows = []
+  assetHistory.error = ''
+  assetHistory.open = true
+  loadAssetHistory()
+}
+
+async function loadAssetHistory() {
+  const asset = assetHistory.asset
+  if (!asset?.assetCode) return
+  assetHistory.loading = true
+  assetHistory.error = ''
+  try {
+    const rows = await fetchAllAssets({
+      projectId: projectId.value,
+      assetCode: asset.assetCode,
+      includeArchived: true
+    })
+    const exactRows = rows.filter(row => String(row.assetCode || '') === String(asset.assetCode))
+    const approvedVisible = exactRows
+      .filter(row => row.status === 'APPROVED' && row.archived !== true)
+      .sort(compareAssetVersionDesc)
+    const legacyCurrentId = approvedVisible[0]?.assetId
+    assetHistory.rows = exactRows
+      .map(row => approvedVisible.length > 1 && row.status === 'APPROVED' && row.archived !== true
+        ? { ...row, archived: String(row.assetId) !== String(legacyCurrentId) }
+        : row)
+      .sort(compareAssetVersionDesc)
+  } catch (error) {
+    assetHistory.error = errorMessage(error, '版本历史读取失败')
+  } finally {
+    assetHistory.loading = false
+  }
+}
+
+async function activateHistoryVersion(version) {
+  if (!version?.assetId || assetHistory.activatingId !== null) return
+  try {
+    await proxy.$modal.confirm(`确认将 v${version.versionNo || 1} 切换为当前版本吗？现有当前版本会自动归档。`)
+  } catch (error) {
+    return
+  }
+  assetHistory.activatingId = version.assetId
+  try {
+    await activateAiVideoAssetVersion(version.assetId)
+    proxy.$modal.msgSuccess(`已切换到 v${version.versionNo || 1}`)
+    await Promise.all([loadAssets(), loadAssetHistory()])
+  } catch (error) {
+    // 请求层已经展示服务端切换失败原因，避免重复提示。
+  } finally {
+    assetHistory.activatingId = null
+  }
+}
+
+function historyStatusLabel(asset) {
+  return { DRAFT: '提示词草稿', GENERATING: '生成中', GENERATED: '待确认', APPROVED: '已确认', REJECTED: '生成失败' }[asset.status] || asset.status || '未知状态'
 }
 
 async function submitChapter() {
@@ -471,6 +593,23 @@ async function fetchAllAssets(query) {
   return result
 }
 
+function compareAssetVersionDesc(left, right) {
+  return Number(right.versionNo || 0) - Number(left.versionNo || 0) || Number(right.assetId || 0) - Number(left.assetId || 0)
+}
+
+function collapseDuplicateApprovedVersions(rows) {
+  const approvedCurrentByCode = new Map()
+  rows.forEach(asset => {
+    if (!asset.assetCode || asset.status !== 'APPROVED' || asset.archived === true) return
+    const existing = approvedCurrentByCode.get(asset.assetCode)
+    if (!existing || compareAssetVersionDesc(asset, existing) < 0) approvedCurrentByCode.set(asset.assetCode, asset)
+  })
+  return rows.filter(asset => {
+    if (!asset.assetCode || asset.status !== 'APPROVED' || asset.archived === true) return asset.archived !== true
+    return String(approvedCurrentByCode.get(asset.assetCode)?.assetId) === String(asset.assetId)
+  })
+}
+
 async function loadAssets({ silent = false } = {}) {
   if (!projectId.value || !chapterId.value) return
   const wasAnalysisRunning = analysisRunning.value
@@ -485,7 +624,7 @@ async function loadAssets({ silent = false } = {}) {
     ])
     chapters.value = chapterResponse.rows || chapterResponse.data || []
     const assetById = new Map()
-    const combinedAssetRows = [...characterAssetRows, ...chapterAssetRows]
+    const combinedAssetRows = collapseDuplicateApprovedVersions([...characterAssetRows, ...chapterAssetRows])
     combinedAssetRows.forEach(asset => assetById.set(String(asset.assetId), asset))
     assets.value = Array.from(assetById.values())
     const tasks = taskResponse.rows || taskResponse.data || []
@@ -546,6 +685,28 @@ async function analyzeCurrentChapter() {
     proxy.$modal.msgError(errorMessage(error, '章节解析任务创建失败'))
   } finally {
     analyzing.value = false
+  }
+}
+
+async function pauseCurrentChapterAnalysis() {
+  if (!currentChapter.value || !analysisRunning.value || pausingAnalysis.value) return
+  pausingAnalysis.value = true
+  try {
+    await pauseAiVideoChapterAnalysis(projectId.value, chapterId.value)
+    currentChapter.value.parseStatus = 'PAUSED'
+    chapterTask.value = {
+      ...chapterTask.value,
+      status: 'PAUSED',
+      stageCode: 'PAUSED',
+      stageLabel: '章节解析已暂停'
+    }
+    stopAnalysisPolling()
+    proxy.$modal.msgSuccess('章节解析已暂停，重启后端也不会自动继续')
+    await loadAssets({ silent: true })
+  } catch (error) {
+    proxy.$modal.msgError(errorMessage(error, '暂停章节解析失败'))
+  } finally {
+    pausingAnalysis.value = false
   }
 }
 
@@ -752,6 +913,23 @@ async function retryAsset(asset) {
   }
 }
 
+async function createRegenerationDraft(asset) {
+  if (!asset?.assetId || regeneratingAssetId.value !== null) return
+  regeneratingAssetId.value = asset.assetId
+  try {
+    const response = await createAiVideoAssetRegenerationDraft(asset.assetId)
+    const draft = response?.data || response?.asset || null
+    if (!draft?.assetId) throw new Error('新版本草稿响应缺少资产信息')
+    await loadAssets()
+    proxy.$modal.msgSuccess(`已创建 ${draft.assetName || asset.assetName} v${draft.versionNo || ''} 草稿，尚未调用生成模型`)
+    openPrompt(draft)
+  } catch (error) {
+    proxy.$modal.msgError(errorMessage(error, '重新生成草稿创建失败'))
+  } finally {
+    regeneratingAssetId.value = null
+  }
+}
+
 async function deleteAsset(asset) {
   try {
     await proxy.$modal.confirm(`确认删除“${asset.assetName || `素材 #${asset.assetId}`}”吗？`)
@@ -759,7 +937,7 @@ async function deleteAsset(asset) {
     proxy.$modal.msgSuccess('素材已删除')
     await loadAssets()
   } catch (error) {
-    if (error !== 'cancel' && error !== 'close') proxy.$modal.msgError(errorMessage(error, '素材删除失败'))
+    // 请求层已经统一显示服务端删除原因；这里只忽略取消和已展示的请求错误，避免重复提示。
   }
 }
 
@@ -841,7 +1019,20 @@ onBeforeUnmount(stopAnalysisPolling)
 .binding-help { display: block; margin-top: 8px; color: #7a8695; font-size: 11px; line-height: 1.6; }
 .chapter-form-grid { display: grid; grid-template-columns: minmax(150px, .6fr) minmax(0, 1.4fr); gap: 16px; }
 .chapter-form-grid :deep(.el-input-number) { width: 100%; }
+.history-state { display: grid; min-height: 220px; place-items: center; align-content: center; gap: 10px; color: #7f8b9b; }
+.history-state .el-icon { color: #e5904a; font-size: 24px; }
+.version-history-list { display: grid; gap: 10px; max-height: min(66vh, 620px); overflow-y: auto; }
+.version-history-item { display: grid; grid-template-columns: 82px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 11px; border: 1px solid #2a3543; border-radius: 10px; background: #111922; }
+.version-history-item :deep(.el-image), .history-placeholder { width: 82px; height: 68px; border-radius: 7px; background: #0c1219; }
+.history-placeholder { display: grid; place-items: center; color: #687587; font-size: 10px; }
+.version-history-copy { min-width: 0; }
+.version-history-copy > div { display: flex; align-items: center; gap: 8px; }
+.version-history-copy strong { color: #e5904a; font-family: Consolas, monospace; }
+.version-history-copy span { padding: 2px 6px; border-radius: 999px; color: #83b294; background: rgb(73 128 91 / 16%); font-size: 9px; }
+.version-history-copy span.archived { color: #909baa; background: #222c38; }
+.version-history-copy h3 { overflow: hidden; margin: 6px 0 4px; color: #e4e9ee; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.version-history-copy p { margin: 0; color: #748193; font-size: 10px; }
 @media (max-width: 900px) { .workspace-shell { grid-template-columns: 1fr; } .workspace-main { min-height: auto; border-radius: 15px; } }
 @media (max-width: 1100px) { .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 680px) { .chapter-studio { padding: 12px; } .workspace-main { padding: 16px; } .workspace-header { align-items: flex-start; flex-direction: column; } .header-actions { width: 100%; justify-content: stretch; } .header-actions :deep(.el-button) { flex: 1; } .overview-grid { grid-template-columns: 1fr; } .workspace-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .binding-status-row { align-items: flex-start; flex-direction: column; } .chapter-form-grid { grid-template-columns: 1fr; gap: 0; } }
+@media (max-width: 680px) { .chapter-studio { padding: 12px; } .workspace-main { padding: 16px; } .workspace-header { align-items: flex-start; flex-direction: column; } .header-actions { width: 100%; justify-content: stretch; } .header-actions :deep(.el-button) { flex: 1; } .overview-grid { grid-template-columns: 1fr; } .workspace-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .binding-status-row { align-items: flex-start; flex-direction: column; } .chapter-form-grid { grid-template-columns: 1fr; gap: 0; } .version-history-item { grid-template-columns: 68px minmax(0, 1fr); } .version-history-item :deep(.el-image), .history-placeholder { width: 68px; height: 58px; } .version-history-item > :deep(.el-button), .version-history-item > :deep(.el-tag) { grid-column: 1 / -1; justify-self: stretch; } }
 </style>

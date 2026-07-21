@@ -129,8 +129,10 @@ public class AiVideoQwenAssetService
             String aspectRatio = AiVideoImageAspectRatioPolicy.resolve(
                     asset.getAssetType(), runtimeConfig.getVideoRatio());
             String imageModel = runtimeConfig.getImageModel();
-            String requestJson = AiVideoJsonMetadata.imageGenerationRequest(asset.getPromptText(),
-                    asset.getNegativePromptText(), imageModel, asset.getAssetType(), aspectRatio,
+            String generationPrompt = resolveGenerationPrompt(asset);
+            String generationNegativePrompt = resolveGenerationNegativePrompt(asset);
+            String requestJson = AiVideoJsonMetadata.imageGenerationRequest(generationPrompt,
+                    generationNegativePrompt, imageModel, asset.getAssetType(), aspectRatio,
                     references.getAssetIds());
             if (taskMapper.updateClaimedImageTaskRequest(
                     task.getTaskId(), requestJson, imageModel) != 1)
@@ -144,8 +146,8 @@ public class AiVideoQwenAssetService
                     imageModel,
                     runtimeConfig.getWorkspaceBaseUrl(),
                     asset.getAssetType(),
-                    asset.getPromptText(),
-                    asset.getNegativePromptText(),
+                    generationPrompt,
+                    generationNegativePrompt,
                     aspectRatio,
                     references.getImageUrls());
             
@@ -181,6 +183,31 @@ public class AiVideoQwenAssetService
             markImageFailure(task, asset, updateBy,
                     "QWEN_IMAGE_GENERATION_FAILED", ex.getMessage());
         }
+    }
+
+    private String resolveGenerationPrompt(AiVideoAsset asset)
+    {
+        String prompt = asset.getPromptText() == null ? "" : asset.getPromptText().trim();
+        if (!"CHARACTER_REFERENCE".equals(asset.getAssetType()))
+        {
+            return prompt;
+        }
+        return prompt + ". Strict clean character turnaround only: exactly the same single person in front, "
+                + "side and back views on a plain studio background. Empty relaxed hands. No story action, "
+                + "no environment, no scenery, no furniture, no weapon, no prop, no held object, no blood, "
+                + "no wounds, no magic, no glow, no smoke and no visual effects.";
+    }
+
+    private String resolveGenerationNegativePrompt(AiVideoAsset asset)
+    {
+        String negative = asset.getNegativePromptText() == null ? "" : asset.getNegativePromptText().trim();
+        if (!"CHARACTER_REFERENCE".equals(asset.getAssetType()))
+        {
+            return negative;
+        }
+        String guardrail = "weapon, sword, gun, tool, held object, blood, wound, injured hands, glowing hands, "
+                + "magic, energy effect, smoke, fire, story action, environment, scenery, furniture, vehicle";
+        return negative.isEmpty() ? guardrail : negative + ", " + guardrail;
     }
 
     private void markImageFailure(AiVideoGenerationTask task, AiVideoAsset asset,

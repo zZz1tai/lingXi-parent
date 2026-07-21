@@ -14,5 +14,7 @@ public interface IAiVideoChapterService
 
     Long startChapterAnalysis(Long projectId, Long chapterId);
 
+    Long pauseChapterAnalysis(Long projectId, Long chapterId);
+
     AiVideoStoryBible selectLatestStoryBible(Long projectId, Long chapterId);
 }

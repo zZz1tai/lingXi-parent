@@ -103,25 +103,33 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     }
 
     @Override
+    @Transactional
     public void approveAiVideoAsset(Long assetId)
     {
-        AiVideoAsset asset = selectAiVideoAssetByAssetId(assetId);
-        if (!"SHOT_KEYFRAME".equals(asset.getAssetType()))
+        AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetIdForUpdate(assetId);
+        if (asset == null)
         {
-            throw new ServiceException("只有镜头关键帧需要视频生成审批");
+            throw new ServiceException("资产不存在或已删除");
+        }
+        projectService.checkProjectOwner(asset.getProjectId());
+        if (!isImageAssetType(asset.getAssetType()))
+        {
+            throw new ServiceException("只有图片资产可以确认使用");
         }
         if ("APPROVED".equals(asset.getStatus()))
         {
+            activateVersion(asset, SecurityUtils.getUsername(), true);
             return;
         }
         if (!"GENERATED".equals(asset.getStatus()))
         {
-            throw new ServiceException("关键帧图片尚未生成完成，暂时不能审批");
+            throw new ServiceException("图片尚未生成完成，暂时不能确认使用");
         }
         if (assetMapper.approveAiVideoAsset(assetId, SecurityUtils.getUsername()) != 1)
         {
-            throw new ServiceException("关键帧审批状态已变化，请刷新后重试");
+            throw new ServiceException("图片确认状态已变化，请刷新后重试");
         }
+        activateVersion(asset, SecurityUtils.getUsername(), true);
     }
 
     @Override
@@ -284,12 +292,21 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     public AiVideoAsset createRegenerationDraft(Long assetId,
             AiVideoAssetRegenerationDraftRequest request)
     {
+        return createRegenerationDraft(assetId, request, SecurityUtils.getUsername(), true);
+    }
+
+    private AiVideoAsset createRegenerationDraft(Long assetId,
+            AiVideoAssetRegenerationDraftRequest request, String updateBy, boolean checkOwner)
+    {
         AiVideoAsset source = assetMapper.selectAiVideoAssetByAssetIdForUpdate(assetId);
         if (source == null)
         {
             throw new ServiceException("资产不存在或已删除");
         }
-        projectService.checkProjectOwner(source.getProjectId());
+        if (checkOwner)
+        {
+            projectService.checkProjectOwner(source.getProjectId());
+        }
         if (!isRegeneratableAssetType(source.getAssetType()))
         {
             throw new ServiceException("只有图片或视频资产可以创建重新生成草稿");
@@ -339,7 +356,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
                     ? source.getAssetId() : source.getSourceAssetId();
         }
 
-        String username = SecurityUtils.getUsername();
+        String username = updateBy;
         AiVideoAsset draft = new AiVideoAsset();
         draft.setProjectId(source.getProjectId());
         draft.setChapterId(source.getChapterId());
@@ -437,7 +454,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         KeyframeReferenceOverride binding = resolveKeyframeReferenceOverride(keyframe, regenerationRequest);
         if (isEditableBindingStatus(keyframe.getStatus()))
         {
-            applyKeyframeReferenceBinding(keyframe, binding, "MANUAL");
+            applyKeyframeReferenceBinding(keyframe, binding, "MANUAL", SecurityUtils.getUsername());
             return selectAiVideoAssetByAssetId(keyframe.getAssetId());
         }
         return createRegenerationDraft(keyframe.getAssetId(), regenerationRequest);
@@ -447,25 +464,90 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     @Transactional
     public AiVideoAsset resetKeyframeReferenceBinding(Long assetId)
     {
-        AiVideoAsset keyframe = lockBindingAsset(assetId);
+        return resetKeyframeReferenceBinding(assetId, SecurityUtils.getUsername(), true);
+    }
+
+    private AiVideoAsset resetKeyframeReferenceBinding(Long assetId, String updateBy, boolean checkOwner)
+    {
+        AiVideoAsset keyframe = lockBindingAsset(assetId, checkOwner);
         validateKeyframeBindingTarget(keyframe);
         validateBindingChangeAllowed(keyframe);
         KeyframeReferenceOverride binding = resolveAutomaticKeyframeReferences(keyframe);
         if (isEditableBindingStatus(keyframe.getStatus()))
         {
-            applyKeyframeReferenceBinding(keyframe, binding, "AUTO");
+            applyKeyframeReferenceBinding(keyframe, binding, "AUTO", updateBy);
             return selectAiVideoAssetByAssetId(keyframe.getAssetId());
         }
 
         AiVideoAssetRegenerationDraftRequest request = toRegenerationRequest(binding);
-        AiVideoAsset draft = createRegenerationDraft(keyframe.getAssetId(), request);
+        AiVideoAsset draft = createRegenerationDraft(keyframe.getAssetId(), request, updateBy, checkOwner);
         String metadataJson = keyframeBindingMetadata(draft.getMetadataJson(), binding, "AUTO");
         if (assetMapper.updateAiVideoAssetReferenceBinding(draft.getAssetId(),
-                binding.getSceneReference().getAssetId(), metadataJson, SecurityUtils.getUsername()) != 1)
+                binding.getSceneReference().getAssetId(), metadataJson, updateBy) != 1)
         {
             throw new ServiceException("关键帧自动绑定状态已变化，请刷新后重试");
         }
         return selectAiVideoAssetByAssetId(draft.getAssetId());
+    }
+
+    /**
+     * 版本切换只替换同一资产族的引用，保留关键帧已经锁定的其他人物与场景版本。
+     * 不能在切换一个人物时重新解析整套 AUTO 绑定，否则旧分镜缺少新场景版本会阻塞本次换版。
+     */
+    private void switchAutomaticKeyframeReferenceVersion(Long keyframeId, AiVideoAsset activatedAsset,
+            String updateBy, boolean checkOwner)
+    {
+        AiVideoAsset keyframe = lockBindingAsset(keyframeId, checkOwner);
+        validateKeyframeBindingTarget(keyframe);
+        validateBindingChangeAllowed(keyframe);
+        List<AiVideoAsset> currentReferences = assetRelationMapper
+                .selectActiveReferenceAssetsByTargetAssetId(keyframe.getAssetId());
+        AiVideoAsset sceneReference = null;
+        List<AiVideoAsset> characterReferences = new ArrayList<>();
+        Set<Long> characterAssetIds = new LinkedHashSet<>();
+        boolean replaced = false;
+        for (AiVideoAsset reference : currentReferences)
+        {
+            AiVideoAsset resolved = reference;
+            if (activatedAsset.getAssetType().equals(reference.getAssetType())
+                    && activatedAsset.getAssetCode().equals(reference.getAssetCode()))
+            {
+                resolved = activatedAsset;
+                replaced = true;
+            }
+            if ("SCENE_REFERENCE".equals(resolved.getAssetType()))
+            {
+                sceneReference = resolved;
+            }
+            else if ("CHARACTER_REFERENCE".equals(resolved.getAssetType())
+                    && characterAssetIds.add(resolved.getAssetId()))
+            {
+                characterReferences.add(resolved);
+            }
+        }
+        if (!replaced)
+        {
+            return;
+        }
+        if (sceneReference == null)
+        {
+            // 历史坏数据没有场景关系时保持原绑定，不能让它阻塞其他资产的版本切换。
+            return;
+        }
+        KeyframeReferenceOverride binding = new KeyframeReferenceOverride(sceneReference, characterReferences);
+        if (isEditableBindingStatus(keyframe.getStatus()))
+        {
+            applyKeyframeReferenceBinding(keyframe, binding, "AUTO", updateBy);
+            return;
+        }
+        AiVideoAsset draft = createRegenerationDraft(keyframe.getAssetId(),
+                toRegenerationRequest(binding), updateBy, checkOwner);
+        String metadataJson = keyframeBindingMetadata(draft.getMetadataJson(), binding, "AUTO");
+        if (assetMapper.updateAiVideoAssetReferenceBinding(draft.getAssetId(),
+                binding.getSceneReference().getAssetId(), metadataJson, updateBy) != 1)
+        {
+            throw new ServiceException("关键帧自动换版状态已变化，请刷新后重试");
+        }
     }
 
     @Override
@@ -492,7 +574,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         validateVideoSourceKeyframe(video, keyframe);
         if (isEditableBindingStatus(video.getStatus()))
         {
-            applyVideoSourceBinding(video, keyframe, "MANUAL");
+            applyVideoSourceBinding(video, keyframe, "MANUAL", SecurityUtils.getUsername());
             return selectAiVideoAssetByAssetId(video.getAssetId());
         }
         AiVideoAssetRegenerationDraftRequest regenerationRequest = new AiVideoAssetRegenerationDraftRequest();
@@ -504,23 +586,28 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     @Transactional
     public AiVideoAsset resetVideoSourceBinding(Long videoAssetId)
     {
-        AiVideoAsset video = lockBindingAsset(videoAssetId);
+        return resetVideoSourceBinding(videoAssetId, SecurityUtils.getUsername(), true);
+    }
+
+    private AiVideoAsset resetVideoSourceBinding(Long videoAssetId, String updateBy, boolean checkOwner)
+    {
+        AiVideoAsset video = lockBindingAsset(videoAssetId, checkOwner);
         validateVideoBindingTarget(video);
         validateBindingChangeAllowed(video);
         AiVideoAsset keyframe = resolveAutomaticVideoKeyframe(video);
         if (isEditableBindingStatus(video.getStatus()))
         {
-            applyVideoSourceBinding(video, keyframe, "AUTO");
+            applyVideoSourceBinding(video, keyframe, "AUTO", updateBy);
             return selectAiVideoAssetByAssetId(video.getAssetId());
         }
 
         AiVideoAssetRegenerationDraftRequest request = new AiVideoAssetRegenerationDraftRequest();
         request.setKeyframeAssetId(keyframe.getAssetId());
-        AiVideoAsset draft = createRegenerationDraft(video.getAssetId(), request);
+        AiVideoAsset draft = createRegenerationDraft(video.getAssetId(), request, updateBy, checkOwner);
         String metadataJson = AiVideoJsonMetadata.withVideoSourceBinding(draft.getMetadataJson(),
                 keyframe.getAssetId(), keyframe.getVersionNo(), "AUTO");
         if (assetMapper.updateVideoSourceBinding(draft.getAssetId(), keyframe.getAssetId(),
-                metadataJson, SecurityUtils.getUsername()) != 1)
+                metadataJson, updateBy) != 1)
         {
             throw new ServiceException("视频自动绑定状态已变化，请刷新后重试");
         }
@@ -560,6 +647,96 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
             throw new ServiceException("资产状态已变化，请刷新后重试");
         }
         scheduleStorageCleanupAfterCommit(storagePathsToDelete, assetId);
+    }
+
+    @Override
+    @Transactional
+    public void activateAiVideoAssetVersion(Long assetId)
+    {
+        AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetIdForUpdate(assetId);
+        if (asset == null)
+        {
+            throw new ServiceException("资产不存在或已删除");
+        }
+        projectService.checkProjectOwner(asset.getProjectId());
+        if (!isImageAssetType(asset.getAssetType()))
+        {
+            throw new ServiceException("只有图片资产版本可以切换");
+        }
+        if (!"APPROVED".equals(asset.getStatus()))
+        {
+            throw new ServiceException("只有已确认版本可以切换为当前版本");
+        }
+        activateVersion(asset, SecurityUtils.getUsername(), true);
+    }
+
+    @Override
+    @Transactional
+    public void activateGeneratedAiVideoAssetVersion(Long assetId, String updateBy)
+    {
+        AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetIdForUpdate(assetId);
+        if (asset == null)
+        {
+            throw new ServiceException("资产不存在或已删除");
+        }
+        if (!("CHARACTER_REFERENCE".equals(asset.getAssetType())
+                || "SCENE_REFERENCE".equals(asset.getAssetType())))
+        {
+            throw new ServiceException("后台生成完成只能激活人物或场景参考图");
+        }
+        if (!"APPROVED".equals(asset.getStatus()))
+        {
+            throw new ServiceException("生成完成的参考图尚未进入已确认状态");
+        }
+        String actor = updateBy == null || updateBy.trim().isEmpty() ? "ai-video-worker" : updateBy;
+        activateVersion(asset, actor, false);
+    }
+
+    private void activateVersion(AiVideoAsset asset, String updateBy, boolean checkOwner)
+    {
+        if (asset.getAssetCode() == null || asset.getAssetCode().trim().isEmpty())
+        {
+            throw new ServiceException("资产编码为空，无法切换版本");
+        }
+        assetMapper.archiveOtherAssetVersions(asset.getProjectId(), asset.getAssetCode(),
+                asset.getAssetId(), updateBy);
+        if (assetMapper.activateAiVideoAssetVersion(asset.getAssetId(), updateBy) != 1)
+        {
+            throw new ServiceException("资产版本切换状态已变化，请刷新后重试");
+        }
+        cascadeAutomaticBindings(asset, updateBy, checkOwner);
+    }
+
+    private void cascadeAutomaticBindings(AiVideoAsset activatedAsset, String updateBy, boolean checkOwner)
+    {
+        if ("CHARACTER_REFERENCE".equals(activatedAsset.getAssetType())
+                || "SCENE_REFERENCE".equals(activatedAsset.getAssetType()))
+        {
+            List<Long> keyframeIds = assetRelationMapper.selectAutoKeyframeIdsReferencingAssetFamily(
+                    activatedAsset.getProjectId(), activatedAsset.getAssetCode(), activatedAsset.getAssetId());
+            for (Long keyframeId : keyframeIds)
+            {
+                switchAutomaticKeyframeReferenceVersion(
+                        keyframeId, activatedAsset, updateBy, checkOwner);
+            }
+            return;
+        }
+        if ("SHOT_KEYFRAME".equals(activatedAsset.getAssetType()))
+        {
+            List<Long> videoIds = assetMapper.selectAutoVideoIdsUsingKeyframeFamily(
+                    activatedAsset.getProjectId(), activatedAsset.getAssetCode(), activatedAsset.getAssetId());
+            for (Long videoId : videoIds)
+            {
+                resetVideoSourceBinding(videoId, updateBy, checkOwner);
+            }
+        }
+    }
+
+    private boolean isImageAssetType(String assetType)
+    {
+        return "CHARACTER_REFERENCE".equals(assetType)
+                || "SCENE_REFERENCE".equals(assetType)
+                || "SHOT_KEYFRAME".equals(assetType);
     }
 
     @Override
@@ -726,12 +903,20 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
 
     private AiVideoAsset lockBindingAsset(Long assetId)
     {
+        return lockBindingAsset(assetId, true);
+    }
+
+    private AiVideoAsset lockBindingAsset(Long assetId, boolean checkOwner)
+    {
         AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetIdForUpdate(assetId);
         if (asset == null)
         {
             throw new ServiceException("资产不存在或已删除");
         }
-        projectService.checkProjectOwner(asset.getProjectId());
+        if (checkOwner)
+        {
+            projectService.checkProjectOwner(asset.getProjectId());
+        }
         return asset;
     }
 
@@ -834,25 +1019,25 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     }
 
     private void applyKeyframeReferenceBinding(AiVideoAsset keyframe,
-            KeyframeReferenceOverride binding, String mode)
+            KeyframeReferenceOverride binding, String mode, String updateBy)
     {
         assetRelationMapper.deleteIncomingReferenceRelations(
                 keyframe.getProjectId(), keyframe.getAssetId());
         insertKeyframeReferenceOverride(keyframe, binding);
         String metadataJson = keyframeBindingMetadata(keyframe.getMetadataJson(), binding, mode);
         if (assetMapper.updateAiVideoAssetReferenceBinding(keyframe.getAssetId(),
-                binding.getSceneReference().getAssetId(), metadataJson, SecurityUtils.getUsername()) != 1)
+                binding.getSceneReference().getAssetId(), metadataJson, updateBy) != 1)
         {
             throw new ServiceException("关键帧绑定状态已变化，请刷新后重试");
         }
     }
 
-    private void applyVideoSourceBinding(AiVideoAsset video, AiVideoAsset keyframe, String mode)
+    private void applyVideoSourceBinding(AiVideoAsset video, AiVideoAsset keyframe, String mode, String updateBy)
     {
         String metadataJson = AiVideoJsonMetadata.withVideoSourceBinding(video.getMetadataJson(),
                 keyframe.getAssetId(), keyframe.getVersionNo(), mode);
         if (assetMapper.updateVideoSourceBinding(video.getAssetId(), keyframe.getAssetId(),
-                metadataJson, SecurityUtils.getUsername()) != 1)
+                metadataJson, updateBy) != 1)
         {
             throw new ServiceException("视频来源关键帧状态已变化，请刷新后重试");
         }

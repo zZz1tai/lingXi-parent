@@ -10,6 +10,12 @@ public interface AiVideoGenerationTaskMapper
 
     AiVideoGenerationTask selectAiVideoGenerationTaskByIdempotencyKey(String idempotencyKey);
 
+    AiVideoGenerationTask selectAiVideoGenerationTaskByTaskId(Long taskId);
+
+    AiVideoGenerationTask selectRunningStoryBibleTaskForUpdate(Long taskId);
+
+    AiVideoGenerationTask selectLatestStoryBibleTaskByKeyPrefix(String keyPrefix);
+
     AiVideoGenerationTask selectLatestImageTaskByAssetId(Long assetId);
 
     AiVideoGenerationTask selectLatestNeedsReviewVideoTaskByAssetId(Long assetId);
@@ -22,9 +28,17 @@ public interface AiVideoGenerationTaskMapper
 
     int claimStoryBibleTask(@Param("taskId") Long taskId);
 
+    int pauseStoryBibleTask(@Param("taskId") Long taskId, @Param("updateBy") String updateBy);
+
+    int resumeStoryBibleTask(@Param("taskId") Long taskId, @Param("updateBy") String updateBy);
+
     int updateStoryBibleTaskProgress(@Param("taskId") Long taskId,
             @Param("progress") Integer progress, @Param("stageCode") String stageCode,
             @Param("stageLabel") String stageLabel);
+
+    int updateStoryBibleTaskStatusIfRunning(@Param("taskId") Long taskId,
+            @Param("status") String status, @Param("progress") Integer progress,
+            @Param("errorCode") String errorCode, @Param("errorMessage") String errorMessage);
 
     int updateAiVideoGenerationProviderTaskId(@Param("taskId") Long taskId, @Param("providerTaskId") String providerTaskId);
 

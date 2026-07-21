@@ -19,6 +19,8 @@ public class AiVideoImageCompletionService
     private AiVideoGenerationTaskMapper taskMapper;
     @Autowired
     private AiVideoLocalAssetStorage localAssetStorage;
+    @Autowired
+    private IAiVideoAssetService assetService;
 
     @Transactional(rollbackFor = Exception.class)
     public void complete(AiVideoGenerationTask task, AiVideoAsset asset, String imageUrl, String updateBy) throws Exception
@@ -41,6 +43,12 @@ public class AiVideoImageCompletionService
         if (taskMapper.updateAiVideoGenerationTaskStatus(task.getTaskId(), "SUCCEEDED", 100, null, null) != 1)
         {
             throw new IllegalStateException("图片任务状态更新失败，拒绝提交资产结果");
+        }
+        if ("CHARACTER_REFERENCE".equals(asset.getAssetType())
+                || "SCENE_REFERENCE".equals(asset.getAssetType()))
+        {
+            // 人物与场景参考图生成完成即为已确认版本；同步切换版本并刷新所有 AUTO 绑定。
+            assetService.activateGeneratedAiVideoAssetVersion(asset.getAssetId(), updateBy);
         }
     }
 }

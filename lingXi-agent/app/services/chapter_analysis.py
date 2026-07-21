@@ -1023,14 +1023,15 @@ def _finalize_character_reference_prompts(character: dict) -> None:
         "modelDeclaredCharacterReferenceNegativePrompt",
     )
     name = _prompt_text(character.get("name")) or "the same character"
-    identity = declared_positive or _prompt_text(character.get("visualPromptBase"))
+    identity = _prompt_text(character.get("visualPromptBase")) or declared_positive
     positive = (
         f"Professional character reference sheet for {name}. Three-view full-body turnaround "
         "showing front view, side view, and back view in one image. The same person, face, "
         "hairstyle, body proportions, clothing, colors, and accessories must remain identical "
         "in all three views. Neutral standing pose, arms relaxed, orthographic presentation, "
         f"plain light background, even studio lighting. Identity design: {identity}. "
-        "No story action, no environment, no props unless they are permanent identity accessories."
+        "No story action, no environment, no props or held objects of any kind. Keep hands empty, "
+        "clean, relaxed, and anatomically normal; show only the neutral identity and fixed clothing."
     )
     character["characterReferencePrompt"] = _bounded_prompt(
         positive,
@@ -1039,7 +1040,9 @@ def _finalize_character_reference_prompts(character: dict) -> None:
     character["characterReferenceNegativePrompt"] = _join_negative_prompt(
         "text, labels, watermark, logo, extra people, duplicate character, inconsistent face, "
         "inconsistent hairstyle, inconsistent clothing, different accessories, cropped body, "
-        "missing feet, action pose, dramatic perspective, scene background, distorted anatomy",
+        "missing feet, action pose, dramatic perspective, scene background, distorted anatomy, "
+        "weapon, sword, gun, tool, held object, blood, wound, injured hands, glowing hands, magic, "
+        "energy effect, smoke, fire, scenery, furniture, vehicle",
         declared_negative,
     )
 

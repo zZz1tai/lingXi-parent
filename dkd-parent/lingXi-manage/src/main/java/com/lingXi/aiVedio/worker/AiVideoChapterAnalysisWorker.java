@@ -26,6 +26,7 @@ import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoAssetRelation;
 import com.lingXi.aiVedio.domain.AiVideoChapter;
 import com.lingXi.aiVedio.domain.AiVideoCharacter;
+import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.AiVideoScene;
 import com.lingXi.aiVedio.domain.AiVideoShot;
 import com.lingXi.aiVedio.domain.AiVideoStoryBible;
@@ -140,6 +141,12 @@ public class AiVideoChapterAnalysisWorker
                     (stage, progress, message) -> updateStoryBibleProgress(
                             taskId, stage, progress, message));
 
+            if (isStoryBibleTaskPaused(taskId))
+            {
+                log.info("AI视频章节解析已暂停，忽略本次返回结果，taskId={}, chapterId={}", taskId, chapterId);
+                return;
+            }
+
             if (!result.isSuccess())
             {
                 String errorCode = firstNonBlank(result.getErrorCode(), "CHAPTER_ANALYSIS_FAILED");
@@ -159,11 +166,15 @@ public class AiVideoChapterAnalysisWorker
 
             JsonNode document = result.getStoryBible();
             updateStoryBibleProgress(taskId, "PERSISTING", 95, "正在保存人物、场景、分镜和素材草稿");
-            persistResult(chapter, document, runtimeConfig.getTextModel());
-            updateTaskStatusWithLockRetry(taskId, "SUCCEEDED", 100, null, null);
+            persistResult(taskId, chapter, document, runtimeConfig.getTextModel());
         }
         catch (Exception ex)
         {
+            if (ex instanceof AnalysisPausedException || isStoryBibleTaskPaused(taskId))
+            {
+                log.info("AI视频章节解析已暂停，停止保存和状态回写，taskId={}, chapterId={}", taskId, chapterId);
+                return;
+            }
             log.error("AI视频章节解析失败，taskId={}, chapterId={}, errorType={}",
                     taskId, chapterId, ex.getClass().getSimpleName());
             String message = ex.getMessage() == null ? "章节解析失败" : ex.getMessage();
@@ -195,10 +206,14 @@ public class AiVideoChapterAnalysisWorker
         {
             try
             {
-                int updated = taskMapper.updateAiVideoGenerationTaskStatus(
+                int updated = taskMapper.updateStoryBibleTaskStatusIfRunning(
                         taskId, status, progress, errorCode, errorMessage);
                 if (updated != 1)
                 {
+                    if (isStoryBibleTaskPaused(taskId))
+                    {
+                        throw new AnalysisPausedException();
+                    }
                     throw new IllegalStateException("AI视频任务不存在或已删除，taskId=" + taskId);
                 }
                 return;
@@ -227,8 +242,18 @@ public class AiVideoChapterAnalysisWorker
                 taskId, boundedProgress, stageCode, stageLabel);
         if (updated != 1)
         {
+            if (isStoryBibleTaskPaused(taskId))
+            {
+                throw new AnalysisPausedException();
+            }
             throw new IllegalStateException("章节分析任务进度更新失败，taskId=" + taskId);
         }
+    }
+
+    private boolean isStoryBibleTaskPaused(Long taskId)
+    {
+        AiVideoGenerationTask task = taskMapper.selectAiVideoGenerationTaskByTaskId(taskId);
+        return task != null && "PAUSED".equals(task.getStatus());
     }
 
     private void waitBeforeTaskStatusRetry(Long taskId, String operation, int attempt,
@@ -252,14 +277,23 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
-    private void persistResult(final AiVideoChapter chapter, final JsonNode document,
+    private void persistResult(final Long taskId, final AiVideoChapter chapter, final JsonNode document,
             final String textModel)
     {
         TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
         transactionTemplate.execute(status -> {
             try
             {
+                if (taskMapper.selectRunningStoryBibleTaskForUpdate(taskId) == null)
+                {
+                    throw new AnalysisPausedException();
+                }
                 persistResultInTransaction(chapter, document, textModel);
+                if (taskMapper.updateStoryBibleTaskStatusIfRunning(
+                        taskId, "SUCCEEDED", 100, null, null) != 1)
+                {
+                    throw new IllegalStateException("章节解析完成状态保存失败，taskId=" + taskId);
+                }
                 return null;
             }
             catch (RuntimeException ex)
@@ -271,6 +305,11 @@ public class AiVideoChapterAnalysisWorker
                 throw new IllegalStateException("保存章节分析结果失败，已回滚本次全部素材", ex);
             }
         });
+    }
+
+    private static final class AnalysisPausedException extends RuntimeException
+    {
+        private static final long serialVersionUID = 1L;
     }
 
     private void persistResultInTransaction(AiVideoChapter chapter, JsonNode document,

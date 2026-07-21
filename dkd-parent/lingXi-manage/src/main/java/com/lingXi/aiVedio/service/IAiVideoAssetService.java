@@ -43,6 +43,11 @@ public interface IAiVideoAssetService
 
     void deleteAiVideoAsset(Long assetId);
 
+    void activateAiVideoAssetVersion(Long assetId);
+
+    /** 后台生成完成后激活版本；不依赖 Web 登录态。 */
+    void activateGeneratedAiVideoAssetVersion(Long assetId, String updateBy);
+
     Long startImageGeneration(Long assetId);
 
     Long startVideoGeneration(Long videoAssetId);

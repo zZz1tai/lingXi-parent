@@ -28,6 +28,7 @@
         <result property="negativePromptText" column="negative_prompt_text"/>
         <result property="generationParamsJson" column="generation_params_json"/>
         <result property="metadataJson" column="metadata_json"/>
+        <result property="archived" column="archived"/>
         <result property="approvedBy" column="approved_by"/>
         <result property="approvedTime" column="approved_time"/>
         <result property="createTime" column="create_time"/>
@@ -37,7 +38,10 @@
         select asset_id, project_id, chapter_id, scene_id, shot_id, character_id, asset_code, asset_name, asset_type,
                asset_scope, canonical_flag, status, version_no, source_asset_id, storage_provider, object_key,
                preview_object_key, mime_type, file_size, width, height, duration_ms, prompt_text, negative_prompt_text,
-               generation_params_json, metadata_json, approved_by, approved_time, create_time
+               generation_params_json, metadata_json,
+               case when coalesce(json_unquote(json_extract(metadata_json, '$.archived')), 'false') in ('true', '1')
+                    then 1 else 0 end as archived,
+               approved_by, approved_time, create_time
         from ai_video_asset
     </sql>
 
@@ -49,6 +53,10 @@
             <if test="status != null and status != ''">and status = #{status}</if>
             <if test="chapterId != null">and chapter_id = #{chapterId}</if>
             <if test="characterId != null">and character_id = #{characterId}</if>
+            <if test="assetCode != null and assetCode != ''">and asset_code = #{assetCode}</if>
+            <if test="includeArchived == null or includeArchived == false">
+                and coalesce(json_unquote(json_extract(metadata_json, '$.archived')), 'false') not in ('true', '1')
+            </if>
         </where>
         order by canonical_flag desc, update_time desc, asset_id desc
     </select>
@@ -76,6 +84,7 @@
         <include refid="selectAiVideoAssetVo"/>
         where project_id = #{projectId} and asset_type = #{assetType}
           and status = 'APPROVED' and object_key is not null and del_flag = '0'
+          and coalesce(json_unquote(json_extract(metadata_json, '$.archived')), 'false') not in ('true', '1')
           <if test="sceneId != null">and scene_id = #{sceneId}</if>
           <if test="characterId != null">and character_id = #{characterId}</if>
           <if test="assetCode != null and assetCode != ''">and asset_code = #{assetCode}</if>
@@ -87,6 +96,7 @@
         <include refid="selectAiVideoAssetVo"/>
         where project_id = #{projectId} and shot_id = #{shotId}
           and asset_type = 'SHOT_KEYFRAME' and del_flag = '0'
+          and coalesce(json_unquote(json_extract(metadata_json, '$.archived')), 'false') not in ('true', '1')
         order by version_no desc, asset_id desc
     </select>
 
@@ -94,6 +104,7 @@
     <select id="selectProjectCharacterReferenceForUpdate" resultMap="AiVideoAssetResult">
         <include refid="selectAiVideoAssetVo"/>
         where project_id = #{projectId} and asset_type = 'CHARACTER_REFERENCE' and del_flag = '0'
+          and coalesce(json_unquote(json_extract(metadata_json, '$.archived')), 'false') not in ('true', '1')
           and (character_id = #{characterId}
                or json_unquote(json_extract(metadata_json, '$.characterCode')) = #{characterCode}
                or asset_code = concat('character-', #{characterCode})
@@ -152,7 +163,7 @@
         update ai_video_asset
         set status = 'APPROVED', approved_by = #{updateBy}, approved_time = now(),
             update_by = #{updateBy}, update_time = now()
-        where asset_id = #{assetId} and asset_type = 'SHOT_KEYFRAME'
+        where asset_id = #{assetId} and asset_type in ('CHARACTER_REFERENCE', 'SCENE_REFERENCE', 'SHOT_KEYFRAME')
           and status = 'GENERATED' and object_key is not null and del_flag = '0'
     </update>
 
@@ -243,6 +254,41 @@
                              'QUEUED', 'RUNNING', 'WAITING_CALLBACK', 'RETRYING',
                              'NEEDS_REVIEW', 'QUALITY_CHECK')
     </update>
+
+    <update id="archiveOtherAssetVersions">
+        update ai_video_asset
+        set metadata_json = json_set(
+                case when json_valid(metadata_json) then metadata_json else json_object() end,
+                '$.archived', 'true', '$.archivedAt', date_format(now(), '%Y-%m-%d %H:%i:%s'),
+                '$.archivedBy', #{updateBy}),
+            update_by = #{updateBy}, update_time = now()
+        where project_id = #{projectId} and asset_code = #{assetCode}
+          and asset_id != #{currentAssetId} and del_flag = '0'
+          and status in ('APPROVED', 'GENERATED')
+    </update>
+
+    <update id="activateAiVideoAssetVersion">
+        update ai_video_asset
+        set metadata_json = json_set(
+                case when json_valid(metadata_json) then metadata_json else json_object() end,
+                '$.archived', 'false'),
+            update_by = #{updateBy}, update_time = now()
+        where asset_id = #{assetId} and del_flag = '0' and status = 'APPROVED'
+    </update>
+
+    <select id="selectAutoVideoIdsUsingKeyframeFamily" resultType="java.lang.Long">
+        select video.asset_id
+        from ai_video_asset video
+        inner join ai_video_asset keyframe
+                on keyframe.asset_id = video.source_asset_id and keyframe.del_flag = '0'
+        where video.project_id = #{projectId} and keyframe.asset_code = #{assetCode}
+          and keyframe.asset_id != #{currentAssetId}
+          and video.asset_type = 'VIDEO_CLIP' and video.del_flag = '0'
+          and video.status in ('DRAFT', 'REJECTED', 'GENERATED', 'APPROVED')
+          and coalesce(json_unquote(json_extract(video.metadata_json, '$.archived')), 'false') not in ('true', '1')
+          and upper(coalesce(json_unquote(json_extract(video.metadata_json, '$.sourceBindingMode')), 'AUTO')) = 'AUTO'
+        order by video.asset_id
+    </select>
 
     <select id="countActiveVideoAssetsBySourceAssetId" parameterType="Long" resultType="int">
         select count(1)

@@ -18,6 +18,13 @@
         <result property="createTime" column="create_time"/>
     </resultMap>
 
+    <sql id="selectAiVideoGenerationTaskVo">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status,
+               idempotency_key, provider_task_id, progress, request_json,
+               error_code, error_message, create_time
+        from ai_video_generation_task
+    </sql>
+
     <insert id="insertAiVideoGenerationTask" parameterType="AiVideoGenerationTask" useGeneratedKeys="true" keyProperty="taskId">
         insert into ai_video_generation_task
         (project_id, chapter_id, asset_id, task_type, task_name, status, priority, idempotency_key, provider_code, model_code,
@@ -31,6 +38,27 @@
         select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key, provider_task_id, progress
         from ai_video_generation_task
         where idempotency_key = #{idempotencyKey} and (del_flag = '0' or del_flag is null)
+    </select>
+
+    <select id="selectAiVideoGenerationTaskByTaskId" parameterType="Long" resultMap="AiVideoGenerationTaskResult">
+        <include refid="selectAiVideoGenerationTaskVo"/>
+        where task_id = #{taskId} and (del_flag = '0' or del_flag is null)
+    </select>
+
+    <select id="selectRunningStoryBibleTaskForUpdate" parameterType="Long" resultMap="AiVideoGenerationTaskResult">
+        <include refid="selectAiVideoGenerationTaskVo"/>
+        where task_id = #{taskId} and task_type = 'STORY_BIBLE' and status = 'RUNNING'
+          and (del_flag = '0' or del_flag is null)
+        for update
+    </select>
+
+    <select id="selectLatestStoryBibleTaskByKeyPrefix" parameterType="String" resultMap="AiVideoGenerationTaskResult">
+        <include refid="selectAiVideoGenerationTaskVo"/>
+        where task_type = 'STORY_BIBLE'
+          and (idempotency_key = #{keyPrefix} or idempotency_key like concat(#{keyPrefix}, '-%'))
+          and (del_flag = '0' or del_flag is null)
+        order by task_id desc
+        limit 1
     </select>
 
     <select id="selectLatestImageTaskByAssetId" parameterType="Long" resultMap="AiVideoGenerationTaskResult">
@@ -88,12 +116,42 @@
           and (del_flag = '0' or del_flag is null)
     </update>
 
+    <update id="pauseStoryBibleTask">
+        update ai_video_generation_task
+        set status = 'PAUSED',
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.stageCode', 'PAUSED', '$.stageLabel', '章节解析已暂停'),
+            update_by = #{updateBy}, update_time = now()
+        where task_id = #{taskId} and task_type = 'STORY_BIBLE'
+          and status in ('QUEUED', 'RUNNING')
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="resumeStoryBibleTask">
+        update ai_video_generation_task
+        set status = 'QUEUED',
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.stageCode', 'QUEUED', '$.stageLabel', '任务已恢复，等待分析线程执行'),
+            error_code = null, error_message = null,
+            update_by = #{updateBy}, update_time = now()
+        where task_id = #{taskId} and task_type = 'STORY_BIBLE' and status = 'PAUSED'
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
     <update id="updateStoryBibleTaskProgress">
         update ai_video_generation_task
         set progress = #{progress},
             request_json = json_set(coalesce(request_json, json_object()),
                 '$.stageCode', #{stageCode}, '$.stageLabel', #{stageLabel}),
             update_time = now()
+        where task_id = #{taskId} and task_type = 'STORY_BIBLE' and status = 'RUNNING'
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="updateStoryBibleTaskStatusIfRunning">
+        update ai_video_generation_task
+        set status = #{status}, progress = #{progress}, error_code = #{errorCode},
+            error_message = #{errorMessage}, completed_time = now(), update_time = now()
         where task_id = #{taskId} and task_type = 'STORY_BIBLE' and status = 'RUNNING'
           and (del_flag = '0' or del_flag is null)
     </update>

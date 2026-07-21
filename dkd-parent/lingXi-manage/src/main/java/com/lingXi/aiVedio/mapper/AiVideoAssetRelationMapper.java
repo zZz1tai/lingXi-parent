@@ -19,4 +19,8 @@ public interface AiVideoAssetRelationMapper
 
     List<AiVideoAsset> selectActiveReferenceAssetsByTargetAssetId(
             @Param("targetAssetId") Long targetAssetId);
+
+    List<Long> selectAutoKeyframeIdsReferencingAssetFamily(
+            @Param("projectId") Long projectId, @Param("assetCode") String assetCode,
+            @Param("currentAssetId") Long currentAssetId);
 }

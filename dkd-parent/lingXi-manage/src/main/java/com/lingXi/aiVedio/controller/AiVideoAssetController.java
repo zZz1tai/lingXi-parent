@@ -161,6 +161,16 @@ public class AiVideoAssetController extends BaseController
     }
 
     @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
+    @Log(title = "AI视频资产版本切换", businessType = BusinessType.UPDATE)
+    @RepeatSubmit(message = "资产版本正在切换，请勿重复操作")
+    @PostMapping("/{assetId}/activate")
+    public AjaxResult activate(@PathVariable Long assetId)
+    {
+        assetService.activateAiVideoAssetVersion(assetId);
+        return success();
+    }
+
+    @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
     @Log(title = "AI视频图片生成", businessType = BusinessType.OTHER)
     @RepeatSubmit(interval = 30000, message = "图片生成任务正在提交，请勿重复操作")
     @PostMapping("/{assetId}/generate-image")
