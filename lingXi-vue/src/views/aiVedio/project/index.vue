@@ -86,23 +86,6 @@
             </ol>
           </section>
 
-          <section class="workspace-cards">
-            <article class="workspace-card workspace-card-primary">
-              <span class="workspace-card-index">NEXT</span>
-              <div><h3>继续本项目的章节制作</h3><p>导入新章节、查看解析进度，或进入已有章节的素材工作区。</p></div>
-              <el-button type="primary" @click="openChapterDrawer(selectedProject)">打开章节</el-button>
-            </article>
-            <article class="workspace-card">
-              <span class="workspace-card-index">ASSETS</span>
-              <div><h3>人物与场景资产</h3><p>集中管理参考图、提示词以及已批准的生成版本。</p></div>
-              <el-button text type="primary" @click="openChapterDrawer(selectedProject)">从章节进入</el-button>
-            </article>
-            <article class="workspace-card">
-              <span class="workspace-card-index">OUTPUT</span>
-              <div><h3>关键帧与视频</h3><p>逐镜头核对引用关系，再提交视频生成任务。</p></div>
-              <el-button text type="primary" @click="openChapterDrawer(selectedProject)">查看制作流程</el-button>
-            </article>
-          </section>
         </template>
 
         <section v-else-if="!loading" class="workspace-empty">
@@ -2611,13 +2594,6 @@ h1 { margin-bottom: 5px; font-size: clamp(27px, 2.4vw, 36px); font-weight: 720; 
 .workflow-steps li > div { z-index: 1; display: grid; min-width: 0; gap: 2px; padding-right: 8px; background: #11171f; }
 .workflow-steps strong { overflow: hidden; color: #cbd2da; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .workflow-steps small { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-cards { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 12px; margin-top: 12px; }
-.workspace-card { display: flex; min-width: 0; min-height: 166px; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px; border: 1px solid var(--studio-border-soft); border-radius: 10px; background: #121922; transition: border-color .2s ease, transform .2s ease, background-color .2s ease; }
-.workspace-card:hover { border-color: #3b4654; background: #161e28; transform: translateY(-2px); }
-.workspace-card-primary { background: linear-gradient(135deg, rgb(229 144 74 / 10%), #151b23 68%); }
-.workspace-card-index { color: var(--studio-accent); font-family: monospace; font-size: 9px; font-weight: 700; letter-spacing: .1em; }
-.workspace-card h3 { margin-bottom: 6px; color: #e9edf1; font-size: 14px; }
-.workspace-card p { margin-bottom: 0; color: #7f8b9b; font-size: 11px; line-height: 1.6; }
 .workspace-empty { display: grid; min-height: 580px; place-items: center; align-content: center; padding: 40px; text-align: center; }
 .empty-symbol { display: grid; width: 76px; height: 76px; place-items: center; margin-bottom: 22px; border: 1px solid #574333; border-radius: 18px 34px 18px 18px; color: #19130f; background: var(--studio-accent); box-shadow: 0 20px 60px rgb(229 144 74 / 20%); font-size: 30px; }
 .workspace-empty h2 { margin-bottom: 10px; font-size: 28px; }
@@ -2716,8 +2692,6 @@ button.shot-reference-card:disabled { cursor: default; }
   .studio-shell { grid-template-columns: 260px minmax(0, 1fr); }
   .hero-poster { width: 116px; }
   .hero-actions { margin-left: 150px; }
-  .workspace-cards { grid-template-columns: 1fr 1fr; }
-  .workspace-card-primary { grid-column: 1 / -1; min-height: 138px; }
   .workflow-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 0; }
   .workflow-steps li:nth-child(2)::after { display: none; }
 }
@@ -2727,7 +2701,7 @@ button.shot-reference-card:disabled { cursor: default; }
   .project-list { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 300px; }
 }
 @media (max-width: 700px) { .studio-page { padding: 20px; } .studio-header { align-items: flex-start; flex-direction: column; } .header-actions { width: 100%; } .header-actions .el-button { flex: 1; } .toolbar .el-input { width: 100%; } .toolbar { flex-wrap: wrap; } .form-grid, .video-summary-grid, .chapter-video-version-grid { grid-template-columns: 1fr; gap: 0; } .video-summary-grid, .chapter-video-version-grid { gap: 8px; } .video-summary-heading, .duration-editor, .chapter-video-shot-heading { align-items: flex-start; flex-direction: column; } .chapter-item { align-items: flex-start; flex-wrap: wrap; } .chapter-item-actions { width: 100%; justify-content: flex-start; } .chapter-video-scene-heading { align-items: flex-start; } .chapter-video-scene-heading div { align-items: flex-start; flex-direction: column; gap: 3px; } .chapter-video-toolbar-actions { justify-content: stretch; } .chapter-video-toolbar-actions .el-button { flex: 1; } }
-@media (max-width: 700px) { .studio-heading { align-items: flex-start; } .studio-mark { width: 42px; height: 48px; flex: 0 0 auto; } .studio-header { margin-bottom: 18px; } .project-rail, .project-workspace { padding: 14px; } .project-list { grid-template-columns: 1fr; max-height: 330px; } .project-hero { min-height: 0; padding: 20px; } .hero-content { align-items: flex-start; gap: 18px; margin-top: 24px; } .hero-poster { width: 82px; border-radius: 9px 20px 9px 9px; } .hero-poster > span { font-size: 36px; } .hero-copy h2 { font-size: 27px; white-space: normal; } .hero-copy > span { font-size: 12px; } .hero-meta { gap: 6px 14px; } .hero-actions { flex-wrap: wrap; margin: 22px 0 0; } .hero-actions .el-button:first-child { flex: 1; } .section-title { align-items: flex-start; flex-direction: column; gap: 4px; } .workflow-steps { grid-template-columns: 1fr; gap: 14px; } .workflow-steps li::after { top: 31px; right: auto; bottom: -15px; left: 16px; width: 1px; height: 16px; } .workflow-steps li:nth-child(2)::after { display: block; } .workflow-steps li:last-child::after { display: none; } .workspace-cards { grid-template-columns: 1fr; } .workspace-card-primary { grid-column: auto; } }
+@media (max-width: 700px) { .studio-heading { align-items: flex-start; } .studio-mark { width: 42px; height: 48px; flex: 0 0 auto; } .studio-header { margin-bottom: 18px; } .project-rail, .project-workspace { padding: 14px; } .project-list { grid-template-columns: 1fr; max-height: 330px; } .project-hero { min-height: 0; padding: 20px; } .hero-content { align-items: flex-start; gap: 18px; margin-top: 24px; } .hero-poster { width: 82px; border-radius: 9px 20px 9px 9px; } .hero-poster > span { font-size: 36px; } .hero-copy h2 { font-size: 27px; white-space: normal; } .hero-copy > span { font-size: 12px; } .hero-meta { gap: 6px 14px; } .hero-actions { flex-wrap: wrap; margin: 22px 0 0; } .hero-actions .el-button:first-child { flex: 1; } .section-title { align-items: flex-start; flex-direction: column; gap: 4px; } .workflow-steps { grid-template-columns: 1fr; gap: 14px; } .workflow-steps li::after { top: 31px; right: auto; bottom: -15px; left: 16px; width: 1px; height: 16px; } .workflow-steps li:nth-child(2)::after { display: block; } .workflow-steps li:last-child::after { display: none; } }
 @media (max-width: 700px) { .chapter-content { width: calc(100% - 52px); } .chapter-analysis-progress { max-width: none; } .chapter-analysis-phases li { align-items: center; flex-direction: column; gap: 3px; text-align: center; } .chapter-analysis-phases li::after { top: 9px; right: -50%; left: 50%; } .chapter-analysis-phases li small { width: 100%; padding: 0; background: transparent; } }
 @media (max-width: 700px) { .chapter-material-stats, .chapter-material-card-grid, .keyframe-action-row { grid-template-columns: 1fr; } .chapter-material-card-grid { padding: 12px; } .shot-reference-heading { align-items: flex-start; flex-direction: column; } .shot-reference-tags { justify-content: flex-start; } .shot-reference-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .chapter-video-toolbar-actions { flex-wrap: wrap; } }
 </style>
