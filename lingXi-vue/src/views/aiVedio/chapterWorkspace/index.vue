@@ -382,6 +382,8 @@ const chapterRules = {
 }
 let autoPrepareKey = ''
 let analysisPollTimer = null
+let contextLoadSequence = 0
+let assetLoadSequence = 0
 
 const projectId = computed(() => route.params.projectId)
 const chapterId = computed(() => route.params.chapterId)
@@ -551,32 +553,31 @@ async function submitChapter() {
 }
 
 async function loadContext() {
+  const loadSequence = ++contextLoadSequence
+  const requestedProjectId = String(projectId.value)
+  const isCurrentContext = () => loadSequence === contextLoadSequence
+    && requestedProjectId === String(projectId.value)
   chapterLoading.value = true
   chapterError.value = ''
   contextError.value = ''
   try {
     const [projectResponse, chapterResponse] = await Promise.all([
-      getAiVideoProject(projectId.value),
-      listAiVideoChapter(projectId.value)
+      getAiVideoProject(requestedProjectId),
+      listAiVideoChapter(requestedProjectId)
     ])
+    if (!isCurrentContext()) return
     project.value = projectResponse.data || null
     chapters.value = chapterResponse.rows || chapterResponse.data || []
-    if (!currentChapter.value && chapters.value.length) {
-      await router.replace({ name: 'AiVedioChapterWorkspace', params: { projectId: projectId.value, chapterId: chapters.value[0].chapterId } })
-      return
-    }
-    await loadAssets()
-    const prepareKey = `${projectId.value}:${chapterId.value}`
-    if (route.query.prepare === '1' && autoPrepareKey !== prepareKey) {
-      autoPrepareKey = prepareKey
-      await prepareVideoDrafts()
-    }
+    if (await redirectToFirstChapterIfMissing()) return
+    const assetsLoaded = await loadAssets()
+    if (assetsLoaded) await autoPrepareCurrentChapter()
   } catch (error) {
+    if (!isCurrentContext()) return
     const message = errorMessage(error, '项目或章节读取失败')
     chapterError.value = message
     contextError.value = message
   } finally {
-    chapterLoading.value = false
+    if (isCurrentContext()) chapterLoading.value = false
   }
 }
 
@@ -611,17 +612,24 @@ function collapseDuplicateApprovedVersions(rows) {
 }
 
 async function loadAssets({ silent = false } = {}) {
-  if (!projectId.value || !chapterId.value) return
+  if (!projectId.value || !chapterId.value) return false
+  const loadSequence = ++assetLoadSequence
+  const requestedProjectId = String(projectId.value)
+  const requestedChapterId = String(chapterId.value)
+  const isCurrentLoad = () => loadSequence === assetLoadSequence
+    && requestedProjectId === String(projectId.value)
+    && requestedChapterId === String(chapterId.value)
   const wasAnalysisRunning = analysisRunning.value
   if (!silent) assetLoading.value = true
   assetError.value = ''
   try {
     const [chapterAssetRows, characterAssetRows, taskResponse, chapterResponse] = await Promise.all([
-      fetchAllAssets({ projectId: projectId.value, chapterId: chapterId.value }),
-      fetchAllAssets({ projectId: projectId.value, assetType: 'CHARACTER_REFERENCE' }),
-      listAiVideoTask(projectId.value),
-      listAiVideoChapter(projectId.value)
+      fetchAllAssets({ projectId: requestedProjectId, chapterId: requestedChapterId }),
+      fetchAllAssets({ projectId: requestedProjectId, assetType: 'CHARACTER_REFERENCE' }),
+      listAiVideoTask(requestedProjectId),
+      listAiVideoChapter(requestedProjectId)
     ])
+    if (!isCurrentLoad()) return false
     chapters.value = chapterResponse.rows || chapterResponse.data || []
     const assetById = new Map()
     const combinedAssetRows = collapseDuplicateApprovedVersions([...characterAssetRows, ...chapterAssetRows])
@@ -630,7 +638,7 @@ async function loadAssets({ silent = false } = {}) {
     const tasks = taskResponse.rows || taskResponse.data || []
     taskByAssetId.value = Object.fromEntries(tasks.filter(task => task.assetId).map(task => [task.assetId, task]))
     const latestChapterTask = tasks
-      .filter(task => task.taskType === 'STORY_BIBLE' && String(task.chapterId) === String(chapterId.value))
+      .filter(task => task.taskType === 'STORY_BIBLE' && String(task.chapterId) === requestedChapterId)
       .sort((left, right) => Number(right.taskId) - Number(left.taskId))[0]
     chapterTask.value = latestChapterTask ? normalizeAnalysisTask(latestChapterTask) : null
     if (wasAnalysisRunning && !analysisRunning.value) {
@@ -638,11 +646,40 @@ async function loadAssets({ silent = false } = {}) {
       if (chapterTask.value?.status === 'FAILED') proxy.$modal.msgError(chapterTask.value.errorMessage || '章节解析失败')
     }
     scheduleAnalysisPolling()
+    return true
   } catch (error) {
-    assetError.value = errorMessage(error, '章节素材读取失败')
+    if (isCurrentLoad()) assetError.value = errorMessage(error, '章节素材读取失败')
+    return false
   } finally {
-    if (!silent) assetLoading.value = false
+    if (isCurrentLoad()) assetLoading.value = false
   }
+}
+
+async function autoPrepareCurrentChapter() {
+  const prepareKey = `${projectId.value}:${chapterId.value}`
+  if (route.query.prepare === '1' && autoPrepareKey !== prepareKey) {
+    autoPrepareKey = prepareKey
+    await prepareVideoDrafts()
+  }
+}
+
+async function redirectToFirstChapterIfMissing() {
+  if (currentChapter.value || !chapters.value.length) return false
+  await router.replace({
+    name: 'AiVedioChapterWorkspace',
+    params: { projectId: projectId.value, chapterId: chapters.value[0].chapterId }
+  })
+  return true
+}
+
+async function loadSelectedChapterAssets() {
+  stopAnalysisPolling()
+  chapterTask.value = null
+  assetError.value = ''
+  if (await redirectToFirstChapterIfMissing()) return
+  const assetsLoaded = await loadAssets()
+  if (!assetsLoaded || await redirectToFirstChapterIfMissing()) return
+  await autoPrepareCurrentChapter()
 }
 
 function normalizeAnalysisTask(task) {
@@ -962,6 +999,7 @@ async function prepareVideoDrafts() {
 }
 
 function selectChapter(chapter) {
+  if (String(chapter.chapterId) === String(chapterId.value)) return
   router.push({ name: 'AiVedioChapterWorkspace', params: { projectId: projectId.value, chapterId: chapter.chapterId } })
 }
 
@@ -973,12 +1011,21 @@ function errorMessage(error, fallback) {
   return error?.response?.data?.msg || error?.message || error?.msg || fallback
 }
 
-watch(() => [route.params.projectId, route.params.chapterId], () => {
-  stopAnalysisPolling()
-  chapterTask.value = null
-  loadContext()
+watch(() => [String(route.params.projectId || ''), String(route.params.chapterId || '')], ([nextProjectId, nextChapterId], previousRoute = []) => {
+  const [previousProjectId, previousChapterId] = previousRoute
+  if (!previousProjectId || nextProjectId !== previousProjectId) {
+    stopAnalysisPolling()
+    chapterTask.value = null
+    loadContext()
+    return
+  }
+  if (nextChapterId !== previousChapterId) loadSelectedChapterAssets()
 }, { immediate: true })
-onBeforeUnmount(stopAnalysisPolling)
+onBeforeUnmount(() => {
+  contextLoadSequence += 1
+  assetLoadSequence += 1
+  stopAnalysisPolling()
+})
 </script>
 
 <style scoped>

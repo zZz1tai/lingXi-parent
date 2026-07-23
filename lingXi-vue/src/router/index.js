@@ -144,7 +144,13 @@ export const dynamicRoutes = [
         path: ':projectId(\\d+)/:chapterId(\\d+)',
         component: () => import('@/views/aiVedio/chapterWorkspace/index'),
         name: 'AiVedioChapterWorkspace',
-        meta: { title: '章节素材工作台', activeMenu: '/aiVedio/project', noCache: true }
+        meta: {
+          title: '章节素材工作台',
+          activeMenu: '/aiVedio/project',
+          noCache: true,
+          reuseViewByParam: 'projectId',
+          preserveScrollByParam: 'projectId'
+        }
       }
     ]
   },
@@ -240,9 +246,12 @@ const router = createRouter({
   scrollBehavior(to, from, savedPosition) {
     if (savedPosition) {
       return savedPosition
-    } else {
-      return { top: 0 }
     }
+    const stableParam = to.meta?.preserveScrollByParam
+    if (stableParam
+      && to.name === from.name
+      && String(to.params?.[stableParam] ?? '') === String(from.params?.[stableParam] ?? '')) return false
+    return { top: 0 }
   },
 });
 

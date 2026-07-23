@@ -5,35 +5,40 @@
       <span>{{ assets.length }}</span>
     </div>
 
-    <div v-if="loading" class="video-list" aria-label="正在加载视频版本">
-      <article v-for="index in 3" :key="index" class="video-card skeleton"><i /><div /></article>
-    </div>
-    <div v-else-if="error" class="panel-state error-state">
-      <strong>视频版本读取失败</strong><p>{{ error }}</p><el-button @click="$emit('retry-load')">重新加载</el-button>
-    </div>
-    <div v-else-if="!assets.length" class="panel-state">
-      <div class="empty-mark">▶</div><strong>还没有视频版本</strong>
-      <p>先确认分镜关键帧，再准备视频提示词和生成任务。</p>
-      <el-button type="primary" :loading="preparing" @click="$emit('prepare')">准备视频草稿</el-button>
-    </div>
-    <div v-else class="video-list">
-      <article v-for="asset in assets" :key="asset.assetId" class="video-card">
-        <div class="video-preview">
-          <video v-if="asset.objectKey || asset.previewObjectKey" :src="asset.objectKey || asset.previewObjectKey" controls preload="metadata" />
-          <div v-else class="video-placeholder"><span>▶</span><small>{{ placeholder(asset) }}</small></div>
-        </div>
-        <div class="video-body">
-          <div class="video-topline"><span>{{ statusLabel(asset.status) }}</span><small>{{ durationLabel(asset) }}</small></div>
-          <h3>{{ asset.assetName || `视频版本 #${asset.assetId}` }}</h3>
-          <p>{{ asset.promptText || '视频提示词尚未填写。' }}</p>
-          <div v-if="taskByAssetId[asset.assetId]" class="task-line">{{ taskLabel(taskByAssetId[asset.assetId]) }}</div>
-          <div class="video-actions">
-            <el-button v-if="asset.status === 'DRAFT'" type="primary" size="small" @click="$emit('edit', asset)">确认提示词</el-button>
-            <el-button v-if="asset.status === 'REJECTED'" type="warning" size="small" @click="$emit('edit', asset)">修改并重试</el-button>
-            <el-button text type="danger" size="small" @click="$emit('delete', asset)">删除版本</el-button>
+    <div
+      v-loading="loading"
+      :aria-busy="loading"
+      element-loading-text="正在加载视频版本"
+      element-loading-background="rgba(12, 17, 24, 0.72)"
+      class="video-panel-body"
+    >
+      <div v-if="error" class="panel-state error-state">
+        <strong>视频版本读取失败</strong><p>{{ error }}</p><el-button @click="$emit('retry-load')">重新加载</el-button>
+      </div>
+      <div v-else-if="!assets.length" class="panel-state">
+        <div class="empty-mark">▶</div><strong>还没有视频版本</strong>
+        <p>先确认分镜关键帧，再准备视频提示词和生成任务。</p>
+        <el-button type="primary" :loading="preparing" @click="$emit('prepare')">准备视频草稿</el-button>
+      </div>
+      <div v-else class="video-list">
+        <article v-for="asset in assets" :key="asset.assetId" class="video-card">
+          <div class="video-preview">
+            <video v-if="asset.objectKey || asset.previewObjectKey" :src="asset.objectKey || asset.previewObjectKey" controls preload="metadata" />
+            <div v-else class="video-placeholder"><span>▶</span><small>{{ placeholder(asset) }}</small></div>
           </div>
-        </div>
-      </article>
+          <div class="video-body">
+            <div class="video-topline"><span>{{ statusLabel(asset.status) }}</span><small>{{ durationLabel(asset) }}</small></div>
+            <h3>{{ asset.assetName || `视频版本 #${asset.assetId}` }}</h3>
+            <p>{{ asset.promptText || '视频提示词尚未填写。' }}</p>
+            <div v-if="taskByAssetId[asset.assetId]" class="task-line">{{ taskLabel(taskByAssetId[asset.assetId]) }}</div>
+            <div class="video-actions">
+              <el-button v-if="asset.status === 'DRAFT'" type="primary" size="small" @click="$emit('edit', asset)">确认提示词</el-button>
+              <el-button v-if="asset.status === 'REJECTED'" type="warning" size="small" @click="$emit('edit', asset)">修改并重试</el-button>
+              <el-button text type="danger" size="small" @click="$emit('delete', asset)">删除版本</el-button>
+            </div>
+          </div>
+        </article>
+      </div>
     </div>
   </section>
 </template>
@@ -77,6 +82,7 @@ function taskLabel(task) {
 .panel-heading h2 { margin: 5px 0 6px; color: #eff2f5; font-size: 23px; letter-spacing: -.025em; }
 .panel-heading p { margin: 0; color: #7f8b9b; font-size: 12px; }
 .panel-heading > span { color: #e5904a; font-family: Consolas, monospace; font-size: 28px; }
+.video-panel-body { min-height: 390px; }
 .video-list { display: grid; gap: 14px; }
 .video-card { display: grid; grid-template-columns: minmax(260px, 38%) minmax(0, 1fr); min-height: 210px; overflow: hidden; border: 1px solid #263140; border-radius: 12px; background: #131b24; }
 .video-preview { display: grid; min-height: 210px; place-items: center; background: #0c1219; }
@@ -97,7 +103,5 @@ function taskLabel(task) {
 .panel-state p { margin: 7px 0 18px; color: #6f7c8d; font-size: 11px; }
 .empty-mark { display: grid; width: 62px; height: 62px; place-items: center; margin-bottom: 16px; border: 1px solid #4a3a2e; border-radius: 15px 27px 15px 15px; color: #e5904a; background: rgb(229 144 74 / 7%); }
 .error-state strong { color: #e39393; }
-.skeleton i { min-height: 210px; background: linear-gradient(90deg, #111923 25%, #202a36 38%, #111923 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; }
-@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 @media (max-width: 720px) { .video-card { grid-template-columns: 1fr; } .video-preview { min-height: 190px; } }
 </style>

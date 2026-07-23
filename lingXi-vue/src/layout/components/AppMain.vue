@@ -3,7 +3,7 @@
     <router-view v-slot="{ Component, route }">
       <transition name="fade-transform" mode="out-in">
         <keep-alive :include="tagsViewStore.cachedViews">
-          <component v-if="!route.meta.link" :is="Component" :key="route.path"/>
+          <component v-if="!route.meta.link" :is="Component" :key="getRouteViewKey(route)"/>
         </keep-alive>
       </transition>
     </router-view>
@@ -16,6 +16,12 @@ import iframeToggle from "./IframeToggle/index"
 import useTagsViewStore from '@/store/modules/tagsView'
 
 const tagsViewStore = useTagsViewStore()
+
+function getRouteViewKey(route) {
+  const stableParam = route.meta?.reuseViewByParam
+  if (!stableParam) return route.path
+  return `${String(route.name || route.path)}:${String(route.params?.[stableParam] ?? '')}`
+}
 </script>
 
 <style lang="scss" scoped>
