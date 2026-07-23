@@ -40,6 +40,9 @@ import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 import com.lingXi.aiVedio.util.AiVideoImageAspectRatioPolicy;
 import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage;
 
+/**
+ * AI视频资产服务实现类，提供资产的增删改查、版本管理、生成任务控制及引用绑定等功能。
+ */
 @Service
 public class AiVideoAssetServiceImpl implements IAiVideoAssetService
 {
@@ -79,6 +82,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     @Autowired
     private ObjectMapper objectMapper;
 
+    /**
+     * 根据条件查询资产列表。
+     *
+     * @param asset 查询条件
+     * @return 资产列表
+     */
     @Override
     public List<AiVideoAsset> selectAiVideoAssetList(AiVideoAsset asset)
     {
@@ -90,6 +99,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return assetMapper.selectAiVideoAssetList(asset);
     }
 
+    /**
+     * 根据资产ID查询资产详情。
+     *
+     * @param assetId 资产ID
+     * @return 资产信息
+     */
     @Override
     public AiVideoAsset selectAiVideoAssetByAssetId(Long assetId)
     {
@@ -102,6 +117,11 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return asset;
     }
 
+    /**
+     * 确认使用图片资产并激活版本。
+     *
+     * @param assetId 资产ID
+     */
     @Override
     @Transactional
     public void approveAiVideoAsset(Long assetId)
@@ -132,6 +152,11 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         activateVersion(asset, SecurityUtils.getUsername(), true);
     }
 
+    /**
+     * 重试失败的图片生成任务。
+     *
+     * @param assetId 资产ID
+     */
     @Override
     @Transactional
     public void retryImageGeneration(Long assetId)
@@ -166,6 +191,13 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         }
     }
 
+    /**
+     * 更新图片生成提示词。
+     *
+     * @param assetId 资产ID
+     * @param promptText 正向提示词
+     * @param negativePromptText 反向提示词
+     */
     @Override
     @Transactional
     public void updateImagePrompt(Long assetId, String promptText, String negativePromptText)
@@ -189,6 +221,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         }
     }
 
+    /**
+     * 根据关键帧资产创建视频提示词草稿。
+     *
+     * @param keyframeAssetId 关键帧资产ID
+     * @return 视频草稿资产
+     */
     @Override
     @Transactional
     public AiVideoAsset createVideoPromptDraft(Long keyframeAssetId)
@@ -256,6 +294,15 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return draft;
     }
 
+    /**
+     * 更新视频生成提示词。
+     *
+     * @param videoAssetId 视频资产ID
+     * @param promptText 正向提示词
+     * @param negativePromptText 反向提示词
+     * @param durationMs 视频时长（毫秒）
+     * @return 更新后的视频资产
+     */
     @Override
     @Transactional
     public AiVideoAsset updateVideoPrompt(Long videoAssetId, String promptText,
@@ -287,6 +334,13 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return selectAiVideoAssetByAssetId(videoAssetId);
     }
 
+    /**
+     * 基于现有资产创建重新生成草稿（新版本）。
+     *
+     * @param assetId 源资产ID
+     * @param request 重新生成请求参数
+     * @return 新版本草稿资产
+     */
     @Override
     @Transactional
     public AiVideoAsset createRegenerationDraft(Long assetId,
@@ -424,6 +478,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return created;
     }
 
+    /**
+     * 查询关键帧的参考图绑定详情。
+     *
+     * @param assetId 关键帧资产ID
+     * @return 绑定详情JSON
+     */
     @Override
     public JsonNode getKeyframeReferenceBinding(Long assetId)
     {
@@ -432,6 +492,13 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return buildKeyframeReferenceBinding(keyframe);
     }
 
+    /**
+     * 更新关键帧的参考图绑定关系。
+     *
+     * @param assetId 关键帧资产ID
+     * @param request 绑定请求参数
+     * @return 更新后的资产
+     */
     @Override
     @Transactional
     public AiVideoAsset updateKeyframeReferenceBinding(Long assetId,
@@ -460,6 +527,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return createRegenerationDraft(keyframe.getAssetId(), regenerationRequest);
     }
 
+    /**
+     * 重置关键帧的参考图绑定为自动模式。
+     *
+     * @param assetId 关键帧资产ID
+     * @return 重置后的资产
+     */
     @Override
     @Transactional
     public AiVideoAsset resetKeyframeReferenceBinding(Long assetId)
@@ -491,8 +564,13 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
     }
 
     /**
-     * 版本切换只替换同一资产族的引用，保留关键帧已经锁定的其他人物与场景版本。
-     * 不能在切换一个人物时重新解析整套 AUTO 绑定，否则旧分镜缺少新场景版本会阻塞本次换版。
+     * 版本切换只替换同一资产族的引用，保留关键帧已锁定的其他人物与场景版本。
+     * 不能在切换一个人物时重新解析整套AUTO绑定，否则旧分镜缺少新场景版本会阻塞本次换版。
+     *
+     * @param keyframeId 关键帧资产ID
+     * @param activatedAsset 已激活的资产
+     * @param updateBy 操作人
+     * @param checkOwner 是否校验所有者权限
      */
     private void switchAutomaticKeyframeReferenceVersion(Long keyframeId, AiVideoAsset activatedAsset,
             String updateBy, boolean checkOwner)
@@ -550,6 +628,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         }
     }
 
+    /**
+     * 查询视频资产的来源关键帧绑定详情。
+     *
+     * @param videoAssetId 视频资产ID
+     * @return 绑定详情JSON
+     */
     @Override
     public JsonNode getVideoSourceBinding(Long videoAssetId)
     {
@@ -558,6 +642,13 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return buildVideoSourceBinding(video);
     }
 
+    /**
+     * 更新视频资产的来源关键帧绑定。
+     *
+     * @param videoAssetId 视频资产ID
+     * @param request 绑定请求参数
+     * @return 更新后的资产
+     */
     @Override
     @Transactional
     public AiVideoAsset updateVideoSourceBinding(Long videoAssetId,
@@ -582,6 +673,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return createRegenerationDraft(video.getAssetId(), regenerationRequest);
     }
 
+    /**
+     * 重置视频资产的来源关键帧绑定为自动模式。
+     *
+     * @param videoAssetId 视频资产ID
+     * @return 重置后的资产
+     */
     @Override
     @Transactional
     public AiVideoAsset resetVideoSourceBinding(Long videoAssetId)
@@ -614,6 +711,11 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return selectAiVideoAssetByAssetId(draft.getAssetId());
     }
 
+    /**
+     * 删除AI视频资产（逻辑删除）。
+     *
+     * @param assetId 资产ID
+     */
     @Override
     @Transactional
     public void deleteAiVideoAsset(Long assetId)
@@ -649,6 +751,11 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         scheduleStorageCleanupAfterCommit(storagePathsToDelete, assetId);
     }
 
+    /**
+     * 激活图片资产版本（切换为当前版本）。
+     *
+     * @param assetId 资产ID
+     */
     @Override
     @Transactional
     public void activateAiVideoAssetVersion(Long assetId)
@@ -670,6 +777,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         activateVersion(asset, SecurityUtils.getUsername(), true);
     }
 
+    /**
+     * 后台生成完成后激活版本，不依赖Web登录态。
+     *
+     * @param assetId 资产ID
+     * @param updateBy 操作人
+     */
     @Override
     @Transactional
     public void activateGeneratedAiVideoAssetVersion(Long assetId, String updateBy)
@@ -692,6 +805,13 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         activateVersion(asset, actor, false);
     }
 
+    /**
+     * 激活资产版本，归档旧版本并级联更新自动绑定。
+     *
+     * @param asset 资产
+     * @param updateBy 操作人
+     * @param checkOwner 是否校验所有者权限
+     */
     private void activateVersion(AiVideoAsset asset, String updateBy, boolean checkOwner)
     {
         if (asset.getAssetCode() == null || asset.getAssetCode().trim().isEmpty())
@@ -707,6 +827,13 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         cascadeAutomaticBindings(asset, updateBy, checkOwner);
     }
 
+    /**
+     * 级联更新自动绑定关系（人物/场景参考图激活时更新关键帧，关键帧激活时更新视频）。
+     *
+     * @param activatedAsset 已激活的资产
+     * @param updateBy 操作人
+     * @param checkOwner 是否校验所有者权限
+     */
     private void cascadeAutomaticBindings(AiVideoAsset activatedAsset, String updateBy, boolean checkOwner)
     {
         if ("CHARACTER_REFERENCE".equals(activatedAsset.getAssetType())
@@ -739,6 +866,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
                 || "SHOT_KEYFRAME".equals(assetType);
     }
 
+    /**
+     * 启动图片生成任务。
+     *
+     * @param assetId 资产ID
+     * @return 生成任务ID
+     */
     @Override
     @Transactional
     public Long startImageGeneration(Long assetId)
@@ -789,6 +922,12 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         return task.getTaskId();
     }
 
+    /**
+     * 启动视频生成任务。
+     *
+     * @param videoAssetId 视频资产ID
+     * @return 生成任务ID
+     */
     @Override
     public Long startVideoGeneration(Long videoAssetId)
     {
@@ -820,6 +959,13 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
                 SecurityUtils.getUsername());
     }
 
+    /**
+     * 处理视频提交结果的核对操作。
+     *
+     * @param videoAssetId 视频资产ID
+     * @param action 核对操作类型
+     * @param providerTaskId 供应商任务ID
+     */
     @Override
     @Transactional
     public void resolveVideoSubmission(Long videoAssetId, String action, String providerTaskId)
@@ -1287,6 +1433,9 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         }
     }
 
+    /**
+     * 关键帧参考图覆盖配置，包含场景参考图和人物参考图列表。
+     */
     private static final class KeyframeReferenceOverride
     {
         private final AiVideoAsset sceneReference;

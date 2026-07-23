@@ -11,12 +11,21 @@ import com.lingXi.aiVedio.domain.AiVideoProject;
 import com.lingXi.aiVedio.mapper.AiVideoProjectMapper;
 import com.lingXi.aiVedio.service.IAiVideoProjectService;
 
+/**
+ * AI视频项目服务实现类。
+ */
 @Service
 public class AiVideoProjectServiceImpl implements IAiVideoProjectService
 {
     @Autowired
     private AiVideoProjectMapper projectMapper;
 
+    /**
+     * 根据项目ID查询项目信息，并校验当前用户是否为项目所有者。
+     *
+     * @param projectId 项目ID
+     * @return 项目信息
+     */
     @Override
     public AiVideoProject selectAiVideoProjectByProjectId(Long projectId)
     {
@@ -25,6 +34,12 @@ public class AiVideoProjectServiceImpl implements IAiVideoProjectService
         return project;
     }
 
+    /**
+     * 根据条件查询当前用户拥有的项目列表。
+     *
+     * @param project 查询条件
+     * @return 项目列表
+     */
     @Override
     public List<AiVideoProject> selectAiVideoProjectList(AiVideoProject project)
     {
@@ -32,6 +47,12 @@ public class AiVideoProjectServiceImpl implements IAiVideoProjectService
         return projectMapper.selectAiVideoProjectList(project);
     }
 
+    /**
+     * 新增AI视频项目，设置默认值并校验参数。
+     *
+     * @param project 项目信息
+     * @return 受影响行数
+     */
     @Override
     public int insertAiVideoProject(AiVideoProject project)
     {
@@ -48,6 +69,12 @@ public class AiVideoProjectServiceImpl implements IAiVideoProjectService
         return projectMapper.insertAiVideoProject(project);
     }
 
+    /**
+     * 更新AI视频项目信息，校验项目所有权。
+     *
+     * @param project 项目信息
+     * @return 受影响行数
+     */
     @Override
     public int updateAiVideoProject(AiVideoProject project)
     {
@@ -66,6 +93,12 @@ public class AiVideoProjectServiceImpl implements IAiVideoProjectService
         return projectMapper.updateAiVideoProject(existing);
     }
 
+    /**
+     * 批量删除AI视频项目，只删除当前用户拥有的项目。
+     *
+     * @param projectIds 项目ID数组
+     * @return 受影响行数
+     */
     @Override
     public int deleteAiVideoProjectByProjectIds(Long[] projectIds)
     {
@@ -76,12 +109,22 @@ public class AiVideoProjectServiceImpl implements IAiVideoProjectService
         return projectMapper.deleteAiVideoProjectByProjectIds(projectIds, SecurityUtils.getUserId());
     }
 
+    /**
+     * 校验当前用户是否为项目所有者。
+     *
+     * @param projectId 项目ID
+     */
     @Override
     public void checkProjectOwner(Long projectId)
     {
         checkProjectOwner(projectMapper.selectAiVideoProjectByProjectId(projectId));
     }
 
+    /**
+     * 校验项目对象的所有者权限。
+     *
+     * @param project 项目信息
+     */
     private void checkProjectOwner(AiVideoProject project)
     {
         if (project == null || !SecurityUtils.getUserId().equals(project.getOwnerUserId()))
@@ -90,6 +133,11 @@ public class AiVideoProjectServiceImpl implements IAiVideoProjectService
         }
     }
 
+    /**
+     * 校验项目参数合法性。
+     *
+     * @param project 项目信息
+     */
     private void validateProject(AiVideoProject project)
     {
         if (StringUtils.isEmpty(project.getProjectName()))
@@ -106,6 +154,13 @@ public class AiVideoProjectServiceImpl implements IAiVideoProjectService
         }
     }
 
+    /**
+     * 如果字符串为空则返回默认值。
+     *
+     * @param value 原始值
+     * @param defaultValue 默认值
+     * @return 非空值或默认值
+     */
     private String defaultIfBlank(String value, String defaultValue)
     {
         return StringUtils.isEmpty(value) ? defaultValue : value;

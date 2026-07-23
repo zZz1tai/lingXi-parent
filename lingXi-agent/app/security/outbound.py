@@ -1,9 +1,9 @@
-"""Fail-closed validation for outbound provider destinations.
+"""出站提供商目的地的失败关闭验证。
 
-Provider URLs arrive over the Java-to-Python transport for compatibility, but
-callers may only select a destination that an operator explicitly allowlists.
-This prevents request-controlled URLs from becoming an SSRF primitive or from
-receiving provider credentials.
+提供商 URL 通过 Java 到 Python 的传输层传递以保持兼容性，
+但调用方只能选择运营人员明确加入白名单的目标地址。
+这可以防止请求控制的 URL 成为 SSRF 攻击途径，
+或接收提供商的凭证信息。
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ def _normalized_allowlist(values: Iterable[str]) -> set[str]:
 
 
 def _host_is_allowed(host: str, authority: str, configured: set[str]) -> bool:
-    """Match exact destinations or an explicitly configured subdomain suffix."""
+    """匹配精确目标地址或显式配置的子域名后缀。"""
 
     if host in configured or authority in configured:
         return True
@@ -38,13 +38,12 @@ def validate_outbound_http_url(
     *,
     allowed_hosts: set[str] | None = None,
 ) -> str:
-    """Validate and normalize an outbound HTTP(S) URL.
+    """验证并规范化出站 HTTP(S) URL。
 
-    The allowlist accepts either a hostname (all explicitly specified ports) or
-    an authority in ``host:port`` form. Literal private addresses are rejected
-    even if accidentally added unless the development-only HTTP override is
-    enabled. DNS names are safe from caller-controlled rebinding because an
-    attacker cannot introduce a new hostname outside the operator allowlist.
+    白名单接受主机名（所有显式指定的端口）或
+    ``host:port`` 形式的授权信息。即使意外添加了私有地址也会被拒绝，
+    除非启用了仅用于开发的 HTTP 覆盖选项。DNS 名称不受调用方控制的
+    重绑定攻击影响，因为攻击者无法在运营人员白名单之外引入新的主机名。
     """
 
     if not isinstance(url, str) or not url.strip():

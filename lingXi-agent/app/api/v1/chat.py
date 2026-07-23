@@ -1,4 +1,4 @@
-"""LangChain v1 synchronous chat and multi-mode SSE streaming endpoints."""
+"""LangChain v1同步聊天和多模式SSE流式端点。"""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ class _StreamBudgetExceeded(Exception):
 
 
 class MemoryDeleteError(AgentError):
-    """Durable conversation memory could not be deleted safely."""
+    """持久化对话内存无法安全删除。"""
 
     def __init__(self) -> None:
         super().__init__(
@@ -93,14 +93,14 @@ async def _aclose_source(source: Any) -> None:
 
 
 def _build_agent_input(request: ChatRequest) -> dict[str, Any]:
-    """Only messages are mutable/checkpointed; metadata lives in context."""
+    """只有消息是可变/检查点的；元数据存在于上下文中。"""
 
     logger.info("Building agent input | message_length=%d", len(request.message))
     return {"messages": [HumanMessage(content=request.message)]}
 
 
 def _public_thread_id(request: ChatRequest, request_id: str) -> str:
-    """Use an explicit conversation ID or an isolated one-shot fallback."""
+    """使用显式对话ID或隔离的一次性回退。"""
 
     return request.thread_id or request_id
 
@@ -110,7 +110,7 @@ def _build_agent_config(
     *,
     request_id: str,
 ) -> dict[str, Any]:
-    """Build recursion and trusted user/thread checkpoint namespaces."""
+    """构建递归和受信任的用户/线程检查点命名空间。"""
 
     public_thread_id = _public_thread_id(request, request_id)
     user_namespace = request.user_id or "anonymous"
@@ -128,7 +128,7 @@ def _build_agent_config(
 
 
 def _normalize_content_blocks(message: Any) -> list[dict[str, Any]]:
-    """Return model-neutral text blocks without exposing reasoning blocks."""
+    """返回模型中立的文本块，不暴露推理块。"""
 
     blocks = getattr(message, "content_blocks", None)
     if callable(blocks):
@@ -153,7 +153,7 @@ def _normalize_content_blocks(message: Any) -> list[dict[str, Any]]:
 
 
 def _message_text(message: Any) -> str:
-    """Extract display text from legacy strings or v1 standard content blocks."""
+    """从传统字符串或v1标准内容块中提取显示文本。"""
 
     content = getattr(message, "content", "")
     if isinstance(content, str):
@@ -451,7 +451,7 @@ async def _stream_agent_events(
     request: ChatRequest,
     request_id: str,
 ) -> AsyncGenerator[str, None]:
-    """Translate LangChain v1 messages/updates/custom modes into SSE."""
+    """将LangChain v1消息/更新/自定义模式转换为SSE。"""
 
     public_thread_id = _public_thread_id(request, request_id)
     emitted_text = False
@@ -573,8 +573,8 @@ async def _stream_agent_events(
         yield _format_sse_event(
             StreamEvent(
                 type="done",
-                # Token events already carried text.  Avoid appending the same
-                # answer a second time in clients that concatenate all content.
+                # token 事件已经携带文本；完成事件不再重复附加完整答案，
+                # 避免客户端汇总所有 content 时出现重复内容。
                 content=None if emitted_text else final_response,
                 request_id=request_id,
                 thread_id=public_thread_id,
@@ -623,7 +623,7 @@ async def _with_heartbeats(
     request_id: str,
     thread_id: str,
 ) -> AsyncGenerator[str, None]:
-    """Cancel Agent work on disconnect and keep idle SSE connections alive."""
+    """在断开连接时取消Agent工作，并保持空闲SSE连接活跃。"""
 
     queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=16)
 
@@ -632,9 +632,8 @@ async def _with_heartbeats(
             async for event in source:
                 await queue.put(event)
         finally:
-            # Never block cleanup on a full queue.  If the sentinel cannot be
-            # inserted, the consumer also observes ``producer.done()`` after
-            # draining the queued events.
+            # 队列已满时不得阻塞清理流程。即使无法插入结束标记，消费者在
+            # 清空现有事件后仍可通过 ``producer.done()`` 判断生产者已结束。
             with suppress(asyncio.QueueFull):
                 queue.put_nowait(None)
 
@@ -693,9 +692,8 @@ async def _with_heartbeats(
             with suppress(asyncio.CancelledError):
                 await producer
         finally:
-            # ``async for`` does not close its iterator when cancellation lands
-            # while ``produce`` is blocked on ``queue.put``.  Close explicitly
-            # so LangGraph/provider streams are released deterministically.
+            # 当 ``produce`` 阻塞在 ``queue.put`` 时发生取消，``async for``
+            # 不会自动关闭迭代器，因此需显式关闭以确定性释放 LangGraph 和提供方流。
             await _aclose_source(source)
 
 
@@ -716,8 +714,8 @@ async def chat_stream(
     request_id: str = Depends(get_request_id),
 ) -> StreamingResponse:
     public_thread_id = _public_thread_id(request, request_id)
-    # Validate and cache a request-selected model before the SSE response is
-    # started so an outbound URL policy failure remains a normal HTTP 422.
+    # 在启动 SSE 响应前校验并缓存本次请求选择的模型，确保出站地址策略
+    # 校验失败时仍能返回常规 HTTP 422，而不是流内错误。
     if request.llm_config is not None:
         create_llm(request.llm_config, profile="chat-stream-preflight")
 

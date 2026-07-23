@@ -1,4 +1,4 @@
-"""Dedicated LCEL workflow for structured chapter analysis."""
+"""专门的 LCEL 工作流，用于结构化章节分析。"""
 
 from __future__ import annotations
 
@@ -45,34 +45,36 @@ ProgressCallback = Callable[[str, int, str], Awaitable[None] | None]
 
 @dataclass(frozen=True)
 class ChapterAnalysisChainResult:
+    """章节分析链的结果数据类。"""
     story_bible: dict[str, Any]
     raw_response: str
     repair_count: int
 
 
 class ChapterAnalysisOutputError(ValueError):
-    """The model responded, but its initial and repaired outputs were invalid."""
+    """模型已响应，但其初始和修复后的输出均无效。"""
 
 
 class ChapterAnalysisOutputTooLargeError(ValueError):
-    """The provider stream exceeded the configured in-memory output boundary."""
+    """提供商流超出了配置的内存输出边界。"""
 
 
 class _ContractValidationError(ValueError):
+    """合同验证错误，包含原始响应。"""
     def __init__(self, message: str, raw_response: str):
         super().__init__(message)
         self.raw_response = raw_response
 
 
 class ChapterAnalysisChain:
-    """Generate and deterministically validate one chapter story bible.
+    """生成并确定性验证一个章节故事圣经。
 
-    Provider/network exceptions intentionally escape without a repair attempt.
-    Up to two repair calls are allowed, and only after JSON, Pydantic, or domain
-    contract validation has failed.
+    提供商/网络异常故意不进行修复尝试。
+    允许最多两次修复调用，且仅在 JSON、Pydantic 或领域合同验证失败后进行。
     """
 
     def __init__(self, model: Runnable):
+        """初始化章节分析链，设置各种提示链。"""
         self._json_parser = JsonOutputParser()
         self._planning_chain = PLANNING_PROMPT | model | StrOutputParser()
         self._plan_repair_chain = PLAN_REPAIR_PROMPT | model | StrOutputParser()
@@ -90,6 +92,7 @@ class ChapterAnalysisChain:
         timeout_seconds: float | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> ChapterAnalysisChainResult:
+        """异步调用章节分析链，生成并验证章节故事圣经。"""
         config = self._run_config(request_id)
         await self._emit_progress(
             progress_callback,
@@ -177,6 +180,7 @@ class ChapterAnalysisChain:
         timeout_seconds: float | None,
         progress_callback: ProgressCallback | None,
     ) -> tuple[dict[str, Any], int]:
+        """验证并修复章节计划，返回验证后的计划和修复次数。"""
         current_response = raw_plan
         repair_count = 0
         while True:
@@ -222,6 +226,7 @@ class ChapterAnalysisChain:
         timeout_seconds: float | None,
         progress_callback: ProgressCallback | None,
     ) -> tuple[dict[str, Any], int]:
+        """生成单个场景并验证，返回验证后的场景和修复次数。"""
         minimum_shot_count = max(2, (len(scene_units) + 1) // 2)
         prompt_input = self._scene_prompt_input(
             analysis_plan,
@@ -307,6 +312,7 @@ class ChapterAnalysisChain:
         timeout_seconds: float | None,
         progress_callback: ProgressCallback | None,
     ) -> tuple[dict[str, Any], int]:
+        """验证并修复整个文档，返回验证后的文档和修复次数。"""
         current_response = raw_response
         validation_errors: list[str] = []
         global_repair_count = 0
@@ -419,7 +425,7 @@ class ChapterAnalysisChain:
         timeout_seconds: float | None,
         progress_callback: ProgressCallback | None,
     ) -> tuple[dict[str, Any], int]:
-        """Repair only the scene named by a final dialogue-duration error."""
+        """仅修复最终对话时长错误指定的场景。"""
 
         minimum_shot_count = max(2, (len(scene_units) + 1) // 2)
         prompt_input = self._scene_prompt_input(
@@ -486,6 +492,7 @@ class ChapterAnalysisChain:
         validation_error: str,
         scene_count: int,
     ) -> int | None:
+        """从验证错误中提取对话时长场景索引。"""
         match = re.search(
             r"场景(\d+)-镜头\d+\s+对白无法在镜头时长内自然说完",
             validation_error,
@@ -502,6 +509,7 @@ class ChapterAnalysisChain:
         raw_response: str,
         source_units: list[SourceUnit],
     ) -> dict[str, Any]:
+        """解析并验证章节计划。"""
         try:
             parsed = self._json_parser.parse(raw_response)
             plan = validate_chapter_plan_structure(parsed)
@@ -529,7 +537,7 @@ class ChapterAnalysisChain:
         analysis_plan: dict[str, Any],
         source_units: list[SourceUnit],
     ) -> None:
-        """Fail fast on global character identity before scene generation."""
+        """在场景生成前快速失败于全局角色身份验证。"""
 
         provisional_document = self._base_document_from_plan(analysis_plan)
         provisional_scenes: list[dict[str, Any]] = []
@@ -573,6 +581,7 @@ class ChapterAnalysisChain:
 
     @staticmethod
     def _placeholder_shot(source_unit_ids: list[str]) -> dict[str, Any]:
+        """生成占位镜头数据。"""
         return {
             "durationMs": 3_000,
             "sourceUnitIds": source_unit_ids,
@@ -597,6 +606,7 @@ class ChapterAnalysisChain:
         scene_units: list[SourceUnit],
         minimum_shot_count: int,
     ) -> dict[str, Any]:
+        """构建场景提示输入数据。"""
         chapter_context = {
             "summary": analysis_plan["summary"],
             "worldSetting": analysis_plan["worldSetting"],
@@ -634,6 +644,7 @@ class ChapterAnalysisChain:
         scene_units: list[SourceUnit],
         video_model: str,
     ) -> dict[str, Any]:
+        """解析并验证场景数据。"""
         try:
             parsed_scene = self._json_parser.parse(raw_response)
             if not isinstance(parsed_scene, dict):
@@ -667,6 +678,7 @@ class ChapterAnalysisChain:
 
     @staticmethod
     def _base_document_from_plan(analysis_plan: dict[str, Any]) -> dict[str, Any]:
+        """从分析计划构建基础文档结构。"""
         return {
             "summary": analysis_plan["summary"],
             "worldSetting": analysis_plan["worldSetting"],
@@ -681,6 +693,7 @@ class ChapterAnalysisChain:
         analysis_plan: dict[str, Any],
         scenes: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        """组装完整文档，包含所有场景和视频计划。"""
         document = self._base_document_from_plan(analysis_plan)
         document["scenes"] = deepcopy(scenes)
         shot_count = sum(len(scene.get("shots", [])) for scene in scenes)
@@ -704,7 +717,7 @@ class ChapterAnalysisChain:
 
     @staticmethod
     def _compact_validation_error(error: _ContractValidationError) -> str:
-        """Keep repair instructions useful without duplicating a large model response."""
+        """保持修复指令有用，不重复大型模型响应。"""
 
         detail = str(error)
         if error.raw_response and error.raw_response in detail:
@@ -721,6 +734,7 @@ class ChapterAnalysisChain:
         progress: int,
         message: str,
     ) -> None:
+        """发出进度回调。"""
         if callback is None:
             return
         result = callback(stage, progress, message)
@@ -735,15 +749,12 @@ class ChapterAnalysisChain:
         config: RunnableConfig,
         timeout_seconds: float | None,
     ) -> str:
-        """Consume provider chunks internally and return one complete JSON string.
+        """内部消费提供商块并返回一个完整的 JSON 字符串。
 
-        Chapter story bibles are large enough that a non-streaming compatible API
-        can spend minutes generating before it sends response headers. Consuming
-        ``astream`` lets the provider send headers and tokens as soon as generation
-        starts, while keeping the public chapter endpoint a normal JSON response.
-        Each invocation (primary or repair) gets its own wall-clock deadline in
-        addition to the provider's per-read timeout. A provider that keeps a
-        stream alive indefinitely therefore cannot exceed the stage budget.
+        章节故事圣经足够大，非流式兼容 API 可能需要几分钟生成才能发送响应头。消费
+        ``astream`` 让提供商在生成开始时立即发送头和令牌，同时保持公共章节端点为正常 JSON 响应。
+        每次调用（主要或修复）都有自己的墙上时钟截止时间，
+        加上提供商的每次读取超时。因此，无限期保持流的提供商不能超过阶段预算。
         """
         chunks: list[str] = []
         total_chars = 0
@@ -759,6 +770,7 @@ class ChapterAnalysisChain:
 
     @staticmethod
     def _run_config(request_id: str) -> RunnableConfig:
+        """生成运行配置。"""
         return {
             "run_name": "chapter_story_bible",
             "tags": ["ai-video", "chapter-analysis"],
@@ -771,6 +783,7 @@ class ChapterAnalysisChain:
         source_units: list[SourceUnit],
         video_model: str,
     ) -> dict[str, Any]:
+        """解析并验证最终文档。"""
         try:
             parsed = self._json_parser.parse(raw_response)
             document = validate_story_bible_structure(parsed)
@@ -780,6 +793,7 @@ class ChapterAnalysisChain:
 
 
 def build_chapter_analysis_chain(model: Runnable) -> ChapterAnalysisChain:
+    """构建章节分析链实例。"""
     return ChapterAnalysisChain(model)
 
 

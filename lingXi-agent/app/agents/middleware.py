@@ -1,4 +1,4 @@
-"""First-class LangChain v1 middleware used by the retail Agent."""
+"""零售 Agent 使用的一等 LangChain v1 中间件。"""
 
 from __future__ import annotations
 
@@ -24,15 +24,15 @@ from app.utils.logger import logger
 
 
 class RuntimeModelSummarizationMiddleware(SummarizationMiddleware):
-    """Summarize with the same provider selected for the current request.
+    """使用当前请求选定的提供商进行摘要。
 
-    A shallow delegate is created per call so concurrent requests never mutate
-    the shared middleware's ``model``.  Summary failures leave the original
-    state untouched; provider error text is never persisted as conversation
-    memory.
+    每次调用创建浅拷贝代理，确保并发请求不会修改
+    共享中间件的 ``model``。摘要失败时保持原始状态不变；
+    提供商错误文本不会作为对话记忆持久化。
     """
 
     def _delegate_for_runtime(self, runtime: Any) -> SummarizationMiddleware:
+        """为当前运行时创建浅拷贝代理。"""
         context = getattr(runtime, "context", None)
         runtime_model = getattr(context, "model", None)
         delegate = copy.copy(self)
@@ -41,7 +41,7 @@ class RuntimeModelSummarizationMiddleware(SummarizationMiddleware):
         return delegate
 
     async def _acreate_summary(self, messages_to_summarize: list[Any]) -> str:
-        """Generate a summary without persisting provider exception text."""
+        """生成摘要，不持久化提供商异常文本。"""
 
         if not messages_to_summarize:
             return "No previous conversation history."
@@ -56,7 +56,7 @@ class RuntimeModelSummarizationMiddleware(SummarizationMiddleware):
         return response.text.strip()
 
     def _create_summary(self, messages_to_summarize: list[Any]) -> str:
-        """Synchronous equivalent that lets the outer safety boundary handle errors."""
+        """同步等效方法，由外部安全边界处理错误。"""
 
         if not messages_to_summarize:
             return "No previous conversation history."
@@ -75,6 +75,7 @@ class RuntimeModelSummarizationMiddleware(SummarizationMiddleware):
         state: Any,
         runtime: Any,
     ) -> dict[str, Any] | None:
+        """异步模型调用前处理。"""
         delegate = self._delegate_for_runtime(runtime)
         try:
             return await SummarizationMiddleware.abefore_model(
@@ -94,6 +95,7 @@ class RuntimeModelSummarizationMiddleware(SummarizationMiddleware):
         state: Any,
         runtime: Any,
     ) -> dict[str, Any] | None:
+        """同步模型调用前处理。"""
         delegate = self._delegate_for_runtime(runtime)
         try:
             return SummarizationMiddleware.before_model(delegate, state, runtime)
@@ -110,7 +112,7 @@ async def select_runtime_model(
     request: ModelRequest[AgentContext],
     handler: Callable[[ModelRequest[AgentContext]], Awaitable[ModelResponse]],
 ) -> ModelResponse:
-    """Route a call to the bounded, request-selected model when present."""
+    """当存在绑定的请求选定模型时，将调用路由到该模型。"""
 
     context = request.runtime.context if request.runtime is not None else None
     model = context.model if context is not None else None
@@ -127,7 +129,7 @@ async def handle_tool_errors(
         Awaitable[ToolMessage | Command[Any]],
     ],
 ) -> ToolMessage | Command[Any]:
-    """Convert tool failures into a model-visible, call-ID-safe result."""
+    """将工具失败转换为模型可见且调用 ID 安全的结果。"""
 
     try:
         return await handler(request)
@@ -150,7 +152,7 @@ async def handle_tool_errors(
 
 
 def build_agent_middleware(model: BaseChatModel) -> list[Any]:
-    """Build the ordered middleware stack for one compiled Agent graph."""
+    """为编译后的 Agent 图构建有序中间件栈。"""
 
     return [
         RuntimeModelSummarizationMiddleware(

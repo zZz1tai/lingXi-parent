@@ -13,7 +13,15 @@ import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.service.IAiVideoProjectService;
 
-/** AI 视频生成任务查询。 */
+/**
+ * AI视频生成任务控制器
+ * <p>
+ * 提供AI视频生成任务的查询接口，用于查看指定项目下的所有生成任务状态和信息。
+ * </p>
+ *
+ * @author lingXi
+ * @since 2026-07-23
+ */
 @RestController
 @RequestMapping("/aivideo/task")
 public class AiVideoTaskController extends BaseController
@@ -24,6 +32,16 @@ public class AiVideoTaskController extends BaseController
     @Autowired
     private IAiVideoProjectService projectService;
 
+    /**
+     * 获取项目的生成任务列表
+     * <p>
+     * 根据项目ID获取该项目下所有AI视频生成任务的列表信息，包括任务状态、进度等。
+     * 会验证用户对项目的访问权限。
+     * </p>
+     *
+     * @param projectId 项目ID
+     * @return 包含生成任务列表的结果对象
+     */
     @PreAuthorize("@ss.hasPermi('aivideo:asset:list')")
     @GetMapping("/list")
     public AjaxResult list(@RequestParam Long projectId)

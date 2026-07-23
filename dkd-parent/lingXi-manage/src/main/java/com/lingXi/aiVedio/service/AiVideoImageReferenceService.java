@@ -13,7 +13,9 @@ import com.lingXi.aiVedio.mapper.AiVideoAssetRelationMapper;
 import com.lingXi.aiVedio.storage.AiVideoPublicAssetUrlResolver;
 import com.lingXi.common.exception.ServiceException;
 
-/** 校验资产关系并将分镜参考图解析为下游可访问的数据。 */
+/**
+ * 图片引用服务，校验资产关系并将分镜参考图解析为下游可访问的数据。
+ */
 @Service
 public class AiVideoImageReferenceService
 {
@@ -22,6 +24,12 @@ public class AiVideoImageReferenceService
     @Autowired
     private AiVideoPublicAssetUrlResolver publicAssetUrlResolver;
 
+    /**
+     * 解析并校验目标资产的参考图引用关系。
+     *
+     * @param targetAsset 目标资产（必须是SHOT_KEYFRAME类型）
+     * @return 解析后的图片引用集合
+     */
     public ResolvedImageReferences resolveAndValidate(AiVideoAsset targetAsset)
     {
         if (targetAsset == null)
@@ -76,6 +84,12 @@ public class AiVideoImageReferenceService
         return new ResolvedImageReferences(assetIds, imageUrls);
     }
 
+    /**
+     * 校验参考图的通用约束（项目一致性、状态、存储等）。
+     *
+     * @param targetAsset 目标资产
+     * @param reference 参考图资产
+     */
     private void validateCommonReference(AiVideoAsset targetAsset, AiVideoAsset reference)
     {
         if (reference == null || reference.getAssetId() == null)
@@ -101,6 +115,14 @@ public class AiVideoImageReferenceService
         }
     }
 
+    /**
+     * 添加已解析的参考图引用到结果集合。
+     *
+     * @param reference 参考图资产
+     * @param uniqueAssetIds 已处理的资产ID集合（去重用）
+     * @param assetIds 资产ID结果列表
+     * @param imageUrls 图片URL结果列表
+     */
     private void addResolvedReference(AiVideoAsset reference, Set<Long> uniqueAssetIds,
             List<Long> assetIds, List<String> imageUrls)
     {
@@ -114,6 +136,12 @@ public class AiVideoImageReferenceService
         imageUrls.add(publicUrl);
     }
 
+    /**
+     * 校验公网HTTP(S)地址格式。
+     *
+     * @param publicUrl 公网URL
+     * @param reference 参考图资产（用于错误提示）
+     */
     private void validatePublicHttpUrl(String publicUrl, AiVideoAsset reference)
     {
         try
@@ -133,12 +161,21 @@ public class AiVideoImageReferenceService
         }
     }
 
+    /**
+     * 获取参考图资产的显示名称。
+     *
+     * @param reference 参考图资产
+     * @return 资产名称或资产ID
+     */
     private String referenceName(AiVideoAsset reference)
     {
         return reference.getAssetName() == null || reference.getAssetName().trim().isEmpty()
                 ? "资产" + reference.getAssetId() : reference.getAssetName();
     }
 
+    /**
+     * 已解析的图片引用结果集合，包含资产ID列表和对应的图片URL列表。
+     */
     public static final class ResolvedImageReferences
     {
         private static final ResolvedImageReferences EMPTY = new ResolvedImageReferences(
@@ -153,16 +190,31 @@ public class AiVideoImageReferenceService
             this.imageUrls = Collections.unmodifiableList(new ArrayList<>(imageUrls));
         }
 
+        /**
+         * 返回空的引用结果。
+         *
+         * @return 空的ResolvedImageReferences实例
+         */
         public static ResolvedImageReferences empty()
         {
             return EMPTY;
         }
 
+        /**
+         * 获取资产ID列表。
+         *
+         * @return 资产ID列表
+         */
         public List<Long> getAssetIds()
         {
             return assetIds;
         }
 
+        /**
+         * 获取图片URL列表。
+         *
+         * @return 图片URL列表
+         */
         public List<String> getImageUrls()
         {
             return imageUrls;

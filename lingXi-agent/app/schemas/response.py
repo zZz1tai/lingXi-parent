@@ -1,7 +1,7 @@
 """
-Pydantic v2 response models for all API endpoints.
+所有API端点的Pydantic v2响应模型。
 
-All responses follow a uniform envelope:
+所有响应遵循统一的信封格式：
 {
     "success": bool,
     "message": str,
@@ -17,19 +17,19 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 
-# ── Base Envelope ───────────────────────────────────────────────────────────
+# ── 基础响应信封 ────────────────────────────────────────────────────────────
 
 class BaseResponse(BaseModel):
-    """Common response envelope."""
+    """通用响应信封。"""
 
     success: bool = True
     message: str = "ok"
 
 
-# ── Health ──────────────────────────────────────────────────────────────────
+# ── 健康检查 ────────────────────────────────────────────────────────────────
 
 class HealthData(BaseModel):
-    """Payload for the health endpoint."""
+    """健康检查端点的有效负载。"""
 
     status: str = "running"
     version: str = "1.0.0"
@@ -38,15 +38,15 @@ class HealthData(BaseModel):
 
 
 class HealthResponse(BaseResponse):
-    """Response for ``GET /health``."""
+    """``GET /health``端点的响应。"""
 
     data: HealthData
 
 
-# ── Chat ────────────────────────────────────────────────────────────────────
+# ── 对话响应 ────────────────────────────────────────────────────────────────
 
 class ChatData(BaseModel):
-    """Payload for chat responses."""
+    """聊天响应的有效负载。"""
 
     response: str = Field(..., description="Agent's final answer")
     tool_calls: list["ToolCallRecord"] = Field(
@@ -59,7 +59,7 @@ class ChatData(BaseModel):
 
 
 class ToolCallRecord(BaseModel):
-    """Normalized completed tool invocation returned to API clients."""
+    """返回给API客户端的规范化已完成工具调用记录。"""
 
     tool: str = "unknown"
     tool_call_id: str = ""
@@ -69,28 +69,28 @@ class ToolCallRecord(BaseModel):
 
 
 class ChatResponse(BaseResponse):
-    """Response for ``POST /api/v1/chat/invoke``."""
+    """``POST /api/v1/chat/invoke``端点的响应。"""
 
     data: Optional[ChatData] = None
 
 
 class SmartQuestionsData(BaseModel):
-    """Validated smart questions generated from structured chat history."""
+    """从结构化聊天历史生成的已验证智能问题。"""
 
     questions: list[str] = Field(..., min_length=3, max_length=3)
     request_id: str = Field(default="", description="Request trace ID")
 
 
 class SmartQuestionsResponse(BaseResponse):
-    """Response for ``POST /api/v1/chat/smart-questions``."""
+    """``POST /api/v1/chat/smart-questions``端点的响应。"""
 
     data: Optional[SmartQuestionsData] = None
 
 
-# ── Extract ─────────────────────────────────────────────────────────────────
+# ── 结构化提取 ──────────────────────────────────────────────────────────────
 
 class ExtractData(BaseModel):
-    """Payload for extraction responses."""
+    """信息提取响应的有效负载。"""
 
     result: dict[str, Any] = Field(
         ..., description="Extracted structured data"
@@ -103,31 +103,31 @@ class ExtractData(BaseModel):
 
 
 class ExtractResponse(BaseResponse):
-    """Response for ``POST /api/v1/extract``."""
+    """``POST /api/v1/extract``端点的响应。"""
 
     data: Optional[ExtractData] = None
 
 
-# ── Error ───────────────────────────────────────────────────────────────────
+# ── 错误响应 ────────────────────────────────────────────────────────────────
 
 class ErrorDetail(BaseModel):
-    """Structured error information."""
+    """结构化错误信息。"""
 
     code: str
     message: str
 
 
 class ErrorResponse(BaseModel):
-    """Uniform error response envelope."""
+    """统一的错误响应信封。"""
 
     success: bool = False
     error: ErrorDetail
 
 
-# ── SSE Stream Events ──────────────────────────────────────────────────────
+# ── SSE 流式事件 ───────────────────────────────────────────────────────────
 
 class StreamEvent(BaseModel):
-    """Schema for a single SSE event payload."""
+    """单个SSE事件负载的模式。"""
 
     type: Literal[
         "token",

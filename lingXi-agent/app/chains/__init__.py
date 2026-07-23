@@ -1,4 +1,4 @@
-"""Reusable LangChain/LCEL workflows."""
+"""可复用的 LangChain/LCEL 工作流模块。"""
 
 from app.chains.chapter_analysis import (
     ChapterAnalysisChain,

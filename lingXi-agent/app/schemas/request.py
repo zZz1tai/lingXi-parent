@@ -1,4 +1,4 @@
-"""Strict Pydantic v2 request contracts for Agent-facing endpoints."""
+"""面向Agent端点的严格Pydantic v2请求契约。"""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ MAX_EXTRACT_TEXT_CHARS = 32_000
 
 
 class StrictRequestModel(BaseModel):
+    """严格请求模型基类，禁止额外字段。"""
     model_config = ConfigDict(
         extra="forbid",
         str_strip_whitespace=True,
@@ -30,7 +31,7 @@ class StrictRequestModel(BaseModel):
 
 
 class LLMConfig(StrictRequestModel):
-    """Allowlisted OpenAI-compatible model configuration from the Java service."""
+    """来自Java服务的白名单OpenAI兼容模型配置。"""
 
     api_key: str = Field(..., min_length=1, max_length=8192, repr=False)
     model: str = Field(..., min_length=1, max_length=128)
@@ -40,6 +41,7 @@ class LLMConfig(StrictRequestModel):
     @field_validator("api_key", "model")
     @classmethod
     def reject_blank_values(cls, value: str) -> str:
+        """拒绝空白值。"""
         if not value.strip():
             raise ValueError("value must not be blank")
         return value.strip()
@@ -51,7 +53,7 @@ class ChatMode(str, Enum):
 
 
 class ChatRequest(StrictRequestModel):
-    """Request body for synchronous and streaming chat."""
+    """同步和流式聊天的请求体。"""
 
     message: str = Field(..., min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
     mode: ChatMode = ChatMode.CHAT
@@ -75,6 +77,7 @@ class ChatRequest(StrictRequestModel):
     @field_validator("message")
     @classmethod
     def reject_blank_message(cls, value: str) -> str:
+        """拒绝空白消息。"""
         normalized = value.strip()
         if not normalized:
             raise ValueError("message must not be blank")
@@ -83,6 +86,7 @@ class ChatRequest(StrictRequestModel):
     @field_validator("business_tag")
     @classmethod
     def validate_business_tag(cls, value: str | None) -> str | None:
+        """验证业务标签，确保为单行文本。"""
         if value is None:
             return None
         if any(character in value for character in ("\r", "\n", "\x00")):
@@ -91,6 +95,7 @@ class ChatRequest(StrictRequestModel):
 
     @model_validator(mode="after")
     def validate_mode_payload(self) -> "ChatRequest":
+        """验证模式负载，确保上下文分析模式有上下文数据。"""
         if self.mode == ChatMode.CONTEXT_ANALYSIS and self.context_data is None:
             raise ValueError("context_data is required for context_analysis mode")
         if self.context_data is not None:
@@ -110,7 +115,7 @@ class ChatRequest(StrictRequestModel):
 
 
 class DeleteChatThreadRequest(StrictRequestModel):
-    """Trusted Java request to delete durable short-term memory."""
+    """来自受信任Java服务的删除持久短期记忆请求。"""
 
     user_id: str = Field(..., min_length=1, max_length=128)
     thread_id: str = Field(
@@ -123,7 +128,7 @@ class DeleteChatThreadRequest(StrictRequestModel):
 
 
 class SmartQuestionHistoryItem(StrictRequestModel):
-    """One conversation item transported from the Java history store."""
+    """从Java历史存储传输的单个对话项。"""
 
     content: str = Field(..., min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
     role: str | None = Field(default=None, pattern=r"^(user|assistant)$")
@@ -139,6 +144,7 @@ class SmartQuestionHistoryItem(StrictRequestModel):
 
     @model_validator(mode="after")
     def require_unambiguous_role(self) -> "SmartQuestionHistoryItem":
+        """验证角色标识符必须明确且一致。"""
         candidates = []
         if self.role is not None:
             candidates.append(self.role)
@@ -153,6 +159,7 @@ class SmartQuestionHistoryItem(StrictRequestModel):
         return self
 
     def resolved_role(self) -> str:
+        """解析并返回确定的角色。"""
         if self.role is not None:
             return self.role
         if self.is_user is not None:
@@ -161,6 +168,7 @@ class SmartQuestionHistoryItem(StrictRequestModel):
 
 
 class SmartQuestionsRequest(StrictRequestModel):
+    """智能问题生成请求。"""
     chat_history: list[SmartQuestionHistoryItem] = Field(
         ...,
         min_length=1,
@@ -171,6 +179,7 @@ class SmartQuestionsRequest(StrictRequestModel):
 
 
 class SmartQuestionsOutput(BaseModel):
+    """智能问题输出结果。"""
     model_config = ConfigDict(extra="forbid")
 
     questions: list[str] = Field(..., min_length=3, max_length=3)
@@ -178,6 +187,7 @@ class SmartQuestionsOutput(BaseModel):
     @field_validator("questions")
     @classmethod
     def validate_questions(cls, questions: list[str]) -> list[str]:
+        """验证问题列表，确保非空、长度限制和唯一性。"""
         normalized = [question.strip() for question in questions]
         if any(not question for question in normalized):
             raise ValueError("questions must not be blank")
@@ -206,6 +216,7 @@ CustomFieldName = Annotated[
 
 
 class ExtractRequest(StrictRequestModel):
+    """信息提取请求。"""
     text: str = Field(..., min_length=1, max_length=MAX_EXTRACT_TEXT_CHARS)
     schema_name: ExtractionSchemaName = ExtractionSchemaName.GENERAL
     strategy: ExtractionStrategy = ExtractionStrategy.TOOL
@@ -218,6 +229,7 @@ class ExtractRequest(StrictRequestModel):
     @field_validator("text")
     @classmethod
     def reject_blank_text(cls, value: str) -> str:
+        """拒绝空白文本。"""
         normalized = value.strip()
         if not normalized:
             raise ValueError("text must not be blank")
@@ -229,6 +241,7 @@ class ExtractRequest(StrictRequestModel):
         cls,
         fields: list[str] | None,
     ) -> list[str] | None:
+        """验证自定义字段必须唯一。"""
         if fields is None:
             return None
         if len(set(fields)) != len(fields):

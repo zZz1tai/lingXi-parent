@@ -19,22 +19,30 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * HTTP client for calling Python Agent chapter analysis endpoint.
- * Migrated from Java AiVideoChapterAnalysisWorker core logic to Python.
+ * 章节分析 HTTP 客户端
+ * <p>调用 Python Agent 章节分析端点，已从 Java AiVideoChapterAnalysisWorker 核心逻辑迁移至 Python。</p>
  */
 @Slf4j
 @Component
 public class ChapterAnalysisClient {
 
-    /** Conservative idle-read budget; streamed progress resets it between scene calls. */
+    /** 保守的单次空闲读取时限；场景调用之间收到流式进度后会重新计时。 */
     private static final long CHAPTER_STREAMING_READ_SAFETY_MULTIPLIER = 4L;
+    /** 在模型处理时长之外预留给网络传输和本地校验的时间。 */
     private static final long CHAPTER_TRANSPORT_MARGIN_MS = 60_000L;
+    /** 单条 NDJSON 进度或结果事件允许的最大字符数。 */
     private static final int MAX_STREAM_EVENT_CHARS = 2 * 1024 * 1024;
 
+    /** Python 章节分析端点及超时配置。 */
     private final VideoConfig config;
+    /** Java 与 Python 服务间认证配置。 */
     private final AgentConfig agentConfig;
+    /** 用于构造章节请求并解析 NDJSON/JSON 响应。 */
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * 章节分析客户端配置异常
+     */
     private static class ChapterClientConfigurationException extends IllegalStateException {
         private static final long serialVersionUID = 1L;
 
@@ -43,22 +51,34 @@ public class ChapterAnalysisClient {
         }
     }
 
+    /**
+     * 构造章节分析客户端
+     *
+     * @param config      视频配置
+     * @param agentConfig Agent配置
+     */
     public ChapterAnalysisClient(VideoConfig config, AgentConfig agentConfig) {
         this.config = config;
         this.agentConfig = agentConfig;
     }
 
-    // ── Inner Classes ───────────────────────────────────────────────────────
+    // ── 内部类 ───────────────────────────────────────────────────────────
 
     /**
-     * Result of chapter analysis.
+     * 章节分析结果
      */
     public static class AnalysisResult {
+        /** 是否成功得到并校验故事圣经。 */
         private final boolean success;
+        /** 结构化故事圣经，失败时为空。 */
         private final JsonNode storyBible;
+        /** 模型原始响应，主要用于审计和问题排查。 */
         private final String rawLlmResponse;
+        /** 对调用方安全的错误说明。 */
         private final String error;
+        /** 稳定的机器可读错误码。 */
         private final String errorCode;
+        /** 当前失败是否适合由任务调度器重试。 */
         private final boolean retryable;
 
         public AnalysisResult(boolean success, JsonNode storyBible, String rawLlmResponse,
@@ -79,24 +99,34 @@ public class ChapterAnalysisClient {
         public boolean isRetryable() { return retryable; }
     }
 
+    /**
+     * 章节分析进度监听器
+     */
     @FunctionalInterface
     public interface ProgressListener {
+        /**
+         * 接收章节分析阶段进度。
+         *
+         * @param stage 当前阶段编码
+         * @param progress 百分比进度
+         * @param message 面向用户的进度说明
+         */
         void onProgress(String stage, int progress, String message);
     }
 
-    // ── API Methods ─────────────────────────────────────────────────────────
+    // ── API 方法 ─────────────────────────────────────────────────────────
 
     /**
-     * Analyze a chapter and produce a structured story bible.
+     * 分析章节并生成结构化的故事圣经
      *
-     * @param apiKey            DashScope API key
-     * @param model             LLM model name
-     * @param baseUrl           LLM base URL
-     * @param videoModel        Downstream video model used to normalize shot durations
-     * @param chapterTitle      Chapter title
-     * @param sourceText        Raw chapter source text
-     * @param projectCharacters Existing project characters for identity reuse
-     * @return AnalysisResult with validated story bible or error
+     * @param apiKey            DashScope API 密钥
+     * @param model             LLM 模型名称
+     * @param baseUrl           LLM 基础地址
+     * @param videoModel        下游视频模型，用于标准化镜头时长
+     * @param chapterTitle      章节标题
+     * @param sourceText        章节原始文本
+     * @param projectCharacters 已有的项目角色列表，用于身份复用
+     * @return 包含验证后的故事圣经或错误信息的 AnalysisResult
      */
     public AnalysisResult analyzeChapter(
             String apiKey,
@@ -110,6 +140,19 @@ public class ChapterAnalysisClient {
                 sourceText, projectCharacters, null);
     }
 
+    /**
+     * 分析章节并生成结构化的故事圣经（带进度回调）
+     *
+     * @param apiKey            DashScope API 密钥
+     * @param model             LLM 模型名称
+     * @param baseUrl           LLM 基础地址
+     * @param videoModel        下游视频模型，用于标准化镜头时长
+     * @param chapterTitle      章节标题
+     * @param sourceText        章节原始文本
+     * @param projectCharacters 已有的项目角色列表，用于身份复用
+     * @param progressListener  进度监听器，用于接收分析进度回调
+     * @return 包含验证后的故事圣经或错误信息的 AnalysisResult
+     */
     public AnalysisResult analyzeChapter(
             String apiKey,
             String model,
@@ -129,7 +172,7 @@ public class ChapterAnalysisClient {
                 body.set("project_characters", objectMapper.valueToTree(projectCharacters));
             }
 
-            // Add LLM config
+            // 将本次章节分析使用的大模型配置一并传给 Python Agent。
             ObjectNode llmConfig = objectMapper.createObjectNode();
             llmConfig.put("api_key", apiKey);
             llmConfig.put("model", model);
@@ -184,6 +227,12 @@ public class ChapterAnalysisClient {
         }
     }
 
+    /**
+     * 解析章节分析响应
+     *
+     * @param response Python Agent 返回的 JSON 响应
+     * @return 章节分析结果
+     */
     private AnalysisResult parseAnalysisResponse(JsonNode response) {
         boolean success = response.path("success").asBoolean(false);
         if (success) {
@@ -198,6 +247,9 @@ public class ChapterAnalysisClient {
         }
     }
 
+    /**
+     * 读取必须为正数的超时配置，避免零值导致立即超时或无限等待。
+     */
     private int requirePositive(Integer value, String propertyName) {
         if (value == null || value <= 0) {
             throw new ChapterClientConfigurationException(
@@ -206,6 +258,10 @@ public class ChapterAnalysisClient {
         return value;
     }
 
+    /**
+     * 校验 Java 传输层超时足以覆盖 Python 内部的多阶段模型调用。
+     * <p>预算包含规划、场景生成、可能的本地修复以及固定网络余量。</p>
+     */
     private void validateChapterTimeoutBudget(int chapterReadTimeoutMs, int providerReadTimeoutSeconds) {
         long minimumBudgetMs = providerReadTimeoutSeconds * 1_000L
                 * CHAPTER_STREAMING_READ_SAFETY_MULTIPLIER
@@ -217,8 +273,9 @@ public class ChapterAnalysisClient {
         }
     }
 
-    // ── HTTP Helpers ────────────────────────────────────────────────────────
+    // ── HTTP 辅助方法 ─────────────────────────────────────────────────────
 
+    /** 执行兼容性的同步章节分析请求，并归一化成功或失败响应。 */
     private JsonNode doPost(String urlStr, String jsonBody, int readTimeout) throws IOException {
         HttpURLConnection conn = null;
         try {
@@ -268,6 +325,9 @@ public class ChapterAnalysisClient {
         }
     }
 
+    /**
+     * 消费 Python 返回的 NDJSON 流：中间 progress 事件触发回调，最终 result 事件返回结果。
+     */
     private JsonNode doPostStream(String urlStr, String jsonBody, int readTimeout,
             ProgressListener progressListener) throws IOException {
         HttpURLConnection conn = null;
@@ -328,6 +388,7 @@ public class ChapterAnalysisClient {
         }
     }
 
+    /** 为章节分析请求附加服务认证头，未配置密钥时拒绝发送。 */
     private void applyServiceAuth(HttpURLConnection conn) {
         String serviceApiKey = agentConfig.getServiceApiKey();
         if (serviceApiKey == null || serviceApiKey.trim().isEmpty()) {

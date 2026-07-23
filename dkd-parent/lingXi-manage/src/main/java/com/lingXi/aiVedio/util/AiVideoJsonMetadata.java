@@ -13,6 +13,12 @@ public final class AiVideoJsonMetadata
     {
     }
 
+    /**
+     * 生成仅包含错误信息的元数据JSON。
+     *
+     * @param message 错误信息
+     * @return 元数据JSON字符串
+     */
     public static String generationFailure(String message)
     {
         ObjectNode metadata = OBJECT_MAPPER.createObjectNode();
@@ -20,6 +26,13 @@ public final class AiVideoJsonMetadata
         return metadata.toString();
     }
 
+    /**
+     * 在已有元数据基础上追加错误信息，保留原有字段。
+     *
+     * @param existingMetadataJson 已有元数据JSON
+     * @param message              错误信息
+     * @return 更新后的元数据JSON字符串
+     */
     public static String generationFailure(String existingMetadataJson, String message)
     {
         ObjectNode metadata = OBJECT_MAPPER.createObjectNode();
@@ -41,7 +54,13 @@ public final class AiVideoJsonMetadata
         return metadata.toString();
     }
 
-    /** 新版本继承业务元数据，但清除旧失败状态并记录直接重生成来源。 */
+    /**
+     * 生成重新生成时的元数据，继承已有业务数据并清除旧失败状态。
+     *
+     * @param existingMetadataJson   已有元数据JSON
+     * @param regeneratedFromAssetId 来源资产ID
+     * @return 更新后的元数据JSON字符串
+     */
     public static String regenerationMetadata(String existingMetadataJson, Long regeneratedFromAssetId)
     {
         ObjectNode metadata = OBJECT_MAPPER.createObjectNode();
@@ -67,7 +86,14 @@ public final class AiVideoJsonMetadata
         return metadata.toString();
     }
 
-    /** 让关键帧元数据与实际引用关系保持一致，便于刷新后继续选择正确的参考版本。 */
+    /**
+     * 更新关键帧元数据中的场景和人物参考素材ID。
+     *
+     * @param metadataJson               已有元数据JSON
+     * @param sceneReferenceAssetId      场景参考素材ID
+     * @param characterReferenceAssetIds 人物参考素材ID列表
+     * @return 更新后的元数据JSON字符串
+     */
     public static String withImageReferenceIds(String metadataJson, Long sceneReferenceAssetId,
             List<Long> characterReferenceAssetIds)
     {
@@ -111,6 +137,15 @@ public final class AiVideoJsonMetadata
         return metadata.toString();
     }
 
+    /**
+     * 更新元数据中的参考素材ID及绑定模式。
+     *
+     * @param metadataJson               已有元数据JSON
+     * @param sceneReferenceAssetId      场景参考素材ID
+     * @param characterReferenceAssetIds 人物参考素材ID列表
+     * @param bindingMode                绑定模式
+     * @return 更新后的元数据JSON字符串
+     */
     public static String withImageReferenceBinding(String metadataJson, Long sceneReferenceAssetId,
             List<Long> characterReferenceAssetIds, String bindingMode)
     {
@@ -128,6 +163,15 @@ public final class AiVideoJsonMetadata
         }
     }
 
+    /**
+     * 更新元数据中的视频关键帧来源绑定信息。
+     *
+     * @param metadataJson       已有元数据JSON
+     * @param keyframeAssetId    关键帧素材ID
+     * @param keyframeVersionNo  关键帧版本号
+     * @param bindingMode        绑定模式
+     * @return 更新后的元数据JSON字符串
+     */
     public static String withVideoSourceBinding(String metadataJson, Long keyframeAssetId,
             Integer keyframeVersionNo, String bindingMode)
     {
@@ -149,6 +193,12 @@ public final class AiVideoJsonMetadata
         return metadata.toString();
     }
 
+    /**
+     * 从元数据中提取分析版本号。
+     *
+     * @param metadataJson 元数据JSON
+     * @return 分析版本号，不存在则返回null
+     */
     public static Integer analysisVersion(String metadataJson)
     {
         if (metadataJson == null || metadataJson.trim().isEmpty()) return null;
@@ -163,6 +213,13 @@ public final class AiVideoJsonMetadata
         }
     }
 
+    /**
+     * 在元数据中设置分析版本号。
+     *
+     * @param metadataJson    已有元数据JSON
+     * @param analysisVersion 分析版本号
+     * @return 更新后的元数据JSON字符串
+     */
     public static String withAnalysisVersion(String metadataJson, Integer analysisVersion)
     {
         ObjectNode metadata = OBJECT_MAPPER.createObjectNode();
@@ -184,11 +241,26 @@ public final class AiVideoJsonMetadata
         return metadata.toString();
     }
 
+    /**
+     * 生成图片生成参数的元数据JSON（不含画幅比例）。
+     *
+     * @param provider 供应商名称
+     * @param model    模型名称
+     * @return 参数JSON字符串
+     */
     public static String generationParameters(String provider, String model)
     {
         return generationParameters(provider, model, null);
     }
 
+    /**
+     * 生成图片生成参数的元数据JSON（含画幅比例）。
+     *
+     * @param provider    供应商名称
+     * @param model       模型名称
+     * @param aspectRatio 画幅比例
+     * @return 参数JSON字符串
+     */
     public static String generationParameters(String provider, String model, String aspectRatio)
     {
         ObjectNode parameters = OBJECT_MAPPER.createObjectNode();
@@ -198,6 +270,15 @@ public final class AiVideoJsonMetadata
         return parameters.toString();
     }
 
+    /**
+     * 生成视频生成参数的元数据JSON。
+     *
+     * @param provider     供应商名称
+     * @param model        模型名称
+     * @param durationMs   视频时长（毫秒）
+     * @param promptVersion 提示词版本
+     * @return 参数JSON字符串
+     */
     public static String videoGenerationParameters(String provider, String model, Integer durationMs,
             String promptVersion)
     {
@@ -209,6 +290,17 @@ public final class AiVideoJsonMetadata
         return parameters.toString();
     }
 
+    /**
+     * 生成图片生成请求的元数据JSON。
+     *
+     * @param prompt           正向提示词
+     * @param negativePrompt   反向提示词
+     * @param model            模型名称
+     * @param assetType        资产类型
+     * @param aspectRatio      画幅比例
+     * @param referenceAssetIds 参考素材ID列表
+     * @return 请求JSON字符串
+     */
     public static String imageGenerationRequest(String prompt, String negativePrompt, String model,
             String assetType, String aspectRatio,
             List<Long> referenceAssetIds)
@@ -234,6 +326,12 @@ public final class AiVideoJsonMetadata
         return request.toString();
     }
 
+    /**
+     * 判断图片生成请求是否经过用户确认。
+     *
+     * @param requestJson 请求JSON
+     * @return 是否已用户确认
+     */
     public static boolean isUserConfirmedImageRequest(String requestJson)
     {
         if (requestJson == null || requestJson.trim().isEmpty()) return false;

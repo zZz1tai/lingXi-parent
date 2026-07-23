@@ -1,4 +1,4 @@
-"""Strict structured extraction using explicit LangChain v1 strategies."""
+"""使用显式LangChain v1策略的严格结构化提取。"""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/v1/extract", tags=["extract"])
 
 
 class ExtractionOutputError(AgentError):
-    """The provider completed but did not return the requested schema."""
+    """提供者已完成但未返回请求的模式。"""
 
     def __init__(self, message: str = "Model returned invalid structured output") -> None:
         super().__init__(
@@ -73,7 +73,7 @@ SCHEMA_REGISTRY: dict[ExtractionSchemaName, type[BaseModel]] = {
 
 
 def _build_dynamic_schema(fields: list[str]) -> type[BaseModel]:
-    """Create a bounded schema after request validation has checked names."""
+    """在请求验证检查名称后创建有界模式。"""
 
     definitions = {
         field_name: (

@@ -1,4 +1,4 @@
-"""Low-level ASGI resource and payload limits."""
+"""底层ASGI资源和负载限制。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ class _RequestBodyTooLarge(Exception):
 
 
 class ResourceLimitMiddleware:
-    """Bound concurrent requests and enforce body size for streamed payloads."""
+    """限制并发请求并强制执行流式负载的正文大小。"""
 
     def __init__(
         self,

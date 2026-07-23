@@ -8,11 +8,15 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.EnvironmentAware;
 import org.springframework.core.env.Environment;
 
+/**
+ * Agent 服务配置类
+ * <p>绑定 application.yml 中 agent.* 前缀的配置属性。</p>
+ */
 @Data
 @Configuration
 @ConfigurationProperties(prefix = "agent")
 public class AgentConfig implements EnvironmentAware {
-    /** Exact environment-variable alias used when agent.service-api-key is absent. */
+    /** Spring 运行时环境，用于在属性未配置时读取服务认证环境变量。 */
     @ToString.Exclude
     @EqualsAndHashCode.Exclude
     private transient Environment environment;
@@ -46,15 +50,17 @@ public class AgentConfig implements EnvironmentAware {
     /** Agent 流式转发等待队列长度 */
     private Integer streamQueueCapacity = 100;
 
+    /** 保存 Spring 运行时环境，供认证密钥的配置回退逻辑使用。 */
     @Override
     public void setEnvironment(Environment environment) {
         this.environment = environment;
     }
 
     /**
-     * Resolve the normal Spring property first, then the documented exact
-     * environment-variable alias. This avoids relying on relaxed binding to
-     * reinterpret the extra underscore-separated path segments.
+     * 获取服务认证密钥
+     * <p>优先使用 Spring 属性配置，若未配置则回退到环境变量 AGENT_SERVICE_API_KEY。</p>
+     *
+     * @return 服务认证密钥
      */
     public String getServiceApiKey() {
         if (serviceApiKey != null && !serviceApiKey.trim().isEmpty()) {

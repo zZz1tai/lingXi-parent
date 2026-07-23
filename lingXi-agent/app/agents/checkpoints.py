@@ -1,4 +1,4 @@
-"""Lifecycle helpers for development and production Agent checkpoints."""
+"""开发和生产环境 Agent 检查点的生命周期辅助函数。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from app.utils.exceptions import ConfigurationError
 
 
 def create_in_memory_checkpointer() -> InMemorySaver:
-    """Create an isolated in-process saver for development and tests."""
+    """创建用于开发和测试的隔离进程内检查点保存器。"""
 
     return InMemorySaver()
 
@@ -24,11 +24,11 @@ async def checkpointer_lifespan(
     postgres_dsn: str | None = None,
     setup: bool = True,
 ) -> AsyncIterator[BaseCheckpointSaver]:
-    """Open the configured checkpointer and close it on application shutdown.
+    """打开配置的检查点保存器，并在应用关闭时关闭它。
 
-    ``main.lifespan`` can wrap this context manager and pass the yielded saver
-    to ``configure_agent_runtime``.  Keeping that wiring explicit prevents an
-    async Postgres connection pool from being created at import time.
+    ``main.lifespan`` 可以包装此上下文管理器，并将产出的保存器
+    传递给 ``configure_agent_runtime``。保持显式连接可防止
+    在导入时创建异步 Postgres 连接池。
     """
 
     selected = (backend or "memory").strip().lower()

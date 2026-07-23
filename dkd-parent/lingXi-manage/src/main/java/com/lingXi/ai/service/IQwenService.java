@@ -5,6 +5,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 千问大模型服务接口
+ * <p>定义对话、流式对话、上下文分析、智能问题生成等核心方法。</p>
+ */
 public interface IQwenService {
 
     /**

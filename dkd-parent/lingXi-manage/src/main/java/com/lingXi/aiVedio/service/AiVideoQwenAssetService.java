@@ -14,7 +14,9 @@ import com.lingXi.aiVedio.util.AiVideoImageAspectRatioPolicy;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 import com.lingXi.aiVedio.service.AiVideoImageReferenceService.ResolvedImageReferences;
 
-/** 创建图片资产草稿，并在用户确认后执行 Qwen Image 生成。 */
+/**
+ * Qwen图片资产服务，创建图片资产草稿，并在用户确认后执行Qwen Image生成。
+ */
 @Service
 public class AiVideoQwenAssetService
 {
@@ -32,7 +34,23 @@ public class AiVideoQwenAssetService
     private AiVideoModelConfigService modelConfigService;
 
     /**
+     * 创建图片资产草稿（不含人物归属和上游参考资产）。
      * 章节分析阶段只保存图片资产和提示词，不创建生成任务，也不调用图片模型。
+     *
+     * @param projectId 项目ID
+     * @param chapterId 章节ID
+     * @param sceneId 场景ID
+     * @param shotId 镜头ID
+     * @param assetCode 资产编码
+     * @param assetName 资产名称
+     * @param assetType 资产类型
+     * @param assetScope 资产作用域
+     * @param canonicalFlag 规范标记
+     * @param versionNo 版本号
+     * @param prompt 正向提示词
+     * @param negativePrompt 反向提示词
+     * @param metadataJson 元数据JSON
+     * @return 创建的草稿资产
      */
     @Transactional
     public AiVideoAsset createDraftImageAsset(Long projectId, Long chapterId, Long sceneId, Long shotId,
@@ -46,6 +64,23 @@ public class AiVideoQwenAssetService
 
     /**
      * 创建可携带人物归属和上游参考资产的图片草稿。
+     *
+     * @param projectId 项目ID
+     * @param chapterId 章节ID
+     * @param sceneId 场景ID
+     * @param shotId 镜头ID
+     * @param assetCode 资产编码
+     * @param assetName 资产名称
+     * @param assetType 资产类型
+     * @param assetScope 资产作用域
+     * @param canonicalFlag 规范标记
+     * @param versionNo 版本号
+     * @param prompt 正向提示词
+     * @param negativePrompt 反向提示词
+     * @param metadataJson 元数据JSON
+     * @param characterId 人物ID
+     * @param sourceAssetId 上游来源资产ID
+     * @return 创建的草稿资产
      */
     @Transactional
     public AiVideoAsset createDraftImageAsset(Long projectId, Long chapterId, Long sceneId, Long shotId,
@@ -88,8 +123,18 @@ public class AiVideoQwenAssetService
     }
 
     /**
-     * 一个项目中的同一人物只由一个活动 CHARACTER_REFERENCE 代表。
-     * 查询同时兼容旧 chapter 资产编码和 metadata.characterCode，并将旧资产提升为项目级资产。
+     * 获取或创建项目级人物参考图资产。
+     * 一个项目中的同一人物只由一个活动CHARACTER_REFERENCE代表。
+     * 查询同时兼容旧chapter资产编码和metadata.characterCode，并将旧资产提升为项目级资产。
+     *
+     * @param projectId 项目ID
+     * @param characterId 人物ID
+     * @param characterCode 人物编码
+     * @param characterName 人物名称
+     * @param prompt 正向提示词
+     * @param negativePrompt 反向提示词
+     * @param metadataJson 元数据JSON
+     * @return 人物参考图资产
      */
     @Transactional
     public AiVideoAsset getOrCreateProjectCharacterReference(Long projectId, Long characterId,
@@ -119,7 +164,13 @@ public class AiVideoQwenAssetService
                 prompt, negativePrompt, metadataJson, characterId, null);
     }
 
-    /** 执行已经由队列原子领取的图片生成任务。 */
+    /**
+     * 执行已经由队列原子领取的图片生成任务。
+     *
+     * @param task 生成任务
+     * @param asset 图片资产
+     * @param updateBy 操作人
+     */
     public void generateClaimedImage(AiVideoGenerationTask task, AiVideoAsset asset, String updateBy)
     {
         try
@@ -140,7 +191,7 @@ public class AiVideoQwenAssetService
                 throw new IllegalStateException("图片任务状态已变化，拒绝调用图片模型");
             }
             
-            // Call Python Agent API for image generation
+            // 统一通过 Python Agent 调用图片模型，Java 侧只负责业务参数和结果落库。
             VideoClient.ImageResult result = videoClient.generateImage(
                     runtimeConfig.getApiKey(),
                     imageModel,
@@ -185,6 +236,12 @@ public class AiVideoQwenAssetService
         }
     }
 
+    /**
+     * 解析图片生成提示词，人物参考图会追加规范性约束后缀。
+     *
+     * @param asset 图片资产
+     * @return 生成用提示词
+     */
     private String resolveGenerationPrompt(AiVideoAsset asset)
     {
         String prompt = asset.getPromptText() == null ? "" : asset.getPromptText().trim();
@@ -198,6 +255,12 @@ public class AiVideoQwenAssetService
                 + "no wounds, no magic, no glow, no smoke and no visual effects.";
     }
 
+    /**
+     * 解析图片生成反向提示词，人物参考图会追加防护性约束。
+     *
+     * @param asset 图片资产
+     * @return 生成用反向提示词
+     */
     private String resolveGenerationNegativePrompt(AiVideoAsset asset)
     {
         String negative = asset.getNegativePromptText() == null ? "" : asset.getNegativePromptText().trim();
@@ -210,6 +273,15 @@ public class AiVideoQwenAssetService
         return negative.isEmpty() ? guardrail : negative + ", " + guardrail;
     }
 
+    /**
+     * 标记图片生成失败，更新资产和任务状态。
+     *
+     * @param task 生成任务
+     * @param asset 图片资产
+     * @param updateBy 操作人
+     * @param errorCode 错误码
+     * @param message 错误消息
+     */
     private void markImageFailure(AiVideoGenerationTask task, AiVideoAsset asset,
             String updateBy, String errorCode, String message)
     {

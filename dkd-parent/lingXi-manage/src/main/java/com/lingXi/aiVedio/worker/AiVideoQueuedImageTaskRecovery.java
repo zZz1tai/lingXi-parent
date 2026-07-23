@@ -22,6 +22,9 @@ public class AiVideoQueuedImageTaskRecovery
     @Autowired
     private AiVideoQwenAssetService qwenAssetService;
 
+    /**
+     * 定时恢复排队中的图片生成任务，处理异常中断的任务。
+     */
     @Scheduled(fixedDelayString = "${aivideo.image.queued-recovery-interval-ms}")
     public void recover()
     {
@@ -75,6 +78,13 @@ public class AiVideoQueuedImageTaskRecovery
         }
     }
 
+    /**
+     * 将无效的图片任务标记为失败，不触发模型重新生成。
+     *
+     * @param task     生成任务实体
+     * @param errorCode 错误码
+     * @param message  错误信息
+     */
     private void failWithoutGeneration(AiVideoGenerationTask task, String errorCode, String message)
     {
         if (taskMapper.failImageTaskIfExpectedStatus(

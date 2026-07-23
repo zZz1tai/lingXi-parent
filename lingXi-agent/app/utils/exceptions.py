@@ -1,8 +1,8 @@
 """
-Custom exception hierarchy and global FastAPI error handlers.
+自定义异常层次结构和全局 FastAPI 错误处理程序。
 
-All business exceptions inherit from ``AgentError`` so that the
-global handler can return a uniform JSON error envelope.
+所有业务异常都继承自 ``AgentError``，以便全局处理程序
+可以返回统一的 JSON 错误信封。
 """
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 
-# ── Base Exception ──────────────────────────────────────────────────────────
+# ── 基础异常 ────────────────────────────────────────────────────────────────
 
 class AgentError(Exception):
-    """Base exception for all application-level errors."""
+    """所有应用级错误的基类异常。"""
 
     def __init__(
         self,
@@ -30,10 +30,10 @@ class AgentError(Exception):
         super().__init__(message)
 
 
-# ── Concrete Exceptions ────────────────────────────────────────────────────
+# ── 具体业务异常 ────────────────────────────────────────────────────────────
 
 class ConfigurationError(AgentError):
-    """Raised when required configuration is missing or invalid."""
+    """当必需的配置缺失或无效时引发。"""
 
     def __init__(self, message: str) -> None:
         super().__init__(
@@ -45,7 +45,7 @@ class ConfigurationError(AgentError):
 
 
 class SearchError(AgentError):
-    """Raised when the web search tool fails."""
+    """当网络搜索工具失败时引发。"""
 
     def __init__(self, message: str) -> None:
         super().__init__(
@@ -57,21 +57,21 @@ class SearchError(AgentError):
 
 
 class AgentTimeoutError(AgentError):
-    """Raised when the agent exceeds its maximum iteration limit."""
+    """当智能体超过最大迭代次数限制时引发。"""
 
     def __init__(self, message: str = "Agent exceeded maximum iterations") -> None:
         super().__init__(message, code="AGENT_TIMEOUT", status_code=504)
 
 
 class InputValidationError(AgentError):
-    """Raised when request input fails validation."""
+    """当请求输入验证失败时引发。"""
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code="VALIDATION_ERROR", status_code=422)
 
 
 class ModelNotAvailableError(AgentError):
-    """Raised when the LLM model is unreachable."""
+    """当 LLM 模型不可达时引发。"""
 
     def __init__(self, message: str) -> None:
         super().__init__(
@@ -82,10 +82,10 @@ class ModelNotAvailableError(AgentError):
         )
 
 
-# ── Global Error Handlers ──────────────────────────────────────────────────
+# ── 全局错误处理器 ──────────────────────────────────────────────────────────
 
 async def agent_error_handler(_request: Request, exc: AgentError) -> JSONResponse:
-    """Handle all ``AgentError`` subclasses with a uniform JSON envelope."""
+    """使用统一的 JSON 信封处理所有 ``AgentError`` 子类。"""
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -100,11 +100,10 @@ async def agent_error_handler(_request: Request, exc: AgentError) -> JSONRespons
 
 
 async def generic_error_handler(_request: Request, exc: Exception) -> JSONResponse:
-    """Catch-all handler — hides internal details from the client."""
+    """全局兜底处理程序——对客户端隐藏内部细节。"""
     from app.utils.logger import logger
-    # Provider exceptions can embed response bodies, headers, or credentials in
-    # their rendered traceback. Keep production logs useful without serializing
-    # attacker/provider-controlled exception text.
+    # 模型提供方异常的堆栈可能包含响应体、请求头或凭据。
+    # 生产日志只记录可控的异常类型，避免序列化由攻击者或提供方控制的文本。
     logger.error("Unhandled exception | error_type=%s", type(exc).__name__)
     return JSONResponse(
         status_code=500,
@@ -122,7 +121,7 @@ async def generic_error_handler(_request: Request, exc: Exception) -> JSONRespon
 async def validation_exception_handler(
     _request: Request, exc: Exception
 ) -> JSONResponse:
-    """Handle Pydantic / FastAPI validation errors."""
+    """处理 Pydantic / FastAPI 验证错误。"""
     details: list[str] = []
     errors = getattr(exc, "errors", None)
     if callable(errors):

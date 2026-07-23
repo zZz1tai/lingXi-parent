@@ -1,4 +1,4 @@
-"""LangChain v1 Agent factories for chat and structured extraction."""
+"""LangChain v1 Agent 工厂，用于聊天和结构化提取。"""
 
 from __future__ import annotations
 
@@ -21,9 +21,8 @@ from app.config.settings import settings
 from app.utils.logger import logger
 
 
-# Compatibility import for application code that previously used
-# ``builder.AgentState``.  The implementation is now the v1 schema extending
-# ``langchain.agents.AgentState``.
+# 兼容旧代码对 ``builder.AgentState`` 的引用；当前实现已迁移为
+# 继承 ``langchain.agents.AgentState`` 的 v1 状态模型。
 AgentState = RetailAgentState
 
 
@@ -38,7 +37,7 @@ def build_search_agent(
     store: BaseStore | None = None,
     middleware: Sequence[Any] | None = None,
 ) -> CompiledStateGraph:
-    """Compile the shared search Agent with v1 middleware and memory."""
+    """使用 v1 中间件和记忆编译共享搜索 Agent。"""
 
     if model is None:
         from app.api.dependencies import get_llm
@@ -80,7 +79,7 @@ def build_extraction_agent(
         "Extract structured information from the provided text accurately and completely."
     ),
 ) -> CompiledStateGraph:
-    """Compile an extraction Agent with an explicit structured-output strategy."""
+    """使用显式结构化输出策略编译提取 Agent。"""
 
     if strategy == "tool":
         response_format: Any = ToolStrategy(
@@ -112,7 +111,7 @@ def build_extraction_agent(
 
 
 def get_recursion_limit(max_iterations: int | None = None) -> int:
-    """Translate the public iteration budget to LangGraph graph steps."""
+    """将公开的迭代预算转换为 LangGraph 图步骤。"""
 
     iterations = max_iterations or settings.max_iterations
     return iterations * 2 + 3

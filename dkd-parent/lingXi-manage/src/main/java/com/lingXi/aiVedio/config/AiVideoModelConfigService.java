@@ -42,13 +42,22 @@ public class AiVideoModelConfigService
     @Autowired
     private AiVideoProviderProperties videoProviderProperties;
 
-    /** 页面读取使用，不把 API Key 明文放入返回对象。 */
+    /**
+     * 获取页面展示用的模型配置，API Key以掩码形式返回。
+     *
+     * @return 模型配置对象
+     */
     public AiVideoModelConfig getConfig()
     {
         return readStoredConfig(false);
     }
 
-    /** 模型调用使用；缺少任一页面配置时拒绝启动新任务。 */
+    /**
+     * 获取完整的模型配置用于任务调用，缺少必要配置时拒绝启动新任务。
+     *
+     * @return 完整模型配置对象
+     * @throws ServiceException 配置不完整时抛出异常
+     */
     public AiVideoModelConfig getRequiredConfig()
     {
         AiVideoModelConfig config = readStoredConfig(true);
@@ -56,6 +65,14 @@ public class AiVideoModelConfigService
         return config;
     }
 
+    /**
+     * 更新模型配置信息并持久化到数据库。
+     *
+     * @param input    待更新的配置输入
+     * @param username 操作用户名
+     * @return 更新后的配置对象
+     * @throws ServiceException 配置校验失败时抛出异常
+     */
     @Transactional
     public AiVideoModelConfig updateConfig(AiVideoModelConfig input, String username)
     {
@@ -85,6 +102,12 @@ public class AiVideoModelConfigService
         return getConfig();
     }
 
+    /**
+     * 从数据库读取已存储的配置。
+     *
+     * @param includeSecret 是否包含API Key明文
+     * @return 模型配置对象
+     */
     private AiVideoModelConfig readStoredConfig(boolean includeSecret)
     {
         AiVideoModelConfig config = new AiVideoModelConfig();
@@ -110,6 +133,13 @@ public class AiVideoModelConfigService
         return config;
     }
 
+    /**
+     * 校验并标准化输入的配置参数。
+     *
+     * @param input 原始配置输入
+     * @return 标准化后的配置对象
+     * @throws ServiceException 参数校验失败时抛出异常
+     */
     private AiVideoModelConfig validateAndNormalize(AiVideoModelConfig input)
     {
         AiVideoModelConfig config = new AiVideoModelConfig();
@@ -150,6 +180,12 @@ public class AiVideoModelConfigService
         return config;
     }
 
+    /**
+     * 校验已存储的配置是否完整有效。
+     *
+     * @param config 模型配置对象
+     * @throws ServiceException 配置不完整时抛出异常
+     */
     private void validateStoredConfig(AiVideoModelConfig config)
     {
         if (!Boolean.TRUE.equals(config.getApiKeyConfigured()) || StringUtils.isEmpty(config.getApiKey()))
@@ -159,6 +195,13 @@ public class AiVideoModelConfigService
         validateAndNormalize(config);
     }
 
+    /**
+     * 标准化业务空间地址，强制使用HTTPS并归属阿里云百炼北京地域。
+     *
+     * @param value 原始地址
+     * @return 标准化后的地址
+     * @throws ServiceException 地址格式或归属不合法时抛出异常
+     */
     private String normalizeWorkspaceBaseUrl(String value)
     {
         String raw = required(value, "业务空间地址");
@@ -190,6 +233,14 @@ public class AiVideoModelConfigService
         }
     }
 
+    /**
+     * 校验模型名称格式是否合法。
+     *
+     * @param value 模型名称
+     * @param label 字段标签（用于错误提示）
+     * @return 校验后的模型名称
+     * @throws ServiceException 格式不合法时抛出异常
+     */
     private String validateModel(String value, String label)
     {
         String model = required(value, label);
@@ -200,6 +251,13 @@ public class AiVideoModelConfigService
         return model;
     }
 
+    /**
+     * 标准化可选的API Key，校验长度和字符合法性。
+     *
+     * @param value 原始API Key
+     * @return 标准化后的API Key，若为空则返回null
+     * @throws ServiceException 格式不合法时抛出异常
+     */
     private String normalizeOptionalApiKey(String value)
     {
         if (value == null || value.trim().isEmpty())
@@ -221,6 +279,12 @@ public class AiVideoModelConfigService
         return apiKey;
     }
 
+    /**
+     * 对API Key进行脱敏处理，仅保留首尾部分字符。
+     *
+     * @param apiKey 原始API Key
+     * @return 脱敏后的字符串
+     */
     private String maskApiKey(String apiKey)
     {
         if (apiKey == null || apiKey.isEmpty())
@@ -234,6 +298,12 @@ public class AiVideoModelConfigService
         return apiKey.substring(0, 4) + "********" + apiKey.substring(apiKey.length() - 4);
     }
 
+    /**
+     * 解析布尔值字符串。
+     *
+     * @param value 字符串值
+     * @return Boolean对象，无法解析时返回null
+     */
     private Boolean parseBoolean(String value)
     {
         if ("true".equalsIgnoreCase(value)) return Boolean.TRUE;
@@ -241,6 +311,14 @@ public class AiVideoModelConfigService
         return null;
     }
 
+    /**
+     * 校验必填字段非空。
+     *
+     * @param value 字段值
+     * @param label 字段标签
+     * @return 非空的字段值
+     * @throws ServiceException 字段为空时抛出异常
+     */
     private String required(String value, String label)
     {
         if (value == null || value.trim().isEmpty())
@@ -250,12 +328,27 @@ public class AiVideoModelConfigService
         return value.trim();
     }
 
+    /**
+     * 从系统配置表读取指定键的配置值。
+     *
+     * @param key 配置键
+     * @return 配置值，不存在则返回null
+     */
     private String read(String key)
     {
         String value = sysConfigService.selectConfigByKey(key);
         return StringUtils.isEmpty(value) ? null : value.trim();
     }
 
+    /**
+     * 新增或更新系统配置记录。
+     *
+     * @param key      配置键
+     * @param name     配置名称
+     * @param value    配置值
+     * @param username 操作用户名
+     * @throws ServiceException 保存失败时抛出异常
+     */
     private void upsert(String key, String name, String value, String username)
     {
         SysConfig query = new SysConfig();

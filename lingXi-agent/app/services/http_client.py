@@ -1,4 +1,4 @@
-"""Application-lifetime HTTP client for provider calls."""
+"""应用程序生命周期的HTTP客户端，用于提供商调用。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ _client: httpx.AsyncClient | None = None
 
 
 async def initialize_http_client() -> httpx.AsyncClient:
-    """Create the shared provider client once per application worker."""
+    """为每个应用程序工作进程创建共享的提供商客户端。"""
     global _client
     if _client is None or _client.is_closed:
         _client = httpx.AsyncClient(
@@ -27,19 +27,19 @@ async def initialize_http_client() -> httpx.AsyncClient:
 
 
 def get_http_client() -> httpx.AsyncClient:
-    """Return the initialized provider client for FastAPI dependencies."""
+    """返回已初始化的提供商客户端，供FastAPI依赖使用。"""
     if _client is None or _client.is_closed:
         raise ConfigurationError("Provider HTTP client is not initialized")
     return _client
 
 
 def http_client_ready() -> bool:
-    """Return whether the application-lifetime client is usable."""
+    """返回应用程序生命周期客户端是否可用。"""
     return _client is not None and not _client.is_closed
 
 
 async def close_http_client() -> None:
-    """Close the shared provider connection pool."""
+    """关闭共享的提供商连接池。"""
     global _client
     if _client is not None and not _client.is_closed:
         await _client.aclose()

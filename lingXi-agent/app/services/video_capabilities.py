@@ -1,4 +1,4 @@
-"""Deterministic video-model capability rules shared by analysis and transport."""
+"""分析和传输共享的确定性视频模型能力规则。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ VIDEO_PROMPT_LIMITS = {
 
 
 def get_model_version(model: str) -> str:
-    """Return the capability family encoded in a video model name."""
+    """返回视频模型名称中编码的能力族。"""
 
     model_lower = (model or "").lower()
     if "happyhorse" in model_lower:
@@ -30,11 +30,11 @@ def get_model_version(model: str) -> str:
 
 
 def normalize_video_duration_ms(duration_ms: int, model: str) -> int:
-    """Normalize a requested duration to a value accepted by ``model``."""
+    """将请求的时长规范化为 ``model`` 接受的值。"""
 
     bounded_ms = max(1000, min(MAX_VIDEO_DURATION_MS, int(duration_ms)))
-    # Match Java Math.round for positive millisecond values rather than
-    # Python's banker's rounding.
+    # 正毫秒值采用与 Java Math.round 一致的四舍五入规则，
+    # 避免 Python 银行家舍入造成跨服务结果不一致。
     rounded_seconds = (bounded_ms + 500) // 1000
     version = get_model_version(model)
 
@@ -52,17 +52,17 @@ def normalize_video_duration_ms(duration_ms: int, model: str) -> int:
 
 
 def get_video_prompt_limit(model: str) -> int:
-    """Return the provider's positive-prompt character limit."""
+    """返回提供商的正向提示词字符限制。"""
 
     if get_model_version(model) == "happyhorse":
-        # HappyHorse allows 2500 Chinese or 5000 non-Chinese characters.
-        # Use the conservative bound because this helper has no prompt text.
+        # HappyHorse 对中文和非中文提示词分别允许 2500 与 5000 个字符。
+        # 当前辅助函数拿不到提示词内容，因此采用更保守的上限。
         return 2500
     return VIDEO_PROMPT_LIMITS.get(get_model_version(model), 800)
 
 
 def should_include_duration(model: str) -> bool:
-    """Whether the provider request accepts an explicit duration field."""
+    """判断提供商请求是否接受显式时长字段。"""
 
     return get_model_version(model) in ("2.1-turbo", "2.5", "2.6", "happyhorse")
 

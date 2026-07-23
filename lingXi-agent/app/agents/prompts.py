@@ -1,4 +1,4 @@
-"""System prompts implemented as first-class LangChain v1 middleware."""
+"""系统提示词，作为一等 LangChain v1 中间件实现。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from langchain.agents.middleware import ModelRequest, dynamic_prompt
 from app.agents.state import AgentContext
 
 
-# ── Prompt Templates ────────────────────────────────────────────────────────
+# ── 提示词模板 ──────────────────────────────────────────────────────────────
 
 PROFESSIONAL_PROMPT = """\
 你是灵犀智能零售终端管理系统的AI助手，具备联网搜索能力。请用中文回答。
@@ -44,15 +44,15 @@ def compose_system_prompt(
     *,
     search_available: bool,
 ) -> str:
-    """Compose a prompt from trusted invocation context and capabilities."""
+    """根据可信的调用上下文和能力组合提示词。"""
 
     style = context.style if context is not None else "professional"
     base_prompt = CASUAL_PROMPT if style == "casual" else PROFESSIONAL_PROMPT
 
     business_tag = context.business_tag if context is not None else ""
     if business_tag:
-        # The tag is represented as data, not interpolated as free-form
-        # instructions.  The request schema also rejects line breaks.
+        # 标签按数据处理，不作为自由指令直接插入提示词；请求模型同时禁止换行，
+        # 从输入边界降低提示词注入风险。
         encoded_tag = json.dumps(business_tag, ensure_ascii=False)
         base_prompt += (
             "\n\n## 当前业务标签\n"
@@ -70,24 +70,23 @@ def compose_system_prompt(
 
 @dynamic_prompt
 def get_system_prompt(request: ModelRequest[AgentContext]) -> str:
-    """Return the per-invocation system prompt via v1 middleware."""
+    """通过 v1 中间件返回每次调用的系统提示词。"""
 
     context = request.runtime.context if request.runtime is not None else None
     return compose_system_prompt(context, search_available=bool(request.tools))
 
 
 def get_prompt_text(style: str = "professional") -> str:
-    """Get the raw prompt text for a given style (utility function).
+    """获取指定风格的原始提示词文本（实用函数）。
 
-    Useful for endpoints that need to inject the system prompt
-    directly into the message list rather than through the
-    agent's prompt mechanism.
+    适用于需要将系统提示词直接注入消息列表
+    而非通过 Agent 提示词机制的端点。
 
     Args:
-        style: ``"professional"`` or ``"casual"``
+        style: ``"professional"`` 或 ``"casual"``
 
     Returns:
-        The prompt text as a plain string.
+        纯文本格式的提示词。
     """
     if style == "casual":
         return CASUAL_PROMPT

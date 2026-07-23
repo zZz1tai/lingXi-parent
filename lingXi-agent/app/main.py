@@ -1,8 +1,8 @@
 """
-FastAPI application entry point.
+FastAPI 应用入口点。
 
-Registers routes, global exception handlers, middleware, and
-manages the application lifecycle (startup/shutdown).
+注册路由、全局异常处理器、中间件，
+并管理应用生命周期（启动/关闭）。
 """
 
 from __future__ import annotations
@@ -46,12 +46,12 @@ from app.utils.logger import (
 )
 
 
-# ── Lifespan ────────────────────────────────────────────────────────────────
+# ── 应用生命周期 ────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan handler — startup and shutdown logic."""
-    # ── Startup ──
+    """应用生命周期处理器 — 启动和关闭逻辑。"""
+    # ── 启动 ──
     logger.info(
         "Starting LangChain Search Agent | model=%s | port=%d | debug=%s",
         settings.model_name,
@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         settings.debug,
     )
 
-    # Validate critical configuration
+    # 启动阶段校验关键配置，避免服务在缺少安全参数时带病运行。
     if not settings.openai_api_key:
         logger.warning(
             "OPENAI_API_KEY is not set. LLM-dependent endpoints will fail "
@@ -93,7 +93,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("Application shutdown complete")
 
 
-# ── Application Factory ─────────────────────────────────────────────────────
+# ── 应用工厂 ────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="LangChain Search Agent",
@@ -109,7 +109,7 @@ app = FastAPI(
 )
 
 
-# ── Middleware ───────────────────────────────────────────────────────────────
+# ── 中间件 ──────────────────────────────────────────────────────────────────
 
 app.add_middleware(
     ResourceLimitMiddleware,
@@ -130,7 +130,7 @@ if settings.cors_origin_allowlist:
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):  # type: ignore
-    """Log every request with timing information."""
+    """记录每个请求及耗时信息。"""
     supplied = request.headers.get("X-Request-ID", "")
     request_id = (
         supplied
@@ -155,14 +155,14 @@ async def request_logging_middleware(request: Request, call_next):  # type: igno
         reset_request_id(token)
 
 
-# ── Exception Handlers ──────────────────────────────────────────────────────
+# ── 异常处理器 ──────────────────────────────────────────────────────────────
 
 app.add_exception_handler(AgentError, agent_error_handler)  # type: ignore
 app.add_exception_handler(Exception, generic_error_handler)  # type: ignore
 app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore
 
 
-# ── Routes ──────────────────────────────────────────────────────────────────
+# ── 路由注册 ────────────────────────────────────────────────────────────────
 
 protected = [Depends(require_service_auth)]
 app.include_router(chat_router, dependencies=protected)
@@ -173,7 +173,7 @@ app.include_router(chapter_router, dependencies=protected)
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 async def health_check() -> HealthResponse:
-    """Backward-compatible liveness endpoint."""
+    """向后兼容的存活检查端点。"""
     return HealthResponse(
         success=True,
         message="ok",
@@ -188,13 +188,13 @@ async def health_check() -> HealthResponse:
 
 @app.get("/livez", response_model=HealthResponse, tags=["system"])
 async def liveness_check() -> HealthResponse:
-    """Process liveness; does not call paid or remote providers."""
+    """进程存活检查；不调用付费或远程提供商。"""
     return await health_check()
 
 
 @app.get("/readyz", tags=["system"], response_model=None)
 async def readiness_check():
-    """Configuration and local-resource readiness without a provider call."""
+    """配置和本地资源就绪检查，不调用提供商。"""
     missing: list[str] = []
     if not settings.service_api_key_value:
         missing.append("SERVICE_API_KEY")
@@ -224,7 +224,7 @@ async def readiness_check():
     )
 
 
-# ── CLI Entry Point ─────────────────────────────────────────────────────────
+# ── 命令行入口 ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn

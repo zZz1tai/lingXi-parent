@@ -29,6 +29,9 @@ import com.lingXi.aiVedio.service.IAiVideoChapterService;
 import com.lingXi.aiVedio.service.IAiVideoProjectService;
 import com.lingXi.aiVedio.worker.AiVideoChapterAnalysisWorker;
 
+/**
+ * AI视频章节服务实现类。
+ */
 @Service
 public class AiVideoChapterServiceImpl implements IAiVideoChapterService
 {
@@ -50,6 +53,12 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
     @Autowired
     private AiVideoChapterAnalysisWorker chapterAnalysisWorker;
 
+    /**
+     * 根据项目ID查询章节列表。
+     *
+     * @param projectId 项目ID
+     * @return 章节列表
+     */
     @Override
     public List<AiVideoChapter> selectAiVideoChapterList(Long projectId)
     {
@@ -57,6 +66,12 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         return chapterMapper.selectAiVideoChapterList(projectId);
     }
 
+    /**
+     * 新增AI视频章节，计算文本哈希和字数。
+     *
+     * @param chapter 章节信息
+     * @return 受影响行数
+     */
     @Override
     public int insertAiVideoChapter(AiVideoChapter chapter)
     {
@@ -80,6 +95,13 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         return chapterMapper.insertAiVideoChapter(chapter);
     }
 
+    /**
+     * 批量删除AI视频章节，归档相关资产、故事圣经、分镜、场景和任务。
+     *
+     * @param projectId 项目ID
+     * @param chapterIds 章节ID数组
+     * @return 受影响行数
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public int deleteAiVideoChapterByChapterIds(Long projectId, Long[] chapterIds)
@@ -144,6 +166,13 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         return deleted;
     }
 
+    /**
+     * 启动章节故事圣经解析，创建或恢复解析任务。
+     *
+     * @param projectId 项目ID
+     * @param chapterId 章节ID
+     * @return 生成任务ID
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long startChapterAnalysis(Long projectId, Long chapterId)
@@ -201,6 +230,13 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         return task.getTaskId();
     }
 
+    /**
+     * 暂停章节故事圣经解析任务。
+     *
+     * @param projectId 项目ID
+     * @param chapterId 章节ID
+     * @return 生成任务ID
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long pauseChapterAnalysis(Long projectId, Long chapterId)
@@ -228,7 +264,10 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
     }
 
     /**
-     * 任务行和章节状态提交后再启动异步线程，避免异步状态更新与当前事务争抢同一批行锁。
+     * 在事务提交后启动异步解析线程，避免异步状态更新与当前事务争抢行锁。
+     *
+     * @param taskId 生成任务ID
+     * @param chapterId 章节ID
      */
     private void startAnalysisAfterCommit(final Long taskId, final Long chapterId)
     {
@@ -248,6 +287,13 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         });
     }
 
+    /**
+     * 查询章节最新版本的故事圣经。
+     *
+     * @param projectId 项目ID
+     * @param chapterId 章节ID
+     * @return 故事圣经信息
+     */
     @Override
     public AiVideoStoryBible selectLatestStoryBible(Long projectId, Long chapterId)
     {
@@ -260,6 +306,12 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         return storyBibleMapper.selectLatestAiVideoStoryBibleByChapterId(chapterId);
     }
 
+    /**
+     * 计算文本的SHA-256哈希值。
+     *
+     * @param source 原始文本
+     * @return 十六进制哈希字符串
+     */
     private String sha256(String source)
     {
         try
@@ -279,6 +331,12 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         }
     }
 
+    /**
+     * 标准化章节ID数组，去重并校验非空。
+     *
+     * @param chapterIds 章节ID数组
+     * @return 去重后的章节ID数组
+     */
     private Long[] normalizeChapterIds(Long[] chapterIds)
     {
         if (chapterIds == null || chapterIds.length == 0)
@@ -297,6 +355,12 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         return uniqueIds.toArray(new Long[uniqueIds.size()]);
     }
 
+    /**
+     * 判断任务状态是否为活跃状态。
+     *
+     * @param status 任务状态
+     * @return 是否为活跃状态
+     */
     private boolean isActiveTaskStatus(String status)
     {
         return "PENDING".equals(status) || "QUEUED".equals(status) || "RUNNING".equals(status)
@@ -306,11 +370,23 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
                 || "VALIDATING".equals(status);
     }
 
+    /**
+     * 判断资产状态是否为处理中状态。
+     *
+     * @param status 资产状态
+     * @return 是否为处理中状态
+     */
     private boolean isProcessingAssetStatus(String status)
     {
         return "GENERATING".equals(status) || "VALIDATING".equals(status);
     }
 
+    /**
+     * 获取章节的显示标签。
+     *
+     * @param chapter 章节信息
+     * @return 章节标签字符串
+     */
     private String chapterLabel(AiVideoChapter chapter)
     {
         if (chapter == null)
@@ -322,6 +398,13 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         return "章节“" + (title.isEmpty() ? number : number + " " + title) + "”";
     }
 
+    /**
+     * 获取安全的名称，为空则返回兜底值。
+     *
+     * @param value 原始值
+     * @param fallback 兜底值
+     * @return 非空名称
+     */
     private String safeName(String value, String fallback)
     {
         return value == null || value.trim().isEmpty() ? fallback : value.trim();

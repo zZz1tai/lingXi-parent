@@ -84,6 +84,12 @@ public class AiVideoChapterAnalysisWorker
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    /**
+     * 异步分析章节内容，将章节原文转换为下游可消费的场景包。
+     *
+     * @param taskId    故事圣经生成任务ID
+     * @param chapterId 章节ID
+     */
     @Async("aiVideoExecutor")
     public void analyze(Long taskId, Long chapterId)
     {
@@ -102,7 +108,7 @@ public class AiVideoChapterAnalysisWorker
             List<AiVideoCharacter> projectCharacters = characterMapper
                     .selectAiVideoCharactersByProjectId(chapter.getProjectId());
 
-            // Build project characters list for Python
+            // 整理项目级角色档案，供 Python 侧在章节间复用统一身份。
             List<ObjectNode> projectCharacterNodes = new ArrayList<>();
             for (AiVideoCharacter character : projectCharacters)
             {
@@ -128,7 +134,7 @@ public class AiVideoChapterAnalysisWorker
                 projectCharacterNodes.add(node);
             }
 
-            // Call Python Agent for chapter analysis
+            // 调用 Python Agent 完成章节拆解和故事圣经生成。
             AiVideoModelConfig runtimeConfig = modelConfigService.getRequiredConfig();
             ChapterAnalysisClient.AnalysisResult result = chapterAnalysisClient.analyzeChapter(
                     runtimeConfig.getApiKey(),
@@ -183,6 +189,12 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 通过悲观锁重试方式领取故事圣经任务。
+     *
+     * @param taskId 任务ID
+     * @return 是否成功领取
+     */
     private boolean claimStoryBibleTaskWithLockRetry(Long taskId)
     {
         for (int attempt = 1; attempt <= TASK_STATUS_LOCK_RETRY_ATTEMPTS; attempt++)
@@ -199,6 +211,15 @@ public class AiVideoChapterAnalysisWorker
         return false;
     }
 
+    /**
+     * 通过悲观锁重试方式更新任务状态。
+     *
+     * @param taskId       任务ID
+     * @param status       目标状态
+     * @param progress     进度百分比
+     * @param errorCode    错误码
+     * @param errorMessage 错误信息
+     */
     private void updateTaskStatusWithLockRetry(Long taskId, String status, Integer progress,
             String errorCode, String errorMessage)
     {
@@ -225,6 +246,14 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 更新故事圣经任务的阶段进度信息。
+     *
+     * @param taskId   任务ID
+     * @param stage    当前阶段编码
+     * @param progress 进度百分比
+     * @param message  阶段描述信息
+     */
     private void updateStoryBibleProgress(Long taskId, String stage, Integer progress, String message)
     {
         String stageCode = firstNonBlank(stage, "RUNNING");
@@ -250,12 +279,26 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 判断故事圣经任务是否已暂停。
+     *
+     * @param taskId 任务ID
+     * @return 是否处于暂停状态
+     */
     private boolean isStoryBibleTaskPaused(Long taskId)
     {
         AiVideoGenerationTask task = taskMapper.selectAiVideoGenerationTaskByTaskId(taskId);
         return task != null && "PAUSED".equals(task.getStatus());
     }
 
+    /**
+     * 悲观锁冲突时进行延迟等待后重试。
+     *
+     * @param taskId    任务ID
+     * @param operation 操作名称
+     * @param attempt   当前重试次数
+     * @param failure   锁冲突异常
+     */
     private void waitBeforeTaskStatusRetry(Long taskId, String operation, int attempt,
             PessimisticLockingFailureException failure)
     {
@@ -277,6 +320,14 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 在事务中持久化章节分析结果。
+     *
+     * @param taskId    任务ID
+     * @param chapter   章节实体
+     * @param document  分析结果JSON文档
+     * @param textModel 文本模型名称
+     */
     private void persistResult(final Long taskId, final AiVideoChapter chapter, final JsonNode document,
             final String textModel)
     {
@@ -312,6 +363,14 @@ public class AiVideoChapterAnalysisWorker
         private static final long serialVersionUID = 1L;
     }
 
+    /**
+     * 事务内保存章节分析结果，包括故事圣经、人物、场景和分镜数据。
+     *
+     * @param chapter   章节实体
+     * @param document  分析结果JSON文档
+     * @param textModel 文本模型名称
+     * @throws Exception 保存失败时抛出异常
+     */
     private void persistResultInTransaction(AiVideoChapter chapter, JsonNode document,
             String textModel) throws Exception
     {
@@ -342,6 +401,14 @@ public class AiVideoChapterAnalysisWorker
                 document.path("summary").asText(), versionNo);
     }
 
+    /**
+     * 将分析文档中的场景包物化为数据库记录，包括人物、场景、分镜和素材草稿。
+     *
+     * @param chapter   章节实体
+     * @param document  分析结果JSON文档
+     * @param versionNo 版本号
+     * @throws Exception 物化失败时抛出异常
+     */
     private void materializeScenePackage(AiVideoChapter chapter, JsonNode document, int versionNo) throws Exception
     {
         Map<String, Long> characterReferenceAssetIdsByKey = new LinkedHashMap<>();
@@ -468,6 +535,14 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 构建人物参考图的元数据JSON。
+     *
+     * @param character 人物实体
+     * @param chapter   章节实体
+     * @param versionNo 版本号
+     * @return 元数据JSON字符串
+     */
     private String buildCharacterReferenceMetadata(AiVideoCharacter character,
             AiVideoChapter chapter, int versionNo)
     {
@@ -482,6 +557,13 @@ public class AiVideoChapterAnalysisWorker
         return metadata.toString();
     }
 
+    /**
+     * 构建场景参考图的元数据JSON。
+     *
+     * @param scene     场景实体
+     * @param versionNo 版本号
+     * @return 元数据JSON字符串
+     */
     private String buildSceneReferenceMetadata(AiVideoScene scene, int versionNo)
     {
         ObjectNode metadata = objectMapper.createObjectNode();
@@ -491,6 +573,15 @@ public class AiVideoChapterAnalysisWorker
         return metadata.toString();
     }
 
+    /**
+     * 构建分镜关键帧的元数据JSON。
+     *
+     * @param shot                    分镜实体
+     * @param sceneReferenceAssetId   场景参考素材ID
+     * @param characterReferenceAssetIds 人物参考素材ID列表
+     * @param versionNo               版本号
+     * @return 元数据JSON字符串
+     */
     private String buildShotKeyframeMetadata(AiVideoShot shot, Long sceneReferenceAssetId,
             List<Long> characterReferenceAssetIds, int versionNo)
     {
@@ -505,6 +596,12 @@ public class AiVideoChapterAnalysisWorker
         return metadata.toString();
     }
 
+    /**
+     * 将Long列表转换为JSON数组节点。
+     *
+     * @param values Long值列表
+     * @return JSON数组节点
+     */
     private ArrayNode longArrayNode(List<Long> values)
     {
         ArrayNode array = objectMapper.createArrayNode();
@@ -521,6 +618,12 @@ public class AiVideoChapterAnalysisWorker
         return array;
     }
 
+    /**
+     * 根据人物名称生成唯一的人物身份编码。
+     *
+     * @param characterName 人物名称
+     * @return SHA-256哈希编码
+     */
     private String buildCharacterCode(String characterName)
     {
         String normalized = normalizeCharacterKey(characterName);
@@ -546,6 +649,13 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 合并已有规范人物与新分析人物的别名列表。
+     *
+     * @param canonicalCharacter   已有规范人物
+     * @param analyzedCharacter    新分析的人物
+     * @throws Exception 合并失败时抛出异常
+     */
     private void mergeCharacterAliases(AiVideoCharacter canonicalCharacter,
             AiVideoCharacter analyzedCharacter) throws Exception
     {
@@ -575,6 +685,12 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 从JSON数组中收集人物别名值到映射表。
+     *
+     * @param aliasesByKey 别名映射表
+     * @param aliases      JSON数组格式的别名列表
+     */
     private void collectCharacterAliasValues(Map<String, String> aliasesByKey, JsonNode aliases)
     {
         if (aliases == null || !aliases.isArray())
@@ -587,6 +703,12 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 清洗人物别名列表，去除通用别名和重复项。
+     *
+     * @param aliases 原始别名JSON数组
+     * @return 清洗后的别名数组
+     */
     private ArrayNode sanitizeCharacterAliases(JsonNode aliases)
     {
         Map<String, String> aliasesByKey = new LinkedHashMap<>();
@@ -599,6 +721,12 @@ public class AiVideoChapterAnalysisWorker
         return sanitized;
     }
 
+    /**
+     * 添加单个人物别名值，跳过通用别名和重复项。
+     *
+     * @param aliasesByKey 别名映射表
+     * @param alias        别名值
+     */
     private void addCharacterAliasValue(Map<String, String> aliasesByKey, String alias)
     {
         String normalized = normalizeCharacterKey(alias);
@@ -609,11 +737,26 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 判断别名是否为通用角色别名（如"他"、"老师"等）。
+     *
+     * @param alias 别名
+     * @return 是否为通用别名
+     */
     private boolean isGenericCharacterAlias(String alias)
     {
         return GENERIC_CHARACTER_ALIASES.contains(normalizeCharacterKey(alias));
     }
 
+    /**
+     * 注册人物标识与参考素材ID的映射关系。
+     *
+     * @param referenceIdsByKey  标识到素材ID的映射表
+     * @param character          人物实体
+     * @param analyzedCharacter  分析结果中的人物节点
+     * @param assetId            参考素材ID
+     * @throws Exception 注册失败时抛出异常
+     */
     private void registerCharacterReferenceKeys(Map<String, Long> referenceIdsByKey,
             AiVideoCharacter character, JsonNode analyzedCharacter, Long assetId) throws Exception
     {
@@ -626,6 +769,13 @@ public class AiVideoChapterAnalysisWorker
                 analyzedCharacter == null ? null : analyzedCharacter.path("aliases"), assetId);
     }
 
+    /**
+     * 注册人物别名到参考素材ID的映射关系。
+     *
+     * @param referenceIdsByKey 标识到素材ID的映射表
+     * @param aliases           别名JSON数组
+     * @param assetId           参考素材ID
+     */
     private void registerCharacterAliases(Map<String, Long> referenceIdsByKey,
             JsonNode aliases, Long assetId)
     {
@@ -643,6 +793,13 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 注册单个人物标识到参考素材ID的映射。
+     *
+     * @param referenceIdsByKey 标识到素材ID的映射表
+     * @param key              人物标识
+     * @param assetId          参考素材ID
+     */
     private void registerCharacterReferenceKey(Map<String, Long> referenceIdsByKey,
             String key, Long assetId)
     {
@@ -659,6 +816,15 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 解析分镜中涉及的人物参考素材ID列表。
+     *
+     * @param shotNode         分镜节点
+     * @param sceneNode        场景节点
+     * @param referenceIdsByKey 人物标识到素材ID的映射表
+     * @param shotPath         分镜路径（用于错误提示）
+     * @return 人物参考素材ID列表
+     */
     private List<Long> resolveShotCharacterReferenceAssetIds(ObjectNode shotNode, JsonNode sceneNode,
             Map<String, Long> referenceIdsByKey, String shotPath)
     {
@@ -682,6 +848,14 @@ public class AiVideoChapterAnalysisWorker
         return new ArrayList<>(resolved);
     }
 
+    /**
+     * 将多个角色标识对应的人物参考素材ID添加到结果集。
+     *
+     * @param resolved         已解析的素材ID集合
+     * @param characters       角色节点（数组或单个）
+     * @param referenceIdsByKey 人物标识到素材ID的映射表
+     * @param shotPath         分镜路径（用于错误提示）
+     */
     private void addCharacterReferenceIds(Set<Long> resolved, JsonNode characters,
             Map<String, Long> referenceIdsByKey, String shotPath)
     {
@@ -702,6 +876,14 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 将单个角色标识对应的人物参考素材ID添加到结果集。
+     *
+     * @param resolved         已解析的素材ID集合
+     * @param character        角色节点
+     * @param referenceIdsByKey 人物标识到素材ID的映射表
+     * @param shotPath         分镜路径（用于错误提示）
+     */
     private void addCharacterReferenceId(Set<Long> resolved, JsonNode character,
             Map<String, Long> referenceIdsByKey, String shotPath)
     {
@@ -720,6 +902,12 @@ public class AiVideoChapterAnalysisWorker
         resolved.add(assetId);
     }
 
+    /**
+     * 从角色节点中提取人物标识键。
+     *
+     * @param character 角色节点
+     * @return 人物标识键
+     */
     private String characterReferenceKey(JsonNode character)
     {
         if (character == null || character.isMissingNode() || character.isNull())
@@ -735,11 +923,25 @@ public class AiVideoChapterAnalysisWorker
                 character.path("speaker").asText(""));
     }
 
+    /**
+     * 标准化人物标识键（转小写并去除首尾空白）。
+     *
+     * @param key 原始标识键
+     * @return 标准化后的标识键
+     */
     private String normalizeCharacterKey(String key)
     {
         return key == null ? "" : key.trim().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * 插入分镜与场景/人物参考图的关联关系。
+     *
+     * @param projectId                项目ID
+     * @param sceneReferenceAssetId    场景参考素材ID
+     * @param characterReferenceAssetIds 人物参考素材ID列表
+     * @param keyframeAssetId          关键帧素材ID
+     */
     private void insertShotReferenceRelations(Long projectId, Long sceneReferenceAssetId,
             List<Long> characterReferenceAssetIds, Long keyframeAssetId)
     {
@@ -752,6 +954,15 @@ public class AiVideoChapterAnalysisWorker
         }
     }
 
+    /**
+     * 插入素材间的参考关联关系。
+     *
+     * @param projectId     项目ID
+     * @param fromAssetId   来源素材ID
+     * @param toAssetId     目标素材ID
+     * @param relationOrder 关联顺序
+     * @param referenceRole 参考角色类型
+     */
     private void insertReferenceRelation(Long projectId, Long fromAssetId, Long toAssetId,
             int relationOrder, String referenceRole)
     {
@@ -767,6 +978,12 @@ public class AiVideoChapterAnalysisWorker
         assetRelationMapper.insertAiVideoAssetRelation(relation);
     }
 
+    /**
+     * 返回第一个非空白的字符串值。
+     *
+     * @param values 候选字符串数组
+     * @return 第一个非空白值，若全为空则返回空字符串
+     */
     private String firstNonBlank(String... values)
     {
         if (values == null)
@@ -783,10 +1000,22 @@ public class AiVideoChapterAnalysisWorker
         return "";
     }
 
+    /**
+     * 安全提取JSON节点的整数值，非整数类型返回null。
+     *
+     * @param node JSON节点
+     * @return 整数值或null
+     */
     private Integer nullableInt(JsonNode node)
     {
         return node.isInt() || node.isLong() ? node.asInt() : null;
     }
+    /**
+     * 截断过长的文本，最多保留1000个字符。
+     *
+     * @param text 原始文本
+     * @return 截断后的文本
+     */
     private String abbreviate(String text)
     {
         return text.length() > 1000 ? text.substring(0, 1000) : text;

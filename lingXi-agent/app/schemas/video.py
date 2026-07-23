@@ -1,7 +1,7 @@
 """
-Pydantic v2 request/response models for video generation API endpoints.
+视频生成API端点的Pydantic v2请求/响应模型。
 
-Handles image and video generation through provider adapters.
+通过提供商适配器处理图像和视频生成。
 """
 
 from __future__ import annotations
@@ -30,17 +30,17 @@ IdentifierText = Annotated[
 ]
 
 
-# ── Enums ────────────────────────────────────────────────────────────────────
+# ── 枚举定义 ────────────────────────────────────────────────────────────────
 
 class ImageAspectRatio(str, Enum):
-    """Supported image aspect ratios."""
+    """支持的图像宽高比。"""
     LANDSCAPE_16_9 = "16:9"
     PORTRAIT_9_16 = "9:16"
     SQUARE_1_1 = "1:1"
 
 
 class TaskStatus(str, Enum):
-    """Video generation task status."""
+    """视频生成任务状态。"""
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
@@ -49,10 +49,10 @@ class TaskStatus(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
-# ── Image Generation ─────────────────────────────────────────────────────────
+# ── 图片生成 ────────────────────────────────────────────────────────────────
 
 class GenerateImageRequest(BaseModel):
-    """Request body for POST /api/v1/video/generate-image."""
+    """``POST /api/v1/video/generate-image``端点的请求体。"""
 
     api_key: ApiKeyText = Field(
         ...,
@@ -101,7 +101,7 @@ class GenerateImageRequest(BaseModel):
 
 
 class GenerateImageResponse(BaseModel):
-    """Response for POST /api/v1/video/generate-image."""
+    """``POST /api/v1/video/generate-image``端点的响应。"""
 
     success: bool = Field(
         ...,
@@ -129,10 +129,10 @@ class GenerateImageResponse(BaseModel):
     )
 
 
-# ── Video Generation ─────────────────────────────────────────────────────────
+# ── 视频生成 ────────────────────────────────────────────────────────────────
 
 class SubmitVideoRequest(BaseModel):
-    """Request body for POST /api/v1/video/submit-video."""
+    """``POST /api/v1/video/submit-video``端点的请求体。"""
 
     api_key: ApiKeyText = Field(
         ...,
@@ -218,7 +218,7 @@ class SubmitVideoRequest(BaseModel):
 
 
 class SubmitVideoResponse(BaseModel):
-    """Response for POST /api/v1/video/submit-video."""
+    """``POST /api/v1/video/submit-video``端点的响应。"""
 
     success: bool = Field(
         ...,
@@ -260,7 +260,7 @@ class SubmitVideoResponse(BaseModel):
 
 
 class QueryVideoRequest(BaseModel):
-    """Request body for POST /api/v1/video/query-video."""
+    """``POST /api/v1/video/query-video``端点的请求体。"""
 
     api_key: ApiKeyText = Field(
         ...,
@@ -277,7 +277,7 @@ class QueryVideoRequest(BaseModel):
 
 
 class QueryVideoResponse(BaseModel):
-    """Response for POST /api/v1/video/query-video."""
+    """``POST /api/v1/video/query-video``端点的响应。"""
 
     success: bool = Field(
         ...,
@@ -314,10 +314,10 @@ class QueryVideoResponse(BaseModel):
     )
 
 
-# ── Provider Response Contracts ─────────────────────────────────────────────
+# ── 模型提供方响应契约 ──────────────────────────────────────────────────────
 
 class ProviderContractModel(BaseModel):
-    """Strict-enough provider DTO that ignores harmless additive metadata."""
+    """足够严格的提供商DTO，忽略无害的附加元数据。"""
 
     model_config = ConfigDict(extra="ignore")
 

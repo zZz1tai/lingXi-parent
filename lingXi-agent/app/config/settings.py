@@ -1,8 +1,8 @@
 """
-Application configuration management.
+应用配置管理模块。
 
-Loads infrastructure settings from environment variables and .env files.
-Model credentials and model names are supplied per request by the Java service.
+从环境变量和 .env 文件加载基础设施配置。
+模型凭据和模型名称由 Java 服务在每次请求时提供。
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ ENV_FILE = PROJECT_ROOT / ".env"
 
 
 class Settings(BaseSettings):
-    """Global application settings loaded from environment variables."""
+    """全局应用配置，从环境变量加载。"""
 
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # ── LLM Configuration ──────────────────────────────────────────
+    # ── 大模型配置 ─────────────────────────────────────────────────
     llm_provider: str = Field(
         default="openai",
         description="LLM provider type: openai / azure / custom",
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
         description="LLM sampling temperature",
     )
 
-    # ── Search Configuration ───────────────────────────────────────
+    # ── 搜索配置 ───────────────────────────────────────────────────
     tavily_api_key: str = Field(
         default="",
         description="Tavily Search API key",
@@ -65,7 +65,7 @@ class Settings(BaseSettings):
         description="Maximum number of search results per query",
     )
 
-    # ── Agent Configuration ────────────────────────────────────────
+    # ── Agent 配置 ─────────────────────────────────────────────────
     max_iterations: int = Field(
         default=5,
         ge=1,
@@ -79,7 +79,7 @@ class Settings(BaseSettings):
         description="Timeout in seconds for individual tool calls",
     )
 
-    # ── Service Security ────────────────────────────────────────────
+    # ── 服务安全配置 ───────────────────────────────────────────────
     service_api_key: SecretStr = Field(
         default=SecretStr(""),
         validation_alias=AliasChoices("AGENT_SERVICE_API_KEY", "SERVICE_API_KEY"),
@@ -108,7 +108,7 @@ class Settings(BaseSettings):
         description="Expose Swagger and ReDoc endpoints",
     )
 
-    # ── Resource Limits ─────────────────────────────────────────────
+    # ── 资源限制 ───────────────────────────────────────────────────
     max_request_body_bytes: int = Field(
         default=2 * 1024 * 1024,
         ge=1024,
@@ -137,7 +137,7 @@ class Settings(BaseSettings):
         le=2_000_000,
     )
 
-    # ── LangGraph Checkpointing ────────────────────────────────────
+    # ── LangGraph 检查点配置 ───────────────────────────────────────
     agent_checkpointer_backend: Literal["memory", "postgres"] = Field(
         default="memory",
         validation_alias="AGENT_CHECKPOINTER_BACKEND",
@@ -149,7 +149,7 @@ class Settings(BaseSettings):
         description="PostgreSQL DSN used by the durable checkpoint backend",
     )
 
-    # ── Server Configuration ───────────────────────────────────────
+    # ── 服务端配置 ─────────────────────────────────────────────────
     host: str = Field(default="127.0.0.1", description="Server bind host")
     port: int = Field(default=5000, description="Server bind port")
     debug: bool = Field(default=False, description="Enable debug mode")
@@ -157,7 +157,7 @@ class Settings(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def _read_port_from_env(cls, values: dict) -> dict:  # noqa: N805
-        """Read DEPLOY_RUN_PORT from sandbox environment if available."""
+        """从沙箱环境变量中读取 DEPLOY_RUN_PORT（如果存在）。"""
         deploy_port = os.environ.get("DEPLOY_RUN_PORT")
         if deploy_port and "port" not in values:
             values["port"] = int(deploy_port)
@@ -165,17 +165,17 @@ class Settings(BaseSettings):
 
     @property
     def service_api_key_value(self) -> str:
-        """Return the shared service secret without exposing it in repr/logs."""
+        """返回服务共享密钥，不会在 repr/日志中暴露。"""
         return self.service_api_key.get_secret_value().strip()
 
     @property
     def agent_postgres_dsn_value(self) -> str:
-        """Return the checkpoint DSN only at the resource-construction boundary."""
+        """仅在资源构造边界返回检查点 DSN。"""
         return self.agent_postgres_dsn.get_secret_value()
 
     @property
     def outbound_host_allowlist(self) -> set[str]:
-        """Normalized provider host/authority allowlist."""
+        """标准化的提供商主机/权限白名单。"""
         return {
             item.strip().lower().rstrip(".")
             for item in self.outbound_allowed_hosts.split(",")
@@ -184,7 +184,7 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_allowlist(self) -> list[str]:
-        """Normalized explicit CORS origins."""
+        """标准化的显式 CORS 来源列表。"""
         return [
             item.strip().rstrip("/")
             for item in self.cors_allowed_origins.split(",")
@@ -192,5 +192,5 @@ class Settings(BaseSettings):
         ]
 
 
-# Singleton settings instance
+# 全局单例配置实例
 settings = Settings()

@@ -12,6 +12,13 @@ public class AiVideoPublicAssetUrlResolver
     @Autowired
     private AiVideoStorageProperties properties;
 
+    /**
+     * 将本地资源路径解析为公网可访问的完整URL。
+     *
+     * @param assetPath 资源路径（本地路径或已完整的URL）
+     * @return 公网可访问的完整URL
+     * @throws ServiceException 路径为空或未配置公网基地址时抛出异常
+     */
     public String resolve(String assetPath)
     {
         if (assetPath == null || assetPath.trim().isEmpty())

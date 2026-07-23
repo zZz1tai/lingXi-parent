@@ -1,4 +1,4 @@
-"""Service-to-service authentication for protected Agent APIs."""
+"""受保护Agent API的服务间认证。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ _service_key = APIKeyHeader(name=SERVICE_KEY_HEADER, auto_error=False)
 async def require_service_auth(
     supplied_key: Annotated[str | None, Security(_service_key)] = None,
 ) -> None:
-    """Require the Java-to-Python shared secret and fail closed if unset."""
+    """要求Java到Python的共享密钥，如果未设置则关闭失败。"""
 
     expected = settings.service_api_key_value
     if not expected:

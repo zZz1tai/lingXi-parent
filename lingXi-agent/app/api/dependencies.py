@@ -1,4 +1,4 @@
-"""Application-scoped LangChain v1 models, Agent graph, and memory resources."""
+"""应用范围的LangChain v1模型、Agent图和内存资源。"""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def _secret_value(value: str | SecretStr) -> str:
 
 
 def _redact_secret(message: str, secret: str | SecretStr) -> str:
-    """Remove a credential if a provider includes it in an error message."""
+    """如果提供者在错误消息中包含凭据，则删除该凭据。"""
 
     raw_secret = _secret_value(secret)
     if not raw_secret:
@@ -108,7 +108,7 @@ def _new_chat_model(
     temperature: float | None = None,
     streaming: bool | None = None,
 ) -> BaseChatModel:
-    """Construct one OpenAI-compatible v1 chat model without caching it."""
+    """构造一个OpenAI兼容的v1聊天模型，不缓存它。"""
 
     api_key, model_name, base_url, configured_timeout = _normalized_model_values(config)
     if not api_key:
@@ -124,9 +124,8 @@ def _new_chat_model(
         ),
         "max_retries": 1 if max_retries is None else max_retries,
         "output_version": "v1",
-        # The application-owned client has follow_redirects=False, preventing
-        # an allowlisted provider from redirecting model traffic to an
-        # untrusted/private destination.
+        # 应用自有客户端关闭自动重定向，防止白名单提供方把模型流量
+        # 重定向到不受信任或内网地址。
         "http_async_client": get_http_client(),
     }
     if base_url:
@@ -163,7 +162,7 @@ def create_llm(
     temperature: float | None = None,
     streaming: bool | None = None,
 ) -> BaseChatModel:
-    """Return a model from a credential-safe bounded cache."""
+    """从凭证安全的有限缓存中返回模型。"""
 
     if config is None and all(
         value is None for value in (timeout, max_retries, temperature, streaming)
@@ -225,7 +224,7 @@ def create_llm(
 
 
 def get_llm(*, profile: str | None = None) -> BaseChatModel:
-    """Return the cached environment-configured default model."""
+    """返回缓存的环境配置默认模型。"""
 
     global _llm_instance
     if _llm_instance is not None:
@@ -255,7 +254,7 @@ def configure_agent_runtime(
     *,
     store: BaseStore | None = None,
 ) -> None:
-    """Inject lifespan-owned durable memory/store resources before serving."""
+    """在服务前注入生命周期拥有的持久化内存/存储资源。"""
 
     global _checkpointer_instance, _store_instance, _agent_instance
     global _ephemeral_agent_instance
@@ -266,7 +265,7 @@ def configure_agent_runtime(
 
 
 def get_checkpointer() -> BaseCheckpointSaver:
-    """Return configured memory, falling back to isolated development memory."""
+    """返回配置的内存，回退到隔离的开发内存。"""
 
     global _checkpointer_instance
     if _checkpointer_instance is None:
@@ -282,7 +281,7 @@ def get_agent(
     checkpointed: bool = True,
     model: BaseChatModel | None = None,
 ) -> CompiledStateGraph:
-    """Return a graph using the request model, or the legacy default if absent."""
+    """返回使用请求模型的图，如果不存在则返回传统默认值。"""
 
     if model is not None:
         return build_search_agent(
@@ -313,7 +312,7 @@ def get_agent(
 
 
 async def delete_agent_thread(*, user_id: str, thread_id: str) -> None:
-    """Permanently delete one user's checkpointed conversation."""
+    """永久删除一个用户的检查点对话。"""
 
     await get_checkpointer().adelete_thread(
         checkpoint_thread_id(user_id, thread_id)
@@ -328,7 +327,7 @@ def create_agent_context(
     style: str,
     business_tag: str,
 ) -> AgentContext:
-    """Build immutable context and resolve any bounded model override."""
+    """构建不可变上下文并解析任何有界的模型覆盖。"""
 
     model = (
         create_llm(llm_config, profile="chat-request")
@@ -345,7 +344,7 @@ def create_agent_context(
 
 
 def get_request_id() -> str:
-    """Reuse the request middleware's ID, generating only in direct calls."""
+    """重用请求中间件的ID，仅在直接调用时生成。"""
 
     from app.utils.logger import generate_request_id, get_request_id as current_request_id
 
@@ -354,7 +353,7 @@ def get_request_id() -> str:
 
 
 def reset_singletons() -> None:
-    """Reset process-local caches for tests and application shutdown."""
+    """重置用于测试和应用程序关闭的进程本地缓存。"""
 
     global _llm_instance, _agent_instance, _ephemeral_agent_instance
     global _checkpointer_instance, _store_instance

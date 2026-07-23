@@ -10,15 +10,29 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
 
-/** Normalizes Python Agent success/error envelopes without reflecting raw bodies. */
+/**
+ * Agent 响应处理工具类
+ * <p>标准化 Python Agent 的成功/错误响应封装，不暴露原始响应体。</p>
+ */
 final class AgentResponseUtil {
 
+    /** 对外错误文本最大长度，避免远端异常内容无限扩张。 */
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1000;
+    /** 允许读取的最大响应体大小，超过上限时按无效响应处理。 */
     static final int MAX_RESPONSE_BODY_BYTES = 2 * 1024 * 1024;
 
+    /** 工具类不允许实例化。 */
     private AgentResponseUtil() {
     }
 
+    /**
+     * 读取 HTTP 响应体内容
+     *
+     * @param conn     HTTP 连接对象
+     * @param statusCode HTTP 状态码
+     * @return 响应体字符串
+     * @throws IOException 读取失败时抛出
+     */
     static String readResponseBody(HttpURLConnection conn, int statusCode) throws IOException {
         InputStream stream = statusCode >= 200 && statusCode < 300
                 ? conn.getInputStream() : conn.getErrorStream();
@@ -44,6 +58,14 @@ final class AgentResponseUtil {
         }
     }
 
+    /**
+     * 解析成功的 JSON 响应
+     *
+     * @param mapper       Jackson ObjectMapper 实例
+     * @param responseBody 响应体字符串
+     * @return 解析后的 JsonNode 对象
+     * @throws IOException JSON 解析失败或响应格式无效时抛出
+     */
     static JsonNode parseSuccess(ObjectMapper mapper, String responseBody) throws IOException {
         JsonNode response;
         try {
@@ -57,6 +79,16 @@ final class AgentResponseUtil {
         return response;
     }
 
+    /**
+     * 标准化错误响应，确保返回统一格式的错误信息
+     *
+     * @param mapper          Jackson ObjectMapper 实例
+     * @param responseBody    响应体字符串
+     * @param httpStatus      HTTP 状态码
+     * @param fallbackCode    兜底错误码
+     * @param fallbackMessage 兜底错误信息
+     * @return 标准化后的错误 JsonNode 对象
+     */
     static ObjectNode normalizeError(
             ObjectMapper mapper,
             String responseBody,
@@ -71,7 +103,7 @@ final class AgentResponseUtil {
                     normalized = ((ObjectNode) parsed).deepCopy();
                 }
             } catch (IOException ignored) {
-                // Fail closed with a stable transport error; never reflect raw content.
+                // 解析失败时使用稳定的传输错误并拒绝继续处理，绝不向调用方回显原始响应内容。
             }
         }
 
@@ -100,6 +132,13 @@ final class AgentResponseUtil {
         return normalized;
     }
 
+    /**
+     * 从响应中提取错误码
+     *
+     * @param response     响应 JsonNode 对象
+     * @param fallbackCode 兜底错误码
+     * @return 错误码字符串
+     */
     static String errorCode(JsonNode response, String fallbackCode) {
         JsonNode nested = response.path("error");
         if (nested.isObject()) {
@@ -108,6 +147,13 @@ final class AgentResponseUtil {
         return safeText(response.path("error_code").asText(fallbackCode), fallbackCode);
     }
 
+    /**
+     * 从响应中提取错误信息
+     *
+     * @param response        响应 JsonNode 对象
+     * @param fallbackMessage 兜底错误信息
+     * @return 错误信息字符串
+     */
     static String errorMessage(JsonNode response, String fallbackMessage) {
         JsonNode nested = response.path("error");
         if (nested.isObject()) {
@@ -116,6 +162,13 @@ final class AgentResponseUtil {
         return safeText(response.path("error").asText(fallbackMessage), fallbackMessage);
     }
 
+    /**
+     * 安全处理文本值，去除首尾空格并截断过长内容
+     *
+     * @param value    原始文本值
+     * @param fallback 兜底文本值
+     * @return 处理后的文本字符串
+     */
     static String safeText(String value, String fallback) {
         String normalized = value == null ? "" : value.trim();
         if (normalized.isEmpty()) {

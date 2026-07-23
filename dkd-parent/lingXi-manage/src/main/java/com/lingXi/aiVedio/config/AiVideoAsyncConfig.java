@@ -20,6 +20,11 @@ public class AiVideoAsyncConfig implements SchedulingConfigurer
     @Value("${aivideo.scheduler.pool-size}")
     private int schedulerPoolSize;
 
+    /**
+     * 创建AI视频工作流专用异步执行器线程池。
+     *
+     * @return 异步执行器
+     */
     @Bean("aiVideoExecutor")
     public Executor aiVideoExecutor()
     {
@@ -34,6 +39,11 @@ public class AiVideoAsyncConfig implements SchedulingConfigurer
         return executor;
     }
 
+    /**
+     * 创建AI视频定时任务调度器线程池。
+     *
+     * @return 任务调度器
+     */
     @Bean("aiVideoTaskScheduler")
     public ThreadPoolTaskScheduler aiVideoTaskScheduler()
     {
@@ -45,6 +55,11 @@ public class AiVideoAsyncConfig implements SchedulingConfigurer
         return scheduler;
     }
 
+    /**
+     * 配置定时任务注册器，绑定AI视频调度器。
+     *
+     * @param taskRegistrar 任务注册器
+     */
     @Override
     public void configureTasks(ScheduledTaskRegistrar taskRegistrar)
     {

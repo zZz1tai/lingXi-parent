@@ -19,6 +19,17 @@ public class AiVideoLocalAssetStorage
     @Autowired
     private FileStorageService fileStorageService;
 
+    /**
+     * 将远程图片下载并转存到文件存储平台。
+     *
+     * @param projectId  项目ID
+     * @param assetId    资产ID
+     * @param versionNo  版本号
+     * @param assetCode  资产编码
+     * @param remoteUrl  远程图片地址
+     * @return 存储结果信息（含URL、大小、哈希、尺寸等）
+     * @throws Exception 下载或上传失败时抛出异常
+     */
     public StoredImage store(Long projectId, Long assetId, Integer versionNo,
             String assetCode, String remoteUrl) throws Exception
     {
@@ -34,6 +45,17 @@ public class AiVideoLocalAssetStorage
                 image == null ? null : image.getHeight(), fileInfo.getPlatform());
     }
 
+    /**
+     * 将远程视频下载并转存到文件存储平台。
+     *
+     * @param projectId  项目ID
+     * @param assetId    资产ID
+     * @param versionNo  版本号
+     * @param assetCode  资产编码
+     * @param remoteUrl  远程视频地址
+     * @return 存储结果信息（含URL、大小、哈希、平台）
+     * @throws Exception 下载或上传失败时抛出异常
+     */
     public StoredFile storeVideo(Long projectId, Long assetId, Integer versionNo,
             String assetCode, String remoteUrl) throws Exception
     {
@@ -47,7 +69,15 @@ public class AiVideoLocalAssetStorage
         return new StoredFile(fileInfo.getUrl(), fileInfo.getSize(), sha256(bytes), fileInfo.getPlatform());
     }
 
-    /** 同一 assetCode 的不同版本必须落到不同 OSS 对象，旧版本才能真正保留。 */
+    /**
+     * 生成带版本号的文件名，确保同一资产的不同版本不会覆盖。
+     *
+     * @param assetCode  资产编码
+     * @param assetId    资产ID
+     * @param versionNo  版本号
+     * @param extension  文件扩展名
+     * @return 带版本号的文件名
+     */
     private String versionedFilename(String assetCode, Long assetId, Integer versionNo, String extension)
     {
         String normalizedCode = assetCode == null || assetCode.trim().isEmpty()
@@ -57,13 +87,26 @@ public class AiVideoLocalAssetStorage
         return normalizedCode + "-v" + normalizedVersion + "-a" + normalizedAssetId + extension;
     }
 
-    /** 用户明确删除资产后，按上传时保存的完整资源 URL 回收 OSS 对象。 */
+    /**
+     * 根据资源路径删除文件存储平台上的对象。
+     *
+     * @param resourcePath 资源路径
+     * @return 是否删除成功
+     */
     public boolean delete(String resourcePath)
     {
         return resourcePath == null || resourcePath.trim().isEmpty()
                 || fileStorageService.delete(resourcePath.trim());
     }
 
+    /**
+     * 从远程URL下载文件内容到字节数组。
+     *
+     * @param remoteUrl    远程地址
+     * @param readTimeout  读取超时时间（毫秒）
+     * @return 文件字节数组
+     * @throws Exception 下载失败时抛出异常
+     */
     private byte[] download(String remoteUrl, int readTimeout) throws Exception
     {
         HttpURLConnection connection = (HttpURLConnection) new URL(remoteUrl).openConnection();
@@ -81,6 +124,13 @@ public class AiVideoLocalAssetStorage
         }
     }
 
+    /**
+     * 计算字节数组的SHA-256哈希值。
+     *
+     * @param bytes 字节数组
+     * @return SHA-256哈希字符串
+     * @throws Exception 哈希计算失败时抛出异常
+     */
     private String sha256(byte[] bytes) throws Exception
     {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -89,6 +139,9 @@ public class AiVideoLocalAssetStorage
         return hash.toString();
     }
 
+    /**
+     * 图片存储结果，包含资源路径、大小、SHA-256哈希、尺寸和平台信息。
+     */
     public static class StoredImage
     {
         private final String resourcePath;
@@ -107,6 +160,9 @@ public class AiVideoLocalAssetStorage
         public String getPlatform() { return platform; }
     }
 
+    /**
+     * 视频存储结果，包含资源路径、大小、SHA-256哈希和平台信息。
+     */
     public static class StoredFile
     {
         private final String resourcePath;

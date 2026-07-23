@@ -22,7 +22,9 @@ import com.lingXi.aiVedio.storage.AiVideoPublicAssetUrlResolver;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 import com.lingXi.common.exception.ServiceException;
 
-/** HappyHorse 多参考图视频供应商适配器。 */
+/**
+ * HappyHorse多参考图视频供应商适配器。
+ */
 @Service
 @ConditionalOnProperty(prefix = "aivideo.video", name = "provider",
         havingValue = "happyhorse", matchIfMissing = true)
@@ -43,15 +45,32 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    /**
+     * 获取供应商编码。
+     *
+     * @return 供应商编码
+     */
     @Override
     public String providerCode() { return "happyhorse"; }
 
+    /**
+     * 获取模型编码。
+     *
+     * @return 模型编码
+     */
     @Override
     public String modelCode() { return modelConfigService.getRequiredConfig().getVideoModel(); }
 
     /**
+     * 提交视频生成任务。
      * 先在一个短事务内原子完成草稿状态迁移和任务创建，事务提交后才调用外部服务。
      * 这样并发确认不会重复提交，外部请求失败时任务和草稿也能落为可重试状态。
+     *
+     * @param video 视频资产
+     * @param keyframe 关键帧资产
+     * @param boundReferenceAssets 绑定的参考图资产列表
+     * @param username 操作用户
+     * @return 生成任务ID
      */
     @Override
     public Long submit(final AiVideoAsset video, final AiVideoAsset keyframe,
@@ -76,7 +95,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         }
         video.setStatus("GENERATING");
 
-        // Call Python Agent API for video submission
+        // 通过 Python Agent 提交视频任务，隔离具体模型提供方的协议差异。
         VideoClient.VideoSubmitResult result = videoClient.submitVideo(
                 runtimeConfig.getApiKey(),
                 providerCode(),
@@ -142,6 +161,17 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         return task.getTaskId();
     }
     
+    /**
+     * 在事务提交后最终确认成功的提交结果，更新视频时长和任务等待状态。
+     *
+     * @param video 视频资产
+     * @param task 生成任务
+     * @param providerTaskId 供应商任务ID
+     * @param normalizedDurationMs 归一化后的视频时长
+     * @param videoModel 视频模型编码
+     * @param username 操作用户
+     * @return 是否确认成功
+     */
     private boolean finalizeSuccessfulSubmission(final AiVideoAsset video,
             final AiVideoGenerationTask task, final String providerTaskId,
             final Integer normalizedDurationMs, final String videoModel, final String username)
@@ -169,6 +199,15 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         return Boolean.TRUE.equals(result);
     }
 
+    /**
+     * 标记视频提交为最终失败状态。
+     *
+     * @param video 视频资产
+     * @param task 生成任务
+     * @param username 操作用户
+     * @param errorCode 错误码
+     * @param message 错误消息
+     */
     private void markDefinitiveSubmissionFailure(final AiVideoAsset video,
             final AiVideoGenerationTask task, final String username,
             final String errorCode, final String message)
@@ -190,6 +229,15 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         });
     }
 
+    /**
+     * 准备视频生成任务，更新资产状态并创建任务记录。
+     *
+     * @param video 视频资产
+     * @param username 操作用户
+     * @param requestJson 请求JSON
+     * @param videoModel 视频模型编码
+     * @return 生成任务
+     */
     private AiVideoGenerationTask prepareTask(AiVideoAsset video, String username,
             String requestJson, String videoModel)
     {
@@ -224,6 +272,17 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         return task;
     }
 
+    /**
+     * 构建视频生成任务的请求JSON。
+     *
+     * @param video 视频资产
+     * @param keyframe 关键帧资产
+     * @param username 操作用户
+     * @param keyframeUrl 关键帧图片URL
+     * @param referenceUrls 参考图URL集合
+     * @param videoModel 视频模型编码
+     * @return 请求JSON字符串
+     */
     private String buildTaskRequestJson(AiVideoAsset video, AiVideoAsset keyframe, String username,
             String keyframeUrl, VideoReferenceUrls referenceUrls, String videoModel)
     {
@@ -264,6 +323,12 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         return request.toString();
     }
 
+    /**
+     * 解析参考图资产列表为URL和ID集合。
+     *
+     * @param references 参考图资产列表
+     * @return 视频参考图URL集合
+     */
     private VideoReferenceUrls resolveReferenceUrls(List<AiVideoAsset> references)
     {
         List<String> characterUrls = new ArrayList<>();
@@ -291,6 +356,9 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         return new VideoReferenceUrls(characterUrls, characterAssetIds, sceneUrl, sceneAssetId);
     }
 
+    /**
+     * 视频参考图URL和ID的聚合容器。
+     */
     private static final class VideoReferenceUrls
     {
         private final List<String> characterUrls;
@@ -313,6 +381,13 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         private Long getSceneAssetId() { return sceneAssetId; }
     }
 
+    /**
+     * 向JSON节点安全写入Long字段。
+     *
+     * @param node JSON对象节点
+     * @param field 字段名
+     * @param value 字段值
+     */
     private void putLong(ObjectNode node, String field, Long value)
     {
         if (value != null)

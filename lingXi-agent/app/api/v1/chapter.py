@@ -1,8 +1,8 @@
 """
-Chapter analysis API endpoint.
+章节分析API端点模块。
 
-Migrated from Java AiVideoChapterAnalysisWorker.
-Handles source unit building, prompt construction, LLM call, and JSON validation.
+从Java AiVideoChapterAnalysisWorker迁移而来。
+处理源单元构建、提示词构造、LLM调用和JSON验证。
 """
 
 from __future__ import annotations
@@ -48,15 +48,15 @@ CONTRACT_ERROR_LOG_LIMIT = 600
 
 
 class _ChapterConfigurationError(ValueError):
-    """The Java-to-Python chapter request omitted required runtime config."""
+    """当Java到Python的章节请求缺少必要的运行时配置时抛出的异常。"""
 
 
 class _ChapterCapacityError(RuntimeError):
-    """The per-worker chapter provider capacity is temporarily exhausted."""
+    """当每工作进程的章节提供商容量暂时耗尽时抛出的异常。"""
 
 
 def _iter_exception_chain(exc: BaseException) -> Iterator[BaseException]:
-    """Yield an exception and its explicit/implicit causes without looping."""
+    """生成异常及其显式/隐式原因，避免循环引用。"""
     current: Optional[BaseException] = exc
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
@@ -66,7 +66,7 @@ def _iter_exception_chain(exc: BaseException) -> Iterator[BaseException]:
 
 
 def _safe_contract_error_detail(exc: BaseException) -> str:
-    """Return a short, log-safe contract failure summary without model payloads."""
+    """返回简短、日志安全的契约失败摘要，不包含模型负载。"""
 
     detail = str(exc)[:4_000]
     detail = re.sub(
@@ -85,7 +85,7 @@ def _safe_contract_error_detail(exc: BaseException) -> str:
 
 
 def _chapter_error_details(exc: BaseException) -> tuple[str, bool, str, int]:
-    """Map provider failures to a stable transport contract for Java."""
+    """将提供商故障映射到Java的稳定传输契约。"""
     chain = list(_iter_exception_chain(exc))
     if isinstance(exc, _ChapterCapacityError):
         return (
@@ -166,7 +166,7 @@ def _chapter_error_details(exc: BaseException) -> tuple[str, bool, str, int]:
 
 
 async def _invoke_with_capacity(analysis_chain, *args, **kwargs):
-    """Bound long-running provider calls without allowing an unbounded wait queue."""
+    """限制长时间运行的提供商调用，不允许无限等待队列。"""
 
     try:
         await asyncio.wait_for(
@@ -181,7 +181,7 @@ async def _invoke_with_capacity(analysis_chain, *args, **kwargs):
         _chapter_slots.release()
 
 
-# ── Endpoint ─────────────────────────────────────────────────────────────────
+# ── 章节分析接口 ────────────────────────────────────────────────────────────
 
 async def analyze_chapter(
     request: AnalyzeChapterRequest,
@@ -197,14 +197,14 @@ async def _run_chapter_analysis(
     request_id: str,
     progress_callback: Callable[[str, int, str], Awaitable[None] | None] | None = None,
 ) -> AnalyzeChapterResponse:
-    """Analyze a novel chapter and produce a structured story bible.
+    """分析小说章节并生成结构化的故事圣经。
 
-    Flow:
-    1. Build source units from raw text
-    2. Build LLM prompt
-    3. Call LLM
-    4. Parse and validate JSON response
-    5. Return validated result to Java for persistence
+    流程：
+    1. 从原始文本构建源单元
+    2. 构建LLM提示词
+    3. 调用LLM
+    4. 解析并验证JSON响应
+    5. 返回验证结果给Java进行持久化
     """
     start_time = time.time()
 
@@ -225,7 +225,7 @@ async def _run_chapter_analysis(
             )
             if inspect.isawaitable(emitted):
                 await emitted
-        # Step 1: Build source units
+        # 第一步：将章节原文切分为可追踪的最小源单元。
         source_units = build_source_units(request.source_text)
         logger.info(
             "Source units built | request_id=%s | count=%d",
@@ -242,7 +242,7 @@ async def _run_chapter_analysis(
                 request_id=request_id,
             )
 
-        # Step 2: Build prompt
+        # 第二步：结合项目角色档案构建章节分析提示词。
         project_characters = (
             [
                 character.model_dump(by_alias=True)
@@ -268,8 +268,8 @@ async def _run_chapter_analysis(
             len(prompt),
         )
 
-        # Step 3: Run the reusable LangChain workflow. Java owns the timeout
-        # value and transports it as seconds; Python owns streaming behavior.
+        # 第三步：执行可复用的 LangChain 工作流。超时时长由 Java 以秒为单位传入，
+        # Python 负责流式调用和进度事件。
         if request.llm_config is None or request.llm_config.timeout_seconds is None:
             raise _ChapterConfigurationError(
                 "章节分析缺少 llm_config.timeout_seconds 配置"
@@ -318,8 +318,7 @@ async def _run_chapter_analysis(
             chain_result.repair_count,
         )
 
-        # Step 4: The chain has already parsed and deterministically validated
-        # the result before it reaches persistence.
+        # 第四步：工作流已完成解析和确定性校验，结果可安全交给 Java 持久化。
         logger.info(
             "Story bible validated | request_id=%s | scenes=%d | characters=%d",
             request_id,
@@ -382,7 +381,7 @@ async def analyze_chapter_endpoint(
     response: Response,
     request_id: str = Depends(get_request_id),
 ) -> AnalyzeChapterResponse:
-    """Backward-compatible non-streaming chapter-analysis endpoint."""
+    """向后兼容的非流式章节分析端点。"""
 
     return await analyze_chapter(request, response, request_id)
 
@@ -392,7 +391,7 @@ async def analyze_chapter_stream(
     request: AnalyzeChapterRequest,
     request_id: str = Depends(get_request_id),
 ) -> StreamingResponse:
-    """Stream NDJSON stage events followed by one terminal result event."""
+    """流式传输NDJSON阶段事件，后跟一个终端结果事件。"""
 
     async def event_stream():
         queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue(maxsize=16)

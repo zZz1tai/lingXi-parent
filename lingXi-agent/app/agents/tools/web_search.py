@@ -1,4 +1,4 @@
-"""Bounded Tavily search exposed as a LangChain v1 runtime-aware tool."""
+"""作为LangChain v1运行时感知工具暴露的有界Tavily搜索。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from app.utils.logger import logger
 
 
 class WebSearchInput(BaseModel):
-    """Public, model-visible search arguments."""
+    """公开的、模型可见的搜索参数。"""
 
     query: str = Field(
         ...,
@@ -46,7 +46,7 @@ def _normalized_results(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def create_tavily_search_tool() -> BaseTool:
-    """Create a timeout-bounded Tavily tool with custom progress streaming."""
+    """创建一个带有自定义进度流的超时限制Tavily工具。"""
 
     if not settings.tavily_api_key:
         raise ConfigurationError("TAVILY_API_KEY is not configured")
@@ -110,7 +110,7 @@ def create_tavily_search_tool() -> BaseTool:
 
 
 def get_default_tools() -> list[BaseTool]:
-    """Return configured tools, explicitly degrading when search is disabled."""
+    """返回配置的工具，当搜索禁用时明确降级。"""
 
     if not settings.tavily_api_key:
         logger.warning("TAVILY_API_KEY is not configured; search tool disabled")

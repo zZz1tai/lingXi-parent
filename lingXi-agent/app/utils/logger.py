@@ -1,8 +1,8 @@
 """
-Unified logging configuration.
+统一日志配置模块。
 
-Provides a consistent log format with timestamps, log levels,
-module names, and optional request IDs for tracing.
+提供一致的日志格式，包含时间戳、日志级别、
+模块名称以及可选的请求 ID 用于链路追踪。
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ _request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
 
 
 class _RequestIdFilter(logging.Filter):
-    """Injects a request_id into every log record.
+    """向每条日志记录注入 request_id。
 
-    If the record already carries a ``request_id`` attribute it is kept;
-    otherwise a default ``"-"`` placeholder is used so the format string
-    never raises ``KeyError``.
+    如果记录已经携带了 ``request_id`` 属性，则保留原值；
+    否则使用默认的 ``"-"`` 占位符，确保格式字符串
+    不会抛出 ``KeyError``。
     """
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
@@ -33,11 +33,11 @@ class _RequestIdFilter(logging.Filter):
 
 
 def setup_logger(name: str = "agent_service") -> logging.Logger:
-    """Create and configure the application logger.
+    """创建并配置应用日志记录器。
 
-    Returns a logger with a single stdout handler and the standard
-    format.  Calling this function multiple times with the same *name*
-    is safe — existing handlers are reused.
+    返回一个带有单一 stdout 处理程序和标准格式的日志记录器。
+    多次使用相同 *name* 调用此函数是安全的——
+    现有的处理程序将被复用。
     """
     logger = logging.getLogger(name)
 
@@ -52,30 +52,30 @@ def setup_logger(name: str = "agent_service") -> logging.Logger:
     return logger
 
 
-# Module-level logger instance — import and use directly.
+# 模块级日志实例，业务代码可直接导入使用。
 logger = setup_logger()
 
 
 def generate_request_id() -> str:
-    """Generate a short unique request identifier for log tracing."""
+    """生成用于日志追踪的短唯一请求标识符。"""
     return uuid4().hex[:12]
 
 
 def set_request_id(request_id: str) -> Token[str]:
-    """Bind a request ID to the current async execution context."""
+    """将请求 ID 绑定到当前异步执行上下文。"""
     return _request_id_context.set(request_id)
 
 
 def reset_request_id(token: Token[str]) -> None:
-    """Restore the request ID context after a request completes."""
+    """请求完成后恢复请求 ID 上下文。"""
     _request_id_context.reset(token)
 
 
 def get_request_id() -> str:
-    """Return the request ID bound to the current execution context."""
+    """返回绑定到当前执行上下文的请求 ID。"""
     return _request_id_context.get()
 
 
 def bind_request_id(log_record: logging.LogRecord, request_id: str) -> None:
-    """Backward-compatible helper for explicitly constructed log records."""
+    """向后兼容的辅助函数，用于显式构造日志记录。"""
     log_record.request_id = request_id  # type: ignore[attr-defined]

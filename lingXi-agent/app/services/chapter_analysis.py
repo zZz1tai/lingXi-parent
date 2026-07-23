@@ -1,8 +1,8 @@
 """
-Chapter analysis service - migrated from Java AiVideoChapterAnalysisWorker.
+章节分析服务 - 从 Java AiVideoChapterAnalysisWorker 迁移而来。
 
-Handles source unit building, LLM prompt construction, and JSON validation
-for converting novel chapters into structured story bibles.
+负责源单元构建、LLM提示词构建和JSON验证，
+用于将小说章节转换为结构化的故事圣经。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any, Optional
 from app.services.video_capabilities import normalize_video_duration_ms
 
 
-# ── Constants ────────────────────────────────────────────────────────────────
+# ── 常量定义 ────────────────────────────────────────────────────────────────
 
 PROMPT_VERSION = "agent-story-bible-v1"
 MAX_SOURCE_UNIT_NON_WHITESPACE_CHARS = 80
@@ -35,10 +35,11 @@ GENERIC_CHARACTER_ALIASES = {
 }
 
 
-# ── Data Classes ─────────────────────────────────────────────────────────────
+# ── 数据类 ──────────────────────────────────────────────────────────────────
 
 @dataclass
 class SourceUnit:
+    """源单元数据类，表示小说文本的最小处理单元。"""
     id: str
     order: int
     paragraph_no: int
@@ -50,11 +51,11 @@ def build_scene_segments(
     scene_break_ids: list[str],
     max_units_per_scene: int,
 ) -> list[list[SourceUnit]]:
-    """Expand semantic scene-end hints into an exact source-unit partition.
+    """将语义场景结束提示展开为精确的源单元分区。
 
-    Unknown IDs are ignored, duplicates and ordering are normalized, the final
-    unit is always covered, and oversized semantic scenes are split by the
-    server instead of relying on the model to enumerate every source unit.
+    未知ID将被忽略，重复项和顺序将被规范化，
+    最终单元始终被覆盖，超大语义场景由服务器分割，
+    而不是依赖模型枚举每个源单元。
     """
 
     if not source_units:
@@ -104,12 +105,14 @@ def build_scene_segments(
 
 @dataclass
 class SourceRange:
+    """源范围数据类，表示段落的起始和结束位置。"""
     paragraph_from: int
     paragraph_to: int
 
 
 @dataclass
 class SceneDialogueRegistry:
+    """场景对白注册表，管理场景内所有对白的ID映射和引用关系。"""
     scene_no: int
     scene_dialogues: list[dict] = field(default_factory=list)
     by_model_id: dict[str, dict] = field(default_factory=dict)
@@ -119,13 +122,14 @@ class SceneDialogueRegistry:
     dialogues: list[dict] = field(default_factory=list)
 
 
-# ── Text Processing ──────────────────────────────────────────────────────────
+# ── 文本处理 ────────────────────────────────────────────────────────────────
 
 SENTENCE_BOUNDARY_CHARS = set('\u3002\uff01\uff1f!?\uff1b;')
 CLOSING_QUOTE_CHARS = set('\u201d\u2019"\')\u3011\u3009')
 
 
 def _is_sentence_boundary(paragraph: str, index: int, char: str) -> bool:
+    """判断指定字符是否为句子边界。"""
     if char in SENTENCE_BOUNDARY_CHARS:
         return True
     if char == '.':
@@ -140,20 +144,24 @@ def _is_sentence_boundary(paragraph: str, index: int, char: str) -> bool:
 
 
 def _is_closing_quote(char: str) -> bool:
+    """判断指定字符是否为右引号。"""
     return char in CLOSING_QUOTE_CHARS
 
 
 def _is_soft_unit_boundary(char: str) -> bool:
+    """判断指定字符是否为软单元边界（如逗号、顿号等）。"""
     return char in ('，', ',', '、', '：', ':')
 
 
 def _add_non_blank(values: list[str], value: str) -> None:
+    """向列表添加非空白值。"""
     normalized = (value or "").strip()
     if normalized:
         values.append(normalized)
 
 
 def split_sentences(paragraph: str) -> list[str]:
+    """将段落分割为句子列表。"""
     sentences: list[str] = []
     current: list[str] = []
     index = 0
@@ -181,6 +189,7 @@ def split_sentences(paragraph: str) -> list[str]:
 
 
 def find_long_unit_cut(text: str) -> int:
+    """找到长文本的最佳切割位置，优先在软边界处切割。"""
     non_whitespace_count = 0
     last_soft_cut = -1
     index = 0
@@ -197,6 +206,7 @@ def find_long_unit_cut(text: str) -> int:
 
 
 def add_length_bounded_units(source_units: list[SourceUnit], paragraph_no: int, sentence: str) -> None:
+    """将句子分割为长度受限的源单元并添加到列表中。"""
     remaining = (sentence or "").strip()
     while remaining:
         cut = find_long_unit_cut(remaining)
@@ -213,6 +223,7 @@ def add_length_bounded_units(source_units: list[SourceUnit], paragraph_no: int, 
 
 
 def build_source_units(source_text: str) -> list[SourceUnit]:
+    """从源文本构建源单元列表。"""
     source_units: list[SourceUnit] = []
     if not source_text or not source_text.strip():
         return source_units
@@ -230,9 +241,10 @@ def build_source_units(source_text: str) -> list[SourceUnit]:
     return source_units
 
 
-# ── Prompt Building ──────────────────────────────────────────────────────────
+# ── 提示词构建 ──────────────────────────────────────────────────────────────
 
 def _numbered_source_units(source_units: list[SourceUnit]) -> str:
+    """生成带编号的源单元文本表示。"""
     parts = []
     for su in source_units:
         parts.append(f"[{su.id}|P{su.paragraph_no}] {su.text}")
@@ -240,6 +252,7 @@ def _numbered_source_units(source_units: list[SourceUnit]) -> str:
 
 
 def _project_character_canon(project_characters: list[dict] | None) -> str:
+    """生成项目角色规范的JSON字符串。"""
     canon = []
     if project_characters:
         for ch in project_characters:
@@ -262,7 +275,7 @@ def build_planning_context(
     source_units: list[SourceUnit],
     project_characters: list[dict] | None = None,
 ) -> str:
-    """Build conflict-free reference data for the chapter-skeleton model stage."""
+    """为章节骨架模型阶段构建无冲突的参考数据。"""
 
     return (
         "PROJECT CHARACTER CANON (reference data):\n"
@@ -279,6 +292,7 @@ def build_prompt(
     project_characters: list[dict] | None = None,
     video_model: str = "",
 ) -> str:
+    """构建用于生成故事圣经的LLM提示词。"""
     minimum_shot_count = max(2, (len(source_units) + 1) // 2)
     normalized_duration_options = sorted(
         {
@@ -357,9 +371,10 @@ def build_prompt(
     )
 
 
-# ── JSON Validation ──────────────────────────────────────────────────────────
+# ── JSON 校验 ───────────────────────────────────────────────────────────────
 
 def _extract_json(text: str) -> str:
+    """从文本中提取JSON对象。"""
     start = text.find('{')
     end = text.rfind('}')
     if start < 0 or end <= start:
@@ -368,20 +383,24 @@ def _extract_json(text: str) -> str:
 
 
 def _require_text(node: dict, field_name: str, path: str) -> None:
+    """验证字典中指定字段是否存在非空文本值。"""
     value = node.get(field_name, "")
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{path} 缺少 {field_name}")
 
 
 def _normalize_character_key(key: str) -> str:
+    """规范化角色键名（去除首尾空格并转为小写）。"""
     return (key or "").strip().lower()
 
 
 def _is_generic_character_alias(alias: str) -> bool:
+    """判断指定别名是否为通用角色别名（如代词、亲属称谓等）。"""
     return _normalize_character_key(alias) in GENERIC_CHARACTER_ALIASES
 
 
 def _sanitize_character_aliases(aliases: Any) -> list[str]:
+    """清理和规范化角色别名列表，去除通用别名和重复项。"""
     if not aliases:
         return []
     if isinstance(aliases, str):
@@ -402,6 +421,7 @@ def _sanitize_character_aliases(aliases: Any) -> list[str]:
 
 
 def _character_reference_key(character: Any) -> str:
+    """从角色对象中提取参考键名。"""
     if character is None:
         return ""
     if isinstance(character, (str, int, float)):
@@ -421,7 +441,7 @@ def _normalize_visible_characters(
     identity_owner_by_key: dict[str, str],
     shot_path: str,
 ) -> list[str]:
-    """Resolve visible-character names/aliases to canonical chapter identities."""
+    """将可见角色的名称/别名解析为规范的章节身份。"""
     if not isinstance(characters, list):
         raise ValueError(f"{shot_path} characters 必须是数组")
 
@@ -445,6 +465,7 @@ def _normalize_visible_characters(
 
 
 def _first_non_blank(*values: Any) -> str:
+    """返回第一个非空白值。"""
     for value in values:
         text = str(value).strip() if value is not None else ""
         if text:
@@ -453,12 +474,12 @@ def _first_non_blank(*values: Any) -> str:
 
 
 def _infer_missing_characters_from_scenes(document: dict) -> None:
-    """Add minimal identities for named people omitted by chapter planning.
+    """为章节规划遗漏的命名人物添加最小身份信息。
 
-    Scene generation sees the assigned source text and can legitimately discover
-    supporting characters that the compact planning response missed.  Keeping
-    this reconciliation deterministic avoids asking the model to rewrite an
-    otherwise valid scene merely to repeat that character in the chapter list.
+    场景生成可以看到分配的源文本，并可以合法地发现
+    精简规划响应遗漏的配角。保持此协调的确定性
+    可以避免要求模型重写否则有效的场景，
+    仅仅是为了在章节列表中重复该角色。
     """
 
     characters = document.get("characters")
@@ -624,6 +645,7 @@ def _infer_missing_characters_from_scenes(document: dict) -> None:
 
 
 def _canonicalize_dialogue_fields(dialogue: dict) -> None:
+    """规范化对白字段，确保speaker和line字段存在。"""
     speaker = _first_non_blank(
         dialogue.get("speaker"),
         dialogue.get("character"),
@@ -642,6 +664,7 @@ def _canonicalize_dialogue_fields(dialogue: dict) -> None:
 
 
 def _normalize_dialogue_fields(dialogue: dict, dialogue_path: str) -> None:
+    """验证对白对象包含所有必需字段。"""
     _canonicalize_dialogue_fields(dialogue)
     _require_text(dialogue, "speaker", dialogue_path)
     _require_text(dialogue, "line", dialogue_path)
@@ -650,10 +673,12 @@ def _normalize_dialogue_fields(dialogue: dict, dialogue_path: str) -> None:
 
 
 def _normalize_dialogue_line(line: Any) -> str:
+    """规范化对白文本，合并空白字符。"""
     return re.sub(r"\s+", " ", str(line or "").strip())
 
 
 def _normalize_scene_dialogues(scene: dict, scene_no: int, scene_path: str) -> SceneDialogueRegistry:
+    """规范化场景对白，建立ID映射关系。"""
     raw_dialogues = scene.get("dialogues")
     if raw_dialogues is None or raw_dialogues == "" or raw_dialogues == []:
         dialogues = []
@@ -702,6 +727,7 @@ def _normalize_shot_source_units(
     covered_ids: set[str],
     shot_path: str,
 ) -> SourceRange:
+    """规范化镜头的源单元引用，验证连续性和覆盖范围。"""
     raw_ids = shot.get("sourceUnitIds", [])
     if not isinstance(raw_ids, list) or len(raw_ids) == 0 or len(raw_ids) > 2:
         raise ValueError(f"{shot_path} sourceUnitIds 必须包含1至2个单元ID")
@@ -740,6 +766,7 @@ def _normalize_shot_dialogue(
     used_ids: set[str],
     shot_path: str,
 ) -> None:
+    """规范化镜头的对白引用，确保每个对白只被引用一次。"""
     raw_dialogues = shot.get("dialogues") or shot.get("dialogue")
     dialogue_items = []
     if raw_dialogues is None or raw_dialogues == "" or raw_dialogues == []:
@@ -846,12 +873,11 @@ def _materialize_character_reference_order(
     identity_owner_by_key: dict[str, str],
     shot_path: str,
 ) -> None:
-    """Mirror the exact character-reference order materialized by Java.
+    """镜像Java实现的精确角色参考顺序。
 
-    Java sends visible ``shot.characters`` first and then adds the speakers of
-    the shot dialogues when those identities are not already present. Persisting
-    this canonical order lets the keyframe prompt number the same images that
-    the media gateway will actually receive.
+    Java首先发送可见的 ``shot.characters``，然后在这些身份尚未存在时
+    添加镜头对白的说话者。持久化此规范顺序允许关键帧提示词
+    编号媒体网关实际接收的相同图像。
     """
 
     reference_order: list[str] = []
@@ -892,6 +918,7 @@ def _find_dialogues(
     match_speaker: bool,
     match_line: bool,
 ) -> list[dict]:
+    """在注册表中查找匹配的对白。"""
     matches: list[dict] = []
     for dialogue in registry.dialogues:
         if match_speaker and speaker != _normalize_character_key(dialogue.get("speaker", "")):
@@ -906,6 +933,7 @@ def _create_inferred_scene_dialogue(
     registry: SceneDialogueRegistry,
     shot_dialogue: dict,
 ) -> dict:
+    """根据镜头对白创建推断的场景对白。"""
     canonical_id = f"S{registry.scene_no}D{len(registry.dialogues) + 1}"
     dialogue = {
         "dialogueId": canonical_id,
@@ -928,6 +956,7 @@ def _resolve_shot_dialogue_by_content(
     shot_path: str,
     missing_reference_id: bool,
 ) -> Optional[dict]:
+    """根据对白内容解析镜头对白引用。"""
     speaker = _normalize_character_key(shot_dialogue.get("speaker", ""))
     line = _normalize_dialogue_line(shot_dialogue.get("line", ""))
 
@@ -964,6 +993,7 @@ def _validate_every_scene_dialogue_used(
     used_ids: set[str],
     scene_path: str,
 ) -> None:
+    """验证场景中的每句对白都恰好被一个镜头使用。"""
     if len(used_ids) == len(registry.canonical_ids):
         return
     missing = [did for did in registry.canonical_ids if did not in used_ids]
@@ -973,16 +1003,19 @@ def _validate_every_scene_dialogue_used(
 
 
 def _preserve_model_declared_value(video_plan: dict, source_field: str, audit_field: str) -> None:
+    """保存模型声明的原始值到审计字段。"""
     declared_value = video_plan.get(source_field)
     if declared_value is not None:
         video_plan[audit_field] = declared_value
 
 
 def _prompt_text(value: Any) -> str:
+    """规范化提示词文本，合并空白字符。"""
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
 def _bounded_prompt(value: str, limit: int) -> str:
+    """将提示词文本截断到指定长度限制。"""
     normalized = _prompt_text(value)
     if len(normalized) <= limit:
         return normalized
@@ -990,17 +1023,18 @@ def _bounded_prompt(value: str, limit: int) -> str:
 
 
 def _capture_model_declared_prompt(node: dict, field_name: str, audit_field_name: str) -> str:
+    """捕获模型声明的提示词并保存到审计字段。"""
     if audit_field_name in node:
         return _prompt_text(node.get(audit_field_name))
     declared = _prompt_text(node.get(field_name))
-    # Keep an explicit empty sentinel when the model omitted the field. This
-    # makes the deterministic finalizer idempotent on re-validation: a final
-    # generated prompt can never be mistaken for a later model declaration.
+    # 模型省略字段时保留显式空值标记，使确定性收尾逻辑在重复校验时保持幂等；
+    # 最终生成的提示词不会被误判为模型后来声明的原始值。
     node[audit_field_name] = declared
     return declared
 
 
 def _join_negative_prompt(*parts: Any) -> str:
+    """合并多个负面提示词部分为单个字符串。"""
     unique: list[str] = []
     seen: set[str] = set()
     for part in parts:
@@ -1012,6 +1046,7 @@ def _join_negative_prompt(*parts: Any) -> str:
 
 
 def _finalize_character_reference_prompts(character: dict) -> None:
+    """最终确定角色参考提示词。"""
     declared_positive = _capture_model_declared_prompt(
         character,
         "characterReferencePrompt",
@@ -1048,6 +1083,7 @@ def _finalize_character_reference_prompts(character: dict) -> None:
 
 
 def _finalize_scene_reference_prompts(scene: dict) -> None:
+    """最终确定场景参考提示词。"""
     declared_positive = _capture_model_declared_prompt(
         scene,
         "sceneImagePrompt",
@@ -1080,6 +1116,7 @@ def _finalize_scene_reference_prompts(scene: dict) -> None:
 
 
 def _finalize_shot_keyframe_prompts(shot: dict) -> None:
+    """最终确定镜头关键帧提示词。"""
     declared_positive = _capture_model_declared_prompt(
         shot,
         "keyframePrompt",
@@ -1134,7 +1171,7 @@ def _finalize_shot_keyframe_prompts(shot: dict) -> None:
 
 
 def finalize_asset_prompts(document: dict) -> None:
-    """Materialize final, provider-ready image prompts in a deterministic way."""
+    """以确定性方式最终确定供提供商使用的图像提示词。"""
 
     document["promptVersion"] = PROMPT_VERSION
     for character in document.get("characters", []):
@@ -1151,6 +1188,7 @@ def validate_and_normalize_prompt_contract(
     source_units: list[SourceUnit],
     video_model: str = "",
 ) -> None:
+    """验证和规范化提示词契约，确保所有字段符合要求。"""
     if not source_units:
         raise ValueError("章节原文为空，无法校验视频镜头计划")
 
@@ -1297,7 +1335,7 @@ def validate_document(
     source_units: list[SourceUnit],
     video_model: str = "",
 ) -> dict:
-    """Validate and normalize an already-decoded story-bible document."""
+    """验证和规范化已解码的故事圣经文档。"""
 
     if not isinstance(document, dict):
         raise ValueError("模型未返回符合约定的故事圣经 JSON")
@@ -1317,16 +1355,17 @@ def parse_and_validate(
     source_units: list[SourceUnit],
     video_model: str = "",
 ) -> dict:
-    """Compatibility entry point for validating a raw model response."""
+    """验证原始模型响应的兼容性入口点。"""
 
     json_str = _extract_json(model_response)
     document = json.loads(json_str)
     return validate_document(document, source_units, video_model)
 
 
-# ── Character Code ───────────────────────────────────────────────────────────
+# ── 角色编码 ────────────────────────────────────────────────────────────────
 
 def build_character_code(character_name: str) -> str:
+    """根据角色名称生成项目级身份编码。"""
     normalized = _normalize_character_key(character_name)
     if not normalized:
         raise ValueError("人物名称不能为空，无法建立项目级身份编码")

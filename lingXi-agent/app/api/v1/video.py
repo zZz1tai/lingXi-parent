@@ -1,8 +1,8 @@
 """
-Video generation API endpoints.
+视频生成API端点模块。
 
-Provides text-to-image and image-to-video generation via DashScope.
-Migrated from Java aiVedio module to centralize DashScope API calls in Python.
+提供通过DashScope进行文本到图像和图像到视频的生成服务。
+从Java aiVedio模块迁移而来，用于在Python中集中管理DashScope API调用。
 """
 
 from __future__ import annotations
@@ -40,37 +40,36 @@ from app.utils.logger import logger
 router = APIRouter(prefix="/api/v1/video", tags=["video"])
 
 
-# ── Constants ────────────────────────────────────────────────────────────────
+# ── 常量定义 ────────────────────────────────────────────────────────────────
 
-# Native DashScope paths. The origin and optional gateway prefix come from
-# request.base_url so Java can select the provider endpoint without changing
-# this service.
+# DashScope 原生接口路径。域名和可选网关前缀取自 request.base_url，
+# 因而 Java 可以切换模型提供方地址，而无需修改本服务。
 IMAGE_GENERATION_PATH = "/services/aigc/multimodal-generation/generation"
 VIDEO_SYNTHESIS_PATH = "/services/aigc/video-generation/video-synthesis"
 TASK_QUERY_PATH = "/tasks"
 MAX_REFERENCE_IMAGE_COUNT = 5
 CHARACTER_REFERENCE_ASSET_TYPE = "CHARACTER_REFERENCE"
 
-# Model-specific prompt limits
+# 不同模型的提示词长度限制
 IMAGE_PROMPT_LIMIT = 2000
 VIDEO_NEGATIVE_PROMPT_LIMIT = 500
 ProviderResponseModel = TypeVar("ProviderResponseModel", bound=BaseModel)
 
 
 class _ProviderResponseError(ValueError):
-    """A 2xx provider response did not match the transport contract."""
+    """当提供商返回2xx响应但不符合传输契约时抛出的异常。"""
 
-# Timeout settings (seconds)
+# 超时配置（秒）
 HTTP_CONNECT_TIMEOUT = 10
 HTTP_READ_TIMEOUT_IMAGE = 180  # 3 minutes for image generation
 HTTP_READ_TIMEOUT_VIDEO_SUBMIT = 30
 HTTP_READ_TIMEOUT_VIDEO_QUERY = 30
 
 
-# ── Helper Functions ─────────────────────────────────────────────────────────
+# ── 辅助函数 ────────────────────────────────────────────────────────────────
 
 def _aspect_ratio_to_size(aspect_ratio: str) -> str:
-    """Convert aspect ratio string to pixel size for DashScope."""
+    """将宽高比字符串转换为DashScope所需的像素尺寸。"""
     mapping = {
         "9:16": "720*1280",
         "1:1": "1024*1024",
@@ -80,7 +79,7 @@ def _aspect_ratio_to_size(aspect_ratio: str) -> str:
 
 
 def _resolve_image_aspect_ratio(request: GenerateImageRequest) -> ImageAspectRatio:
-    """Apply asset-specific image layout rules only in the Python AI layer."""
+    """在Python AI层中应用特定于资源类型的图像布局规则。"""
 
     if request.asset_type == CHARACTER_REFERENCE_ASSET_TYPE:
         return ImageAspectRatio.LANDSCAPE_16_9
@@ -88,17 +87,16 @@ def _resolve_image_aspect_ratio(request: GenerateImageRequest) -> ImageAspectRat
 
 
 def _is_retryable_status(status_code: int) -> bool:
-    """Check if HTTP status code indicates a retryable error."""
+    """检查HTTP状态码是否表示可重试的错误。"""
     return status_code in (408, 429) or status_code >= 500
 
 
 def _normalize_api_base_url(base_url: str) -> str:
-    """Normalize a configured provider URL to a native DashScope API base.
+    """将配置的提供商URL规范化为原生DashScope API基础URL。
 
-    Older Java configuration commonly supplies DashScope's OpenAI-compatible
-    ``/compatible-mode/v1`` base. Image and video APIs live under the native
-    ``/api/v1`` tree, so that well-known suffix is converted deterministically.
-    Custom gateway prefixes are otherwise preserved.
+    旧版Java配置通常提供DashScope的OpenAI兼容模式``/compatible-mode/v1``基础地址。
+    图像和视频API位于原生``/api/v1``树下，因此该已知后缀会被确定性地转换。
+    自定义网关前缀在其他情况下会被保留。
     """
     raw_url = (base_url or "").strip().rstrip("/")
     if not raw_url:
@@ -124,14 +122,14 @@ def _normalize_api_base_url(base_url: str) -> str:
 
 
 def _build_api_url(base_url: str, endpoint_path: str) -> str:
-    """Join a normalized API base and one native endpoint path."""
+    """将规范化的API基础地址与原生端点路径拼接。"""
     normalized_base = _normalize_api_base_url(base_url)
     normalized_path = "/" + endpoint_path.lstrip("/")
     return normalized_base + normalized_path
 
 
 def _build_task_query_url(base_url: str, task_id: str) -> str:
-    """Build a task URL without allowing a task ID to alter the URL path."""
+    """构建任务查询URL，防止任务ID篡改URL路径。"""
     encoded_task_id = quote(task_id.strip(), safe="")
     if not encoded_task_id:
         raise ValueError("task_id must not be blank")
@@ -139,7 +137,7 @@ def _build_task_query_url(base_url: str, task_id: str) -> str:
 
 
 def _http_timeout(read_timeout: float) -> httpx.Timeout:
-    """Use the dedicated connect timeout instead of applying read time to all phases."""
+    """使用专用的连接超时，而不是将读取超时应用于所有阶段。"""
     return httpx.Timeout(
         connect=float(HTTP_CONNECT_TIMEOUT),
         read=float(read_timeout),
@@ -149,7 +147,7 @@ def _http_timeout(read_timeout: float) -> httpx.Timeout:
 
 
 def _validated_provider_url(base_url: str, endpoint_path: str) -> str:
-    """Build and fail-closed validate one native provider endpoint."""
+    """构建并进行失败关闭验证的原生提供商端点。"""
 
     return validate_outbound_http_url(_build_api_url(base_url, endpoint_path))
 
@@ -159,7 +157,7 @@ def _validated_task_query_url(base_url: str, task_id: str) -> str:
 
 
 def _provider_http_status(status_code: int) -> int:
-    """Return a meaningful gateway status for a non-success provider response."""
+    """为非成功提供商响应返回有意义的网关状态码。"""
 
     return status_code if 400 <= status_code <= 599 else 502
 
@@ -168,7 +166,7 @@ def _parse_provider_response(
     response: httpx.Response,
     response_model: type[ProviderResponseModel],
 ) -> ProviderResponseModel:
-    """Decode and validate a successful provider response without leaking its body."""
+    """解码并验证成功的提供商响应，不泄露其内容体。"""
 
     try:
         payload = response.json()
@@ -180,7 +178,7 @@ def _parse_provider_response(
         raise _ProviderResponseError("provider response failed validation") from exc
 
 
-# ── Image Generation Endpoint ────────────────────────────────────────────────
+# ── 图片生成接口 ────────────────────────────────────────────────────────────
 
 @router.post("/generate-image", response_model=GenerateImageResponse)
 async def generate_image(
@@ -188,9 +186,9 @@ async def generate_image(
     response: Response,
     client: Annotated[httpx.AsyncClient, Depends(get_http_client)],
 ) -> GenerateImageResponse:
-    """Generate an image from text prompt using DashScope QwenImage.
+    """使用DashScope QwenImage从文本提示生成图像。
 
-    This is a synchronous endpoint that waits for the image to be generated.
+    这是一个同步端点，等待图像生成完成。
     """
     aspect_ratio = _resolve_image_aspect_ratio(request)
     logger.info(
@@ -222,17 +220,16 @@ async def generate_image(
             status_code=400,
         )
 
-    # Build content array (reference images first, then text)
+    # 组装多模态内容：参考图在前，文本提示词在后。
     content: list[dict[str, str]] = []
     if reference_image_urls:
-        # Preserve all validated references and their order. Java sends up to
-        # four character references followed by the scene reference, which
-        # must remain last because it controls the output aspect ratio.
+        # 保留所有已校验参考图及其顺序。Java 最多先传四张角色参考图，
+        # 再传场景参考图；场景图必须保持在最后，因为它决定输出宽高比。
         for url in reference_image_urls:
             content.append({"image": url})
     content.append({"text": request.prompt})
 
-    # Build request body
+    # 按提供方协议组装请求体。
     body: dict[str, Any] = {
         "model": request.model,
         "input": {
@@ -349,7 +346,7 @@ async def generate_image(
         )
 
 
-# ── Video Submission Endpoint ────────────────────────────────────────────────
+# ── 视频任务提交接口 ────────────────────────────────────────────────────────
 
 @router.post("/submit-video", response_model=SubmitVideoResponse)
 async def submit_video(
@@ -357,9 +354,9 @@ async def submit_video(
     response: Response,
     client: Annotated[httpx.AsyncClient, Depends(get_http_client)],
 ) -> SubmitVideoResponse:
-    """Submit an image-to-video generation task through the active provider adapter.
+    """通过活动的提供商适配器提交图像到视频生成任务。
 
-    This is an async endpoint that returns a task ID for polling.
+    这是一个异步端点，返回任务ID用于轮询。
     """
     logger.info(
         "Submitting video task | provider=%s | model_length=%d | duration_ms=%d | prompt_len=%d | character_refs=%d | scene_ref=%s",
@@ -371,7 +368,7 @@ async def submit_video(
         bool(request.scene_reference_image_url),
     )
 
-    # Normalize duration
+    # 将用户时长转换为当前模型支持的合法档位。
     duration_ms = _normalize_duration_ms(request.duration_ms, request.model)
 
     negative_prompt = request.negative_prompt or ""
@@ -441,7 +438,7 @@ async def submit_video(
         if _should_include_duration(request.model):
             parameters["duration"] = duration_ms // 1000
 
-    # Never silently truncate content after the user has reviewed and confirmed it.
+    # 用户审核确认后的内容不得静默截断，超限时应明确返回错误。
     prompt_limit = _get_prompt_limit(request.model)
     if len(prompt) > prompt_limit:
         response.status_code = 400
@@ -588,7 +585,7 @@ async def submit_video(
         )
 
 
-# ── Video Query Endpoint ─────────────────────────────────────────────────────
+# ── 视频任务查询接口 ────────────────────────────────────────────────────────
 
 @router.post("/query-video", response_model=QueryVideoResponse)
 async def query_video(
@@ -596,13 +593,13 @@ async def query_video(
     response: Response,
     client: Annotated[httpx.AsyncClient, Depends(get_http_client)],
 ) -> QueryVideoResponse:
-    """Query the status of a video generation task.
+    """查询视频生成任务的状态。
 
     Args:
-        request: Query request with API key and task ID.
+        request: 包含API密钥和任务ID的查询请求。
 
     Returns:
-        Task status and video URL if completed.
+        任务状态和完成后的视频URL。
     """
     logger.info("Querying video task | task_id_length=%d", len(request.task_id))
 
@@ -656,7 +653,7 @@ async def query_video(
         status_str = output.task_status
         video_url = output.resolved_video_url
 
-        # Map status string to enum
+        # 将提供方状态字符串映射为稳定的内部枚举。
         try:
             status = TaskStatus(status_str)
         except ValueError:

@@ -1,8 +1,8 @@
-"""Prompt templates for the split chapter-analysis workflow.
+"""拆分章节分析工作流的提示模板。
 
-The filename intentionally follows the project's requested ``promt.py`` name.
-Keep model-facing instructions here so orchestration and validation code remain
-free of large embedded prompt strings.
+文件名有意遵循项目要求的 ``promt.py`` 名称。
+将模型面向的指令放在这里，以便编排和验证代码保持
+没有大型嵌入式提示字符串。
 """
 
 from __future__ import annotations

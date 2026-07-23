@@ -37,6 +37,9 @@ public class AiVideoProviderTaskPoller
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    /**
+     * 定时轮询视频供应商异步任务状态并处理结果。
+     */
     @Scheduled(fixedDelayString = "${aivideo.video.poll-interval-ms:15000}")
     public void poll()
     {
@@ -101,6 +104,14 @@ public class AiVideoProviderTaskPoller
         }
     }
 
+    /**
+     * 处理视频生成成功的结果，下载视频并更新资产状态。
+     *
+     * @param task         生成任务实体
+     * @param videoUrl     视频下载地址
+     * @param providerCode 供应商编码
+     * @throws Exception 处理失败时抛出异常
+     */
     private void complete(AiVideoGenerationTask task, String videoUrl,
             String providerCode) throws Exception
     {
@@ -132,6 +143,13 @@ public class AiVideoProviderTaskPoller
         });
     }
 
+    /**
+     * 处理视频生成失败的结果，更新资产和任务状态。
+     *
+     * @param task         生成任务实体
+     * @param message      错误信息
+     * @param providerCode 供应商编码
+     */
     private void fail(AiVideoGenerationTask task, String message, String providerCode)
     {
         AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());

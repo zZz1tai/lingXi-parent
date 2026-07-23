@@ -11,6 +11,14 @@ public final class AiVideoImageAspectRatioPolicy
     {
     }
 
+    /**
+     * 根据资产类型和配置的视频比例，解析图片服务支持的画幅比例。
+     * 人物三视图强制使用横屏，其他类型跟随配置比例。
+     *
+     * @param assetType          资产类型
+     * @param configuredVideoRatio 配置的视频比例
+     * @return 图片服务支持的画幅比例
+     */
     public static String resolve(String assetType, String configuredVideoRatio)
     {
         // 人物三视图必须横向并排，不能跟随竖屏成片画幅。

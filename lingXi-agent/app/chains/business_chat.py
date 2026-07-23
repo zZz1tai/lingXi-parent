@@ -1,4 +1,4 @@
-"""Python-owned prompt chains for structured business chat workflows."""
+"""Python 拥有的提示链，用于结构化业务聊天工作流。"""
 
 from __future__ import annotations
 
@@ -49,16 +49,18 @@ SMART_QUESTIONS_PROMPT = ChatPromptTemplate.from_messages(
 
 
 def _json_text(value: Any) -> str:
+    """将任意值转换为紧凑的 JSON 字符串。"""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
 def build_context_analysis_chain(model: BaseChatModel):
-    """Build the LCEL context-analysis chain."""
+    """构建 LCEL 上下文分析链。"""
 
     return CONTEXT_ANALYSIS_PROMPT | model | StrOutputParser()
 
 
 async def analyze_context(model: BaseChatModel, message: str, context_data: Any) -> str:
+    """异步分析上下文并返回分析结果字符串。"""
     chain = build_context_analysis_chain(model)
     return await chain.ainvoke(
         {"message": message, "context_json": _json_text(context_data)}
@@ -70,6 +72,7 @@ async def stream_context_analysis(
     message: str,
     context_data: Any,
 ) -> AsyncIterator[str]:
+    """异步流式分析上下文，逐块生成分析结果。"""
     chain = build_context_analysis_chain(model)
     async for chunk in chain.astream(
         {"message": message, "context_json": _json_text(context_data)}
@@ -79,7 +82,7 @@ async def stream_context_analysis(
 
 
 def build_smart_questions_chain(model: BaseChatModel):
-    """Build the strict LCEL smart-question structured-output chain."""
+    """构建严格的 LCEL 智能问题结构化输出链。"""
 
     parser = JsonOutputParser(pydantic_object=SmartQuestionsOutput)
     chain = SMART_QUESTIONS_PROMPT | model | StrOutputParser() | parser
@@ -90,6 +93,7 @@ async def generate_smart_questions(
     model: BaseChatModel,
     history: list[SmartQuestionHistoryItem],
 ) -> list[str]:
+    """异步生成智能问题列表，基于对话历史。"""
     chain, parser = build_smart_questions_chain(model)
     normalized_history = [
         {"role": item.resolved_role(), "content": item.content}

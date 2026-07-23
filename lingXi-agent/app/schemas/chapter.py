@@ -1,8 +1,7 @@
-"""Structured contract for novel chapter analysis results.
+"""小说章节分析结果的结构化契约。
 
-The model-facing schema intentionally handles only structural concerns.  The
-deterministic checks that depend on source-unit coverage, dialogue identity,
-and shot ordering live in :mod:`app.services.chapter_analysis`.
+模型面向的模式仅处理结构性问题。依赖于源单元覆盖、对话身份和镜头排序的
+确定性检查位于:mod:`app.services.chapter_analysis`中。
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ CharacterText = Annotated[
 
 
 class ChapterProjectCharacter(BaseModel):
-    """Bounded project identity transported from Java for cross-chapter reuse."""
+    """从Java传输的有界项目身份，用于跨章节重用。"""
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
@@ -42,7 +41,7 @@ class ChapterProjectCharacter(BaseModel):
 
 
 class AnalyzeChapterRequest(BaseModel):
-    """Request body for ``POST /api/v1/video/analyze-chapter``."""
+    """``POST /api/v1/video/analyze-chapter``端点的请求体。"""
 
     chapter_title: str = Field(default="", max_length=512)
     source_text: str = Field(..., min_length=1, max_length=100000)
@@ -55,6 +54,7 @@ class AnalyzeChapterRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_runtime_config_bounds(self) -> "AnalyzeChapterRequest":
+        """验证运行时配置边界。"""
         if self.llm_config is None:
             return self
         if len(self.llm_config.api_key) > 8192:
@@ -67,7 +67,7 @@ class AnalyzeChapterRequest(BaseModel):
 
 
 class AnalyzeChapterResponse(BaseModel):
-    """Slim production response for chapter analysis."""
+    """章节分析的精简生产响应。"""
 
     success: bool
     story_bible: Optional[dict[str, Any]] = None
@@ -79,7 +79,7 @@ class AnalyzeChapterResponse(BaseModel):
 
 
 class ChapterContractModel(BaseModel):
-    """Base model that preserves provider fields needed for later auditing."""
+    """保留后续审计所需提供商字段的基础模型。"""
 
     model_config = ConfigDict(
         extra="allow",
@@ -88,6 +88,7 @@ class ChapterContractModel(BaseModel):
 
 
 def _first_non_blank(data: dict[str, Any], *names: str) -> Optional[str]:
+    """从字典中获取第一个非空白值。"""
     for name in names:
         value = data.get(name)
         if value is not None and str(value).strip():
@@ -96,7 +97,7 @@ def _first_non_blank(data: dict[str, Any], *names: str) -> Optional[str]:
 
 
 class ChapterDialogue(ChapterContractModel):
-    """Canonical scene dialogue; ``dialogueId`` may be generated later."""
+    """规范场景对话；``dialogueId``可能在之后生成。"""
 
     dialogue_id: Optional[str] = Field(default=None, alias="dialogueId")
     speaker: NonBlankText
@@ -107,6 +108,7 @@ class ChapterDialogue(ChapterContractModel):
     @model_validator(mode="before")
     @classmethod
     def normalize_provider_aliases(cls, value: Any) -> Any:
+        """规范化提供商别名。"""
         if not isinstance(value, dict):
             return value
         normalized = dict(value)
@@ -120,11 +122,11 @@ class ChapterDialogue(ChapterContractModel):
 
 
 class ShotDialogue(ChapterContractModel):
-    """Dialogue reference embedded in a shot.
+    """嵌入在镜头中的对话引用。
 
-    A shot may reference an existing scene dialogue using only ``dialogueId``.
-    When the scene list omitted a dialogue, ``speaker`` plus ``line`` provide
-    enough information for the deterministic normalizer to add it.
+    镜头可以仅使用``dialogueId``引用现有的场景对话。
+    当场景列表省略对话时，``speaker``加上``line``为确定性规范化器
+    提供足够的信息来添加它。
     """
 
     dialogue_id: Optional[str] = Field(default=None, alias="dialogueId")
@@ -136,6 +138,7 @@ class ShotDialogue(ChapterContractModel):
     @model_validator(mode="before")
     @classmethod
     def normalize_provider_aliases(cls, value: Any) -> Any:
+        """规范化提供商别名。"""
         if not isinstance(value, dict):
             return value
         normalized = dict(value)
@@ -158,8 +161,8 @@ class ChapterCharacter(ChapterContractModel):
     gender: str = ""
     age_range: str = Field(default="", alias="ageRange")
     appearance: str = ""
-    # Historical story-bible data may use either free text or a structured
-    # object/array here; Java persists it as JSON rather than as a scalar.
+    # 历史故事圣经可能在此处使用自由文本，也可能使用结构化对象或数组；
+    # Java 会将它作为 JSON 保存，而不是强制转换为标量。
     personality: Any = ""
     speaking_style: str = Field(default="", alias="speakingStyle")
     visual_prompt_base: NonBlankText = Field(alias="visualPromptBase")
@@ -234,10 +237,10 @@ class ChapterStoryBible(ChapterContractModel):
 
 
 class ChapterAnalysisPlan(ChapterContractModel):
-    """Global chapter facts plus semantic scene-end suggestions from the model.
+    """全局章节事实加上模型提供的语义场景结束建议。
 
-    Source-unit membership is deliberately not model-owned. The service turns
-    these optional break suggestions into a complete, ordered partition.
+    源单元成员关系故意不由模型拥有。服务将这些可选的分段建议
+    转换为完整的、有序的分区。
     """
 
     summary: NonBlankText
@@ -251,14 +254,14 @@ class ChapterAnalysisPlan(ChapterContractModel):
 
 
 def validate_chapter_plan_structure(document: Any) -> dict[str, Any]:
-    """Validate a provider chapter skeleton and return mutable camelCase data."""
+    """验证提供商章节骨架并返回可变的驼峰命名数据。"""
 
     model = ChapterAnalysisPlan.model_validate(document)
     return model.model_dump(by_alias=True, exclude_none=True)
 
 
 def validate_story_bible_structure(document: Any) -> dict[str, Any]:
-    """Validate provider JSON and return a mutable camelCase dictionary."""
+    """验证提供商JSON并返回可变的驼峰命名字典。"""
 
     model = ChapterStoryBible.model_validate(document)
     return model.model_dump(by_alias=True, exclude_none=True)

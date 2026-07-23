@@ -9,7 +9,9 @@ import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage;
 
-/** 将模型临时图片转存到默认文件存储平台，并完成资产与任务。 */
+/**
+ * 图片完成服务，将模型临时图片转存到默认文件存储平台，并完成资产与任务状态更新。
+ */
 @Service
 public class AiVideoImageCompletionService
 {
@@ -22,6 +24,15 @@ public class AiVideoImageCompletionService
     @Autowired
     private IAiVideoAssetService assetService;
 
+    /**
+     * 完成图片生成：转存图片到存储平台，更新资产状态和任务状态。
+     *
+     * @param task 生成任务
+     * @param asset 图片资产
+     * @param imageUrl 模型返回的图片URL
+     * @param updateBy 操作人
+     * @throws Exception 存储或状态更新异常
+     */
     @Transactional(rollbackFor = Exception.class)
     public void complete(AiVideoGenerationTask task, AiVideoAsset asset, String imageUrl, String updateBy) throws Exception
     {
