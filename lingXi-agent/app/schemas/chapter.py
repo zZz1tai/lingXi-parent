@@ -50,6 +50,7 @@ class AnalyzeChapterRequest(BaseModel):
         max_length=500,
     )
     video_model: str = Field(..., min_length=1, max_length=256)
+    scene_concurrency: int = Field(default=2, ge=1, le=8)
     llm_config: Optional[LLMConfig] = None
 
     @model_validator(mode="after")

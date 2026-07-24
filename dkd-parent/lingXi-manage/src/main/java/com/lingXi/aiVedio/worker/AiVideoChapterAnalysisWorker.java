@@ -144,6 +144,7 @@ public class AiVideoChapterAnalysisWorker
                     chapter.getChapterTitle(),
                     chapter.getSourceText(),
                     projectCharacterNodes,
+                    runtimeConfig.getChapterSceneConcurrency(),
                     (stage, progress, message) -> updateStoryBibleProgress(
                             taskId, stage, progress, message));
 

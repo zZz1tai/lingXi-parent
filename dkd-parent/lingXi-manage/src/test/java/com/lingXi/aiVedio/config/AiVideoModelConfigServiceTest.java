@@ -60,6 +60,7 @@ class AiVideoModelConfigServiceTest
         AiVideoModelConfig display = service.getConfig();
 
         assertNull(display.getTextModel());
+        assertEquals(2, display.getChapterSceneConcurrency());
         assertFalse(Boolean.TRUE.equals(display.getApiKeyConfigured()));
         assertThrows(ServiceException.class, service::getRequiredConfig);
     }
@@ -87,6 +88,7 @@ class AiVideoModelConfigServiceTest
         AiVideoModelConfig runtime = service.getRequiredConfig();
         assertEquals(apiKey, runtime.getApiKey());
         assertEquals("deepseek-v4-flash", runtime.getTextModel());
+        assertEquals(2, runtime.getChapterSceneConcurrency());
 
         String originalCiphertext = stored;
         input.setApiKey(null);
@@ -97,12 +99,25 @@ class AiVideoModelConfigServiceTest
         assertEquals("qwen-plus", service.getRequiredConfig().getTextModel());
     }
 
+    @Test
+    void rejectsChapterSceneConcurrencyOutsideSafeRange()
+    {
+        AiVideoModelConfig input = validInput();
+        input.setApiKey("sk-page-secret-1234567890");
+        input.setChapterSceneConcurrency(0);
+        assertThrows(ServiceException.class, () -> service.updateConfig(input, "tester"));
+
+        input.setChapterSceneConcurrency(9);
+        assertThrows(ServiceException.class, () -> service.updateConfig(input, "tester"));
+    }
+
     private AiVideoModelConfig validInput()
     {
         AiVideoModelConfig input = new AiVideoModelConfig();
         input.setWorkspaceBaseUrl(
                 "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
         input.setTextModel("deepseek-v4-flash");
+        input.setChapterSceneConcurrency(2);
         input.setImageModel("qwen-image-2.0-pro");
         input.setVideoProvider("happyhorse");
         input.setVideoModel("happyhorse-1.1-r2v");

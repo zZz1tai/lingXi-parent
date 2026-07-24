@@ -32,6 +32,9 @@ public class AiVideoModelConfig
     /** 文本生成模型名称 */
     private String textModel;
 
+    /** 单个章节内同时生成的场景数量 */
+    private Integer chapterSceneConcurrency;
+
     /** 图片生成模型名称 */
     private String imageModel;
 

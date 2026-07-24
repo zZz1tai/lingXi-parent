@@ -162,12 +162,31 @@ public class ChapterAnalysisClient {
             String sourceText,
             List<ObjectNode> projectCharacters,
             ProgressListener progressListener) {
+        return analyzeChapter(apiKey, model, baseUrl, videoModel, chapterTitle,
+                sourceText, projectCharacters, 2, progressListener);
+    }
+
+    /**
+     * 分析章节并生成结构化故事圣经，并限制单章场景生成并发数。
+     */
+    public AnalysisResult analyzeChapter(
+            String apiKey,
+            String model,
+            String baseUrl,
+            String videoModel,
+            String chapterTitle,
+            String sourceText,
+            List<ObjectNode> projectCharacters,
+            Integer sceneConcurrency,
+            ProgressListener progressListener) {
 
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("chapter_title", chapterTitle);
             body.put("source_text", sourceText);
             body.put("video_model", videoModel);
+            body.put("scene_concurrency", requireRange(
+                    sceneConcurrency, 1, 8, "chapter scene concurrency"));
             if (projectCharacters != null && !projectCharacters.isEmpty()) {
                 body.set("project_characters", objectMapper.valueToTree(projectCharacters));
             }
@@ -254,6 +273,15 @@ public class ChapterAnalysisClient {
         if (value == null || value <= 0) {
             throw new ChapterClientConfigurationException(
                     propertyName + " must be configured as a positive integer");
+        }
+        return value;
+    }
+
+    /** 读取必须落在给定闭区间内的整数配置。 */
+    private int requireRange(Integer value, int minimum, int maximum, String propertyName) {
+        if (value == null || value < minimum || value > maximum) {
+            throw new ChapterClientConfigurationException(
+                    propertyName + " must be between " + minimum + " and " + maximum);
         }
         return value;
     }

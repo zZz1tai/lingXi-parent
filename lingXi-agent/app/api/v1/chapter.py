@@ -215,6 +215,11 @@ async def _run_chapter_analysis(
         len(request.source_text),
         request.project_characters is not None and len(request.project_characters) > 0,
     )
+    logger.info(
+        "Chapter scene concurrency configured | request_id=%s | concurrency=%d",
+        request_id,
+        request.scene_concurrency,
+    )
 
     try:
         if progress_callback is not None:
@@ -293,9 +298,11 @@ async def _run_chapter_analysis(
             profile="chapter-analysis",
         )
         logger.info(
-            "Calling chapter LCEL chain | request_id=%s | timeout_seconds=%d | streaming=true",
+            "Calling chapter LangGraph workflow | request_id=%s | timeout_seconds=%d | "
+            "scene_concurrency=%d | streaming=true",
             request_id,
             request.llm_config.timeout_seconds,
+            request.scene_concurrency,
         )
         analysis_chain = build_chapter_analysis_chain(llm)
         chain_result = await _invoke_with_capacity(
@@ -307,6 +314,7 @@ async def _run_chapter_analysis(
             video_model=request.video_model,
             timeout_seconds=request.llm_config.timeout_seconds,
             progress_callback=progress_callback,
+            scene_concurrency=request.scene_concurrency,
         )
         raw_response = chain_result.raw_response
         story_bible = chain_result.story_bible

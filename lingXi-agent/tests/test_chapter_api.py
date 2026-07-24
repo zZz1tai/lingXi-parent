@@ -177,6 +177,7 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(create_llm.call_args.kwargs["streaming"], True)
         self.assertEqual(0, create_llm.call_args.kwargs["max_retries"])
         self.assertEqual(417, timeout_chain.kwargs["timeout_seconds"])
+        self.assertEqual(2, timeout_chain.kwargs["scene_concurrency"])
         self.assertIn("SOURCE UNITS", timeout_chain.kwargs["planning_context"])
         self.assertNotIn("videoPlan", timeout_chain.kwargs["planning_context"])
         self.assertFalse(response.success)

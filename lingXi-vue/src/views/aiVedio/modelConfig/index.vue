@@ -97,6 +97,17 @@
             <el-form-item label="模型名称" prop="textModel">
               <el-input v-model="form.textModel" placeholder="deepseek-v4-flash" />
             </el-form-item>
+            <el-form-item label="场景并发数" prop="chapterSceneConcurrency">
+              <el-input-number
+                v-model="form.chapterSceneConcurrency"
+                :min="1"
+                :max="8"
+                :step="1"
+                step-strictly
+                controls-position="right"
+              />
+            </el-form-item>
+            <p class="field-note">同一章节最多同时生成的场景数。默认 2；调高可能触发模型限流。</p>
           </section>
 
           <section class="model-card image-card">
@@ -183,6 +194,7 @@ const form = reactive({
   apiKeyMasked: '',
   apiKeyConfigured: false,
   textModel: '',
+  chapterSceneConcurrency: 2,
   imageModel: '',
   videoProvider: '',
   videoModel: '',
@@ -228,6 +240,9 @@ const rules = {
   ],
   apiKey: [{ validator: validateApiKey, trigger: ['blur', 'change'] }],
   textModel: [{ required: true, pattern: modelPattern, message: '模型名称格式不正确', trigger: 'blur' }],
+  chapterSceneConcurrency: [
+    { required: true, type: 'number', min: 1, max: 8, message: '场景并发数必须在 1 到 8 之间', trigger: 'change' }
+  ],
   imageModel: [{ required: true, pattern: modelPattern, message: '模型名称格式不正确', trigger: 'blur' }],
   videoModel: [{ required: true, pattern: modelPattern, message: '模型名称格式不正确', trigger: 'blur' }],
   videoResolution: [{ required: true, message: '请选择分辨率', trigger: 'change' }],
@@ -241,6 +256,9 @@ function applyConfig(data = {}) {
     apiKeyMasked: data.apiKeyMasked || '',
     apiKeyConfigured: Boolean(data.apiKeyConfigured),
     textModel: data.textModel || '',
+    chapterSceneConcurrency: Number.isInteger(Number(data.chapterSceneConcurrency))
+      ? Number(data.chapterSceneConcurrency)
+      : 2,
     imageModel: data.imageModel || '',
     videoProvider: data.videoProvider || 'happyhorse',
     videoModel: data.videoModel || '',
@@ -282,6 +300,7 @@ async function saveConfig() {
     const payload = {
       workspaceBaseUrl: form.workspaceBaseUrl,
       textModel: form.textModel,
+      chapterSceneConcurrency: form.chapterSceneConcurrency,
       imageModel: form.imageModel,
       videoProvider: form.videoProvider,
       videoModel: form.videoModel,
@@ -346,6 +365,8 @@ h1 { margin: 0; font-size: clamp(34px, 5vw, 58px); line-height: .98; letter-spac
 .model-card > p { min-height: 68px; margin-bottom: 22px; font-size: 13px; }
 .adapter-note { min-height: 0 !important; margin: -8px 0 17px !important; color: #778496 !important; font-size: 11px !important; }
 .adapter-note code { color: #ffca82; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.field-note { min-height: 0 !important; margin: -10px 0 0 !important; color: #778496 !important; font-size: 11px !important; }
+.text-card :deep(.el-input-number) { width: 100%; }
 .video-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-top: 4px; }
 .switch-row strong, .switch-row span { display: block; }

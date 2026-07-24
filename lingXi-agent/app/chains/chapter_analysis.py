@@ -1,18 +1,21 @@
-"""专门的 LCEL 工作流，用于结构化章节分析。"""
+"""使用 LangGraph 编排、LCEL 执行模型节点的结构化章节分析工作流。"""
 
 from __future__ import annotations
 
 import asyncio
 import inspect
 import json
+import operator
 import re
 from copy import deepcopy
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 from pydantic import ValidationError
 
 from app.chains.promt import (
@@ -39,6 +42,8 @@ MAX_CONTRACT_REPAIR_ATTEMPTS = 2
 MAX_PLAN_REPAIR_ATTEMPTS = 1
 MAX_SCENE_REPAIR_ATTEMPTS = 2
 MAX_REPAIR_ERROR_CHARS = 4_000
+DEFAULT_SCENE_CONCURRENCY = 2
+MAX_SCENE_CONCURRENCY = 8
 
 ProgressCallback = Callable[[str, int, str], Awaitable[None] | None]
 
@@ -48,6 +53,24 @@ class ChapterAnalysisChainResult:
     """章节分析链的结果数据类。"""
     story_bible: dict[str, Any]
     raw_response: str
+    repair_count: int
+
+
+class _SceneFanoutResult(TypedDict):
+    """单个并行场景节点的确定性输出。"""
+
+    scene_index: int
+    scene: dict[str, Any]
+    repair_count: int
+
+
+class _SceneFanoutState(TypedDict, total=False):
+    """LangGraph 场景 Map-Reduce 子图状态。"""
+
+    scene_tasks: list[dict[str, Any]]
+    scene_task: dict[str, Any]
+    scene_results: Annotated[list[_SceneFanoutResult], operator.add]
+    ordered_scenes: list[dict[str, Any]]
     repair_count: int
 
 
@@ -91,8 +114,11 @@ class ChapterAnalysisChain:
         video_model: str = "",
         timeout_seconds: float | None = None,
         progress_callback: ProgressCallback | None = None,
+        scene_concurrency: int = DEFAULT_SCENE_CONCURRENCY,
     ) -> ChapterAnalysisChainResult:
         """异步调用章节分析链，生成并验证章节故事圣经。"""
+        if scene_concurrency < 1 or scene_concurrency > MAX_SCENE_CONCURRENCY:
+            raise ValueError("章节场景并发数必须在1到8之间")
         config = self._run_config(request_id)
         await self._emit_progress(
             progress_callback,
@@ -120,31 +146,14 @@ class ChapterAnalysisChain:
             progress_callback,
         )
 
-        generated_scenes: list[dict[str, Any]] = []
-        scene_repair_count = 0
-        scene_count = len(analysis_plan["scenes"])
-        for scene_index, scene_plan in enumerate(analysis_plan["scenes"], start=1):
-            scene_units = scene_plan["sourceUnits"]
-            progress = 30 + ((scene_index - 1) * 40 // max(1, scene_count))
-            await self._emit_progress(
-                progress_callback,
-                "SCENE_GENERATING",
-                progress,
-                f"正在生成第{scene_index}/{scene_count}个场景的分镜和对白",
-            )
-            scene, repairs = await self._generate_scene(
-                analysis_plan,
-                scene_plan,
-                scene_units,
-                scene_index,
-                scene_count,
-                config,
-                video_model,
-                timeout_seconds,
-                progress_callback,
-            )
-            generated_scenes.append(scene)
-            scene_repair_count += repairs
+        generated_scenes, scene_repair_count = await self._generate_scenes_with_graph(
+            analysis_plan,
+            config,
+            video_model,
+            timeout_seconds,
+            progress_callback,
+            scene_concurrency,
+        )
 
         assembled_document = self._assemble_document(analysis_plan, generated_scenes)
         raw_response = json.dumps(assembled_document, ensure_ascii=False)
@@ -170,6 +179,143 @@ class ChapterAnalysisChain:
             json.dumps(document, ensure_ascii=False),
             total_repairs,
         )
+
+    async def _generate_scenes_with_graph(
+        self,
+        analysis_plan: dict[str, Any],
+        config: RunnableConfig,
+        video_model: str,
+        timeout_seconds: float | None,
+        progress_callback: ProgressCallback | None,
+        scene_concurrency: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """使用 LangGraph 动态 Fan-out/Fan-in 并发生成全部场景。"""
+
+        scene_count = len(analysis_plan["scenes"])
+        progress_lock = asyncio.Lock()
+        completed_scenes = 0
+
+        def prepare_node(_state: _SceneFanoutState) -> dict[str, Any]:
+            return {}
+
+        def dispatch_scenes(state: _SceneFanoutState) -> list[Send]:
+            return [
+                Send("generate_scene", {"scene_task": scene_task})
+                for scene_task in state["scene_tasks"]
+            ]
+
+        async def generate_scene_node(
+            state: _SceneFanoutState,
+        ) -> dict[str, list[_SceneFanoutResult]]:
+            nonlocal completed_scenes
+            task = state["scene_task"]
+            scene_index = int(task["scene_index"])
+            scene_plan = task["scene_plan"]
+
+            async with progress_lock:
+                current_progress = 30 + (
+                    completed_scenes * 40 // max(1, scene_count)
+                )
+                await self._emit_progress(
+                    progress_callback,
+                    "SCENE_GENERATING",
+                    current_progress,
+                    f"正在并行生成第{scene_index}/{scene_count}个场景的分镜和对白",
+                )
+
+            async def report_local_repair(
+                stage: str,
+                _progress: int,
+                message: str,
+            ) -> None:
+                async with progress_lock:
+                    repair_progress = 30 + (
+                        completed_scenes * 40 // max(1, scene_count)
+                    )
+                    await self._emit_progress(
+                        progress_callback,
+                        stage,
+                        repair_progress,
+                        message,
+                    )
+
+            scene, repairs = await self._generate_scene(
+                analysis_plan,
+                scene_plan,
+                scene_plan["sourceUnits"],
+                scene_index,
+                scene_count,
+                config,
+                video_model,
+                timeout_seconds,
+                report_local_repair,
+            )
+
+            async with progress_lock:
+                completed_scenes += 1
+                completed_progress = 30 + (
+                    completed_scenes * 40 // max(1, scene_count)
+                )
+                await self._emit_progress(
+                    progress_callback,
+                    "SCENE_COMPLETED",
+                    completed_progress,
+                    f"已完成场景{scene_index}，当前{completed_scenes}/{scene_count}",
+                )
+
+            return {
+                "scene_results": [
+                    {
+                        "scene_index": scene_index,
+                        "scene": scene,
+                        "repair_count": repairs,
+                    }
+                ]
+            }
+
+        def collect_scenes_node(state: _SceneFanoutState) -> dict[str, Any]:
+            ordered_results = sorted(
+                state["scene_results"],
+                key=lambda item: item["scene_index"],
+            )
+            return {
+                "ordered_scenes": [item["scene"] for item in ordered_results],
+                "repair_count": sum(
+                    item["repair_count"] for item in ordered_results
+                ),
+            }
+
+        graph = StateGraph(_SceneFanoutState)
+        graph.add_node("prepare", prepare_node)
+        graph.add_node("generate_scene", generate_scene_node)
+        graph.add_node("collect_scenes", collect_scenes_node)
+        graph.add_edge(START, "prepare")
+        graph.add_conditional_edges(
+            "prepare",
+            dispatch_scenes,
+            ["generate_scene"],
+        )
+        graph.add_edge("generate_scene", "collect_scenes")
+        graph.add_edge("collect_scenes", END)
+        scene_graph = graph.compile()
+
+        scene_tasks = [
+            {"scene_index": index, "scene_plan": scene_plan}
+            for index, scene_plan in enumerate(analysis_plan["scenes"], start=1)
+        ]
+        graph_result = await scene_graph.ainvoke(
+            {
+                "scene_tasks": scene_tasks,
+                "scene_results": [],
+            },
+            config={
+                **config,
+                "max_concurrency": scene_concurrency,
+                "run_name": "chapter_scene_fanout",
+                "tags": ["ai-video", "chapter-analysis", "scene-fanout"],
+            },
+        )
+        return graph_result["ordered_scenes"], graph_result["repair_count"]
 
     async def _validate_and_repair_plan(
         self,

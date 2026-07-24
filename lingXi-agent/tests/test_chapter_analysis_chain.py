@@ -274,6 +274,42 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, len(result.story_bible["scenes"]))
         self.assertEqual(4, result.story_bible["videoPlan"]["shotCount"])
 
+    async def test_scene_fanout_respects_configured_concurrency_and_output_order(self) -> None:
+        chain = build_chapter_analysis_chain(StreamingOnlyResponseSequence("unused"))
+        active_calls = 0
+        max_active_calls = 0
+
+        async def generate_scene(*args: Any, **_kwargs: Any):
+            nonlocal active_calls, max_active_calls
+            scene_index = args[3]
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+            try:
+                await asyncio.sleep(0.02 if scene_index % 2 else 0.01)
+                return {"sceneNo": scene_index}, 0
+            finally:
+                active_calls -= 1
+
+        analysis_plan = {
+            "scenes": [
+                {"sceneNo": index, "sourceUnits": []}
+                for index in range(1, 6)
+            ]
+        }
+        with patch.object(chain, "_generate_scene", side_effect=generate_scene):
+            scenes, repairs = await chain._generate_scenes_with_graph(
+                analysis_plan,
+                {},
+                "",
+                None,
+                None,
+                2,
+            )
+
+        self.assertEqual(2, max_active_calls)
+        self.assertEqual([1, 2, 3, 4, 5], [scene["sceneNo"] for scene in scenes])
+        self.assertEqual(0, repairs)
+
     async def test_missing_final_scene_break_is_completed_without_plan_repair(self) -> None:
         incomplete_plan = chapter_plan()
         incomplete_plan["sceneBreaks"] = []
@@ -544,12 +580,13 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
                 "SCENE_GENERATING",
                 "SCENE_REPAIRING",
                 "SCENE_REPAIRING",
+                "SCENE_COMPLETED",
                 "VALIDATING",
                 "FINALIZING",
             ],
             [stage for stage, _, _ in events],
         )
-        self.assertEqual([20, 30, 30, 30, 76, 90], [progress for _, progress, _ in events])
+        self.assertEqual([20, 30, 30, 30, 70, 76, 90], [progress for _, progress, _ in events])
         self.assertIn("第1次", events[2][2])
         self.assertIn("第2次", events[3][2])
 
@@ -570,10 +607,16 @@ class ChapterAnalysisChainTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            ["PLANNING", "SCENE_GENERATING", "VALIDATING", "FINALIZING"],
+            [
+                "PLANNING",
+                "SCENE_GENERATING",
+                "SCENE_COMPLETED",
+                "VALIDATING",
+                "FINALIZING",
+            ],
             [stage for stage, _, _ in events],
         )
-        self.assertEqual([20, 30, 76, 90], [progress for _, progress, _ in events])
+        self.assertEqual([20, 30, 70, 76, 90], [progress for _, progress, _ in events])
 
     async def test_stream_output_is_cancelled_when_character_limit_is_exceeded(self) -> None:
         model = StreamingOnlyResponseSequence("x" * 101)

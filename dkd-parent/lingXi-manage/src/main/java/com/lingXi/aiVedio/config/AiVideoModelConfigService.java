@@ -26,6 +26,7 @@ public class AiVideoModelConfigService
     private static final String KEY_WORKSPACE_BASE_URL = "aivideo.model.workspaceBaseUrl";
     private static final String KEY_API_KEY = "aivideo.model.apiKey";
     private static final String KEY_TEXT_MODEL = "aivideo.model.textModel";
+    private static final String KEY_CHAPTER_SCENE_CONCURRENCY = "aivideo.model.chapterSceneConcurrency";
     private static final String KEY_IMAGE_MODEL = "aivideo.model.imageModel";
     private static final String KEY_VIDEO_MODEL = "aivideo.model.videoModel";
     private static final String KEY_VIDEO_RESOLUTION = "aivideo.model.videoResolution";
@@ -33,6 +34,8 @@ public class AiVideoModelConfigService
     private static final String KEY_VIDEO_WATERMARK = "aivideo.model.videoWatermark";
 
     private static final Pattern MODEL_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}");
+    private static final int DEFAULT_CHAPTER_SCENE_CONCURRENCY = 2;
+    private static final int MAX_CHAPTER_SCENE_CONCURRENCY = 8;
     private static final Set<String> VIDEO_RESOLUTIONS = new HashSet<>(Arrays.asList("720P", "1080P"));
     private static final Set<String> VIDEO_RATIOS = new HashSet<>(Arrays.asList(
             "16:9", "9:16", "3:4", "4:3", "4:5", "5:4", "1:1", "9:21", "21:9"));
@@ -93,6 +96,8 @@ public class AiVideoModelConfigService
             upsert(KEY_API_KEY, "AI服务-API Key（敏感）", replacementApiKey, username);
         }
         upsert(KEY_TEXT_MODEL, "AI视频-章节分析模型", normalized.getTextModel(), username);
+        upsert(KEY_CHAPTER_SCENE_CONCURRENCY, "AI视频-章节场景并发数",
+                String.valueOf(normalized.getChapterSceneConcurrency()), username);
         upsert(KEY_IMAGE_MODEL, "AI视频-图片生成模型", normalized.getImageModel(), username);
         upsert(KEY_VIDEO_MODEL, "AI视频-视频生成模型", normalized.getVideoModel(), username);
         upsert(KEY_VIDEO_RESOLUTION, "AI视频-视频分辨率", normalized.getVideoResolution(), username);
@@ -113,6 +118,8 @@ public class AiVideoModelConfigService
         AiVideoModelConfig config = new AiVideoModelConfig();
         config.setWorkspaceBaseUrl(read(KEY_WORKSPACE_BASE_URL));
         config.setTextModel(read(KEY_TEXT_MODEL));
+        config.setChapterSceneConcurrency(parseChapterSceneConcurrency(
+                read(KEY_CHAPTER_SCENE_CONCURRENCY)));
         config.setImageModel(read(KEY_IMAGE_MODEL));
         config.setVideoProvider(videoProviderProperties.getProvider());
         config.setVideoModel(read(KEY_VIDEO_MODEL));
@@ -145,6 +152,8 @@ public class AiVideoModelConfigService
         AiVideoModelConfig config = new AiVideoModelConfig();
         config.setWorkspaceBaseUrl(normalizeWorkspaceBaseUrl(input.getWorkspaceBaseUrl()));
         config.setTextModel(validateModel(input.getTextModel(), "章节分析模型"));
+        config.setChapterSceneConcurrency(validateChapterSceneConcurrency(
+                input.getChapterSceneConcurrency()));
         config.setImageModel(validateModel(input.getImageModel(), "图片生成模型"));
         String videoModel = validateModel(input.getVideoModel(), "视频生成模型");
         String activeProvider = videoProviderProperties.getProvider();
@@ -309,6 +318,38 @@ public class AiVideoModelConfigService
         if ("true".equalsIgnoreCase(value)) return Boolean.TRUE;
         if ("false".equalsIgnoreCase(value)) return Boolean.FALSE;
         return null;
+    }
+
+    /**
+     * 读取章节场景并发数；旧环境没有配置项时使用安全默认值2。
+     */
+    private Integer parseChapterSceneConcurrency(String value)
+    {
+        if (StringUtils.isEmpty(value))
+        {
+            return Integer.valueOf(DEFAULT_CHAPTER_SCENE_CONCURRENCY);
+        }
+        try
+        {
+            return validateChapterSceneConcurrency(Integer.valueOf(value));
+        }
+        catch (NumberFormatException ex)
+        {
+            throw new ServiceException("章节场景并发数必须是整数");
+        }
+    }
+
+    /**
+     * 校验章节内场景生成并发数，兼容旧调用方缺失字段的情况。
+     */
+    private Integer validateChapterSceneConcurrency(Integer value)
+    {
+        int concurrency = value == null ? DEFAULT_CHAPTER_SCENE_CONCURRENCY : value.intValue();
+        if (concurrency < 1 || concurrency > MAX_CHAPTER_SCENE_CONCURRENCY)
+        {
+            throw new ServiceException("章节场景并发数必须在1到8之间");
+        }
+        return Integer.valueOf(concurrency);
     }
 
     /**
