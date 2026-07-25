@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
+    SecretStr,
     field_validator,
     model_validator,
 )
@@ -19,6 +20,13 @@ from pydantic import (
 MAX_CHAT_MESSAGE_CHARS = 32_000
 MAX_CONTEXT_JSON_BYTES = 256 * 1024
 MAX_EXTRACT_TEXT_CHARS = 32_000
+MAX_USER_PERMISSIONS = 256
+
+
+MemoryPreferenceName = Annotated[
+    str,
+    Field(pattern=r"^(answer_length|answer_structure|number_format)$"),
+]
 
 
 class StrictRequestModel(BaseModel):
@@ -52,6 +60,48 @@ class ChatMode(str, Enum):
     CONTEXT_ANALYSIS = "context_analysis"
 
 
+PermissionCode = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9*:_./-]+$",
+    ),
+]
+
+
+class UserContext(StrictRequestModel):
+    """由受信任 Java 服务从当前登录态生成的用户上下文。"""
+
+    user_name: str = Field(..., min_length=1, max_length=128)
+    role_code: str | None = Field(default=None, min_length=1, max_length=128)
+    role_name: str | None = Field(default=None, min_length=1, max_length=128)
+    region_id: int | None = Field(default=None, ge=1)
+    region_name: str | None = Field(default=None, min_length=1, max_length=128)
+    permissions: list[PermissionCode] = Field(
+        default_factory=list,
+        max_length=MAX_USER_PERMISSIONS,
+    )
+
+    @field_validator("user_name", "role_code", "role_name", "region_name")
+    @classmethod
+    def reject_control_characters(cls, value: str | None) -> str | None:
+        """身份标签只能是单行数据，不能成为自由提示词片段。"""
+        if value is None:
+            return None
+        if any(character in value for character in ("\r", "\n", "\x00")):
+            raise ValueError("user context values must be single-line labels")
+        return value
+
+    @field_validator("permissions")
+    @classmethod
+    def require_unique_permissions(cls, values: list[str]) -> list[str]:
+        """拒绝重复权限，避免无意义地扩大请求与提示词。"""
+        if len(set(values)) != len(values):
+            raise ValueError("permissions must be unique")
+        return values
+
+
 class ChatRequest(StrictRequestModel):
     """同步和流式聊天的请求体。"""
 
@@ -72,6 +122,19 @@ class ChatRequest(StrictRequestModel):
     )
     business_tag: str | None = Field(default=None, max_length=128)
     max_iterations: int | None = Field(default=None, ge=1, le=20)
+    user_context: UserContext | None = None
+    agent_request_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^req-[a-f0-9]{32}$",
+    )
+    tool_access_token: SecretStr | None = Field(
+        default=None,
+        min_length=32,
+        max_length=256,
+        repr=False,
+    )
     llm_config: LLMConfig | None = None
 
     @field_validator("message")
@@ -96,6 +159,14 @@ class ChatRequest(StrictRequestModel):
     @model_validator(mode="after")
     def validate_mode_payload(self) -> "ChatRequest":
         """验证模式负载，确保上下文分析模式有上下文数据。"""
+        if self.user_context is not None and self.user_id is None:
+            raise ValueError("user_id is required when user_context is provided")
+        if (self.agent_request_id is None) != (self.tool_access_token is None):
+            raise ValueError(
+                "agent_request_id and tool_access_token must be provided together"
+            )
+        if self.tool_access_token is not None and self.user_context is None:
+            raise ValueError("user_context is required when tool access is provided")
         if self.mode == ChatMode.CONTEXT_ANALYSIS and self.context_data is None:
             raise ValueError("context_data is required for context_analysis mode")
         if self.context_data is not None:
@@ -114,6 +185,32 @@ class ChatRequest(StrictRequestModel):
         return self
 
 
+class ActionResumeRequest(StrictRequestModel):
+    """Java 登录端确认后恢复同一 LangGraph checkpoint 的严格请求。"""
+
+    action_id: str = Field(
+        ..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    decision: Literal["approve", "reject"]
+    user_id: str = Field(..., min_length=1, max_length=128)
+    thread_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$",
+    )
+    style: str = Field(default="professional", pattern=r"^(professional|casual)$")
+    max_iterations: int | None = Field(default=None, ge=1, le=20)
+    user_context: UserContext
+    agent_request_id: str = Field(
+        ..., min_length=1, max_length=128, pattern=r"^req-[a-f0-9]{32}$"
+    )
+    tool_access_token: SecretStr = Field(
+        ..., min_length=32, max_length=256, repr=False
+    )
+    llm_config: LLMConfig | None = None
+
+
 class DeleteChatThreadRequest(StrictRequestModel):
     """来自受信任Java服务的删除持久短期记忆请求。"""
 
@@ -125,6 +222,26 @@ class DeleteChatThreadRequest(StrictRequestModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$",
         validation_alias=AliasChoices("thread_id", "session_id"),
     )
+
+
+class MemoryUserRequest(StrictRequestModel):
+    """来自受信任 Java 服务的长期记忆用户范围。"""
+
+    user_id: str = Field(..., min_length=1, max_length=128)
+
+
+class MemoryPreferenceRequest(MemoryUserRequest):
+    """用户在设置界面明确修改一个规范化回答偏好。"""
+
+    preference: MemoryPreferenceName
+    value: str = Field(..., min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_preference_value(self) -> "MemoryPreferenceRequest":
+        from app.services.memory import validate_preference_value
+
+        validate_preference_value(self.preference, self.value)
+        return self
 
 
 class SmartQuestionHistoryItem(StrictRequestModel):

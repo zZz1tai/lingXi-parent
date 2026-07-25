@@ -160,4 +160,10 @@ public class VendingMachineServiceImpl implements IVendingMachineService {
         return vendingMachineMapper.selectVendingMachineByInnerCode(innerCode);
     }
 
+    /** 在调用方事务中锁定设备行，防止受控工单并发创建穿透状态复核。 */
+    @Override
+    public VendingMachine selectVendingMachineByInnerCodeForUpdate(String innerCode) {
+        return vendingMachineMapper.selectVendingMachineByInnerCodeForUpdate(innerCode);
+    }
+
 }

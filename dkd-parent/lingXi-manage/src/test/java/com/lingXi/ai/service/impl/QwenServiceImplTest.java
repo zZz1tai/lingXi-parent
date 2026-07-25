@@ -1,6 +1,7 @@
 package com.lingXi.ai.service.impl;
 
 import com.lingXi.ai.client.AgentClient;
+import com.lingXi.ai.domain.dto.AgentUserContext;
 import com.lingXi.ai.domain.vo.ChatBaseVO;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.manage.domain.ModelHistory;
@@ -12,9 +13,11 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -24,6 +27,26 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class QwenServiceImplTest {
+
+    @Test
+    void legacyDashboardContextContainsOnlyFiltersAndNoGlobalMetrics() {
+        AgentClient agentClient = mock(AgentClient.class);
+        IModelHistoryService historyService = mock(IModelHistoryService.class);
+        IDashBoardService dashboardService = mock(IDashBoardService.class);
+        QwenServiceImpl service = new QwenServiceImpl(
+                agentClient, historyService, dashboardService);
+
+        Map<String, Object> snapshot = service.loadDashboardData(
+                "2026-07-01", "2026-07-07");
+
+        assertEquals("dashboard", snapshot.get("page"));
+        assertEquals(Boolean.TRUE, snapshot.get("requiresOnDemandTools"));
+        assertFalse(snapshot.containsKey("taskStats"));
+        assertFalse(snapshot.containsKey("saleStats"));
+        assertFalse(snapshot.containsKey("skuSaleRank"));
+        assertFalse(snapshot.containsKey("abnormalEquipment"));
+        verifyNoInteractions(dashboardService);
+    }
 
     @Test
     void invalidMessagesAndQuestionsAreRejectedBeforePersistenceOrAgentCall() {
@@ -104,7 +127,8 @@ class QwenServiceImplTest {
         IDashBoardService dashboardService = mock(IDashBoardService.class);
         when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
         when(agentClient.streamChat(
-                anyString(), anyString(), anyString(), any(Consumer.class)))
+                anyString(), anyString(), any(AgentUserContext.class),
+                any(Consumer.class)))
                 .thenAnswer(invocation -> {
                     Consumer<String> completed = invocation.getArgument(3);
                     completed.accept("完整助手回复");
@@ -131,5 +155,36 @@ class QwenServiceImplTest {
         assertEquals("完整助手回复", assistant.getContent());
         assertEquals("session-1", assistant.getSessionId());
         assertEquals("user-9", assistant.getUserId());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void structuredStreamingReplyUsesTheSameSinglePersistenceBoundary() {
+        AgentClient agentClient = mock(AgentClient.class);
+        IModelHistoryService historyService = mock(IModelHistoryService.class);
+        IDashBoardService dashboardService = mock(IDashBoardService.class);
+        when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
+        when(agentClient.streamChatV2(
+                anyString(), anyString(), any(AgentUserContext.class),
+                any(Consumer.class)))
+                .thenAnswer(invocation -> {
+                    Consumer<String> completed = invocation.getArgument(3);
+                    completed.accept("V2 完整回复");
+                    completed.accept("V2 完整回复");
+                    return new SseEmitter();
+                });
+        QwenServiceImpl service = new QwenServiceImpl(
+                agentClient, historyService, dashboardService);
+        AgentUserContext context = AgentUserContext.minimal("user-v2", "用户");
+
+        service.streamChatV2("session-v2", context, "问题");
+
+        ArgumentCaptor<ModelHistory> captor = ArgumentCaptor.forClass(ModelHistory.class);
+        verify(historyService, org.mockito.Mockito.times(2))
+                .insertModelHistory(captor.capture());
+        long assistantCount = captor.getAllValues().stream()
+                .filter(item -> "assistant".equals(item.getMessageType()))
+                .count();
+        assertEquals(1L, assistantCount);
     }
 }

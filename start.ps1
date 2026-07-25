@@ -1,4 +1,4 @@
-# One-click launcher: Python Agent + Java backend + Vue frontend.
+# One-click concurrent launcher: Python Agent + Java backend + Vue frontend.
 # Keep this file ASCII-only so Windows PowerShell 5.1 can parse it without a UTF-8 BOM.
 $ErrorActionPreference = 'Stop'
 
@@ -88,6 +88,31 @@ function Save-AgentServiceKey {
 
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllLines($Path, $lines.ToArray(), $encoding)
+}
+
+function Import-PersistedAgentEnvironment {
+    $names = @(
+        'AGENT_SERVICE_API_KEY',
+        'AGENT_TOOLS_ENABLED',
+        'AGENT_WRITE_ACTIONS_ENABLED',
+        'AGENT_CHECKPOINTER_BACKEND',
+        'AGENT_POSTGRES_DSN',
+        'AGENT_TOOL_BASE_URL',
+        'AGENT_TOOL_ALLOWED_HOSTS',
+        'LINGXI_JAVA_PORT',
+        'SERVER_PORT',
+        'VITE_APP_PROXY_TARGET'
+    )
+
+    foreach ($name in $names) {
+        $current = [Environment]::GetEnvironmentVariable($name, 'Process')
+        if ([string]::IsNullOrWhiteSpace($current)) {
+            $persisted = [Environment]::GetEnvironmentVariable($name, 'User')
+            if (-not [string]::IsNullOrWhiteSpace($persisted)) {
+                [Environment]::SetEnvironmentVariable($name, $persisted, 'Process')
+            }
+        }
+    }
 }
 
 function Initialize-AgentServiceKey {
@@ -274,42 +299,77 @@ try {
     $PythonCommand = Resolve-PythonCommand
     $MavenCommand = Resolve-MavenCommand
     $WindowsTerminalCommand = Resolve-WindowsTerminalCommand
+    Import-PersistedAgentEnvironment
     Initialize-AgentServiceKey -EnvFile $AgentEnvFile
 
-    Write-Host '[1/3] Starting AI Agent with reload...' -ForegroundColor Yellow
-    if (Test-HttpReady -Uri 'http://127.0.0.1:5000/readyz') {
+    $javaPortText = if ($env:LINGXI_JAVA_PORT) {
+        $env:LINGXI_JAVA_PORT.Trim()
+    } elseif ($env:SERVER_PORT) {
+        $env:SERVER_PORT.Trim()
+    } else { '8080' }
+    $JavaPort = 0
+    if (-not [int]::TryParse($javaPortText, [ref]$JavaPort) -or
+        $JavaPort -lt 1 -or $JavaPort -gt 65535) {
+        throw 'LINGXI_JAVA_PORT must be a valid TCP port.'
+    }
+    $env:SERVER_PORT = [string]$JavaPort
+    if (-not $env:AGENT_TOOL_BASE_URL) {
+        $env:AGENT_TOOL_BASE_URL = 'http://127.0.0.1:' + $JavaPort
+    }
+    if (-not $env:VITE_APP_PROXY_TARGET) {
+        $env:VITE_APP_PROXY_TARGET = 'http://127.0.0.1:' + $JavaPort
+    }
+
+    # Check for conflicts first, then launch every missing service before waiting
+    # for any of them. This keeps a slow Agent or Maven build from blocking the
+    # other two startup commands.
+    $agentAlreadyReady = Test-HttpReady -Uri 'http://127.0.0.1:5000/readyz'
+    if (-not $agentAlreadyReady -and
+        (Test-TcpPort -HostName '127.0.0.1' -Port 5000)) {
+        throw 'Port 5000 is occupied by an Agent that is not ready. Close that process and run start.bat again.'
+    }
+    $javaAlreadyListening = Test-TcpPort -HostName '127.0.0.1' -Port $JavaPort
+
+    Write-Host '[1/3] Launching AI Agent with reload...' -ForegroundColor Yellow
+    if ($agentAlreadyReady) {
         Write-Host '      Agent is already ready: http://localhost:5000' -ForegroundColor Green
     }
     else {
-        if (Test-TcpPort -HostName '127.0.0.1' -Port 5000) {
-            throw 'Port 5000 is occupied by an Agent that is not ready. Close that process and run start.bat again.'
-        }
         $agentStartup = '"{0}" -m uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload' -f $PythonCommand
         Start-LingXiTerminalTab -Title 'LingXi AI Agent' -WorkingDirectory $AgentDir -CommandLine $agentStartup
-        Wait-HttpReady -Uri 'http://127.0.0.1:5000/readyz' -TimeoutSeconds 45 -ServiceName 'AI Agent'
-        Write-Host '      Agent ready: http://localhost:5000' -ForegroundColor Green
+        Write-Host '      Agent command launched.' -ForegroundColor Green
     }
 
-    Write-Host '[2/3] Installing Java modules and starting LingXiApplication...' -ForegroundColor Yellow
-    if (Test-TcpPort -HostName '127.0.0.1' -Port 8080) {
-        Write-Host '      Java is already listening: http://localhost:8080' -ForegroundColor Green
+    Write-Host '[2/3] Launching Java build and LingXiApplication...' -ForegroundColor Yellow
+    if ($javaAlreadyListening) {
+        Write-Host ('      Java is already listening: http://localhost:' + $JavaPort) -ForegroundColor Green
     }
     else {
         $javaStartup = 'call "{0}" -pl lingXi-admin -am -DskipTests install && call "{0}" -f lingXi-admin\pom.xml -DskipTests -Dspring-boot.run.main-class=com.lingXi.LingXiApplication spring-boot:run' -f $MavenCommand
         Start-LingXiTerminalTab -Title 'LingXi Java Backend' -WorkingDirectory $JavaDir -CommandLine $javaStartup
-        Wait-TcpPort -HostName '127.0.0.1' -Port 8080 -TimeoutSeconds 240 -ServiceName 'Java backend'
-        Write-Host '      Java ready: http://localhost:8080' -ForegroundColor Green
+        Write-Host '      Java command launched.' -ForegroundColor Green
     }
 
-    Write-Host '[3/3] Starting Vue frontend...' -ForegroundColor Yellow
+    Write-Host '[3/3] Launching Vue frontend...' -ForegroundColor Yellow
     $vueStartup = 'npm run dev'
     Start-LingXiTerminalTab -Title 'LingXi Vue Frontend' -WorkingDirectory $VueDir -CommandLine $vueStartup
-    Write-Host '      Vue: use the URL printed in the npm window' -ForegroundColor Green
+    Write-Host '      Vue command launched; use the URL printed in its terminal tab.' -ForegroundColor Green
 
     Write-Host ''
     Write-Host '========================================' -ForegroundColor Cyan
-    Write-Host '  All three start commands were launched.' -ForegroundColor Green
+    Write-Host '  All three services were launched together.' -ForegroundColor Green
     Write-Host '========================================' -ForegroundColor Cyan
+
+    Write-Host ''
+    Write-Host 'Checking backend readiness...' -ForegroundColor Yellow
+    if (-not $agentAlreadyReady) {
+        Wait-HttpReady -Uri 'http://127.0.0.1:5000/readyz' -TimeoutSeconds 45 -ServiceName 'AI Agent'
+        Write-Host '      Agent ready: http://localhost:5000' -ForegroundColor Green
+    }
+    if (-not $javaAlreadyListening) {
+        Wait-TcpPort -HostName '127.0.0.1' -Port $JavaPort -TimeoutSeconds 240 -ServiceName 'Java backend'
+        Write-Host ('      Java ready: http://localhost:' + $JavaPort) -ForegroundColor Green
+    }
 }
 catch {
     Write-Host ''

@@ -4,6 +4,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import javax.validation.constraints.NotBlank;
+import javax.validation.constraints.Pattern;
 import javax.validation.constraints.Size;
 
 /**
@@ -18,7 +19,9 @@ public class AnalyzeVO extends ChatBaseVO {
     @Size(max = MAX_CHAT_TEXT_LENGTH, message = "问题不能超过32000个字符")
     private String question;
     /** 看板数据查询的开始时间，由看板服务解释具体格式。 */
+    @Pattern(regexp = "^\\d{4}-\\d{2}-\\d{2}$", message = "开始日期格式必须为YYYY-MM-DD")
     private String start;
     /** 看板数据查询的结束时间，由看板服务解释具体格式。 */
+    @Pattern(regexp = "^\\d{4}-\\d{2}-\\d{2}$", message = "结束日期格式必须为YYYY-MM-DD")
     private String end;
 }

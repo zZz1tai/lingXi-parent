@@ -8,8 +8,9 @@ from typing import Any
 
 from langchain.tools import ToolRuntime, tool
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from app.agents.state import AgentContext
 from app.config.settings import settings
 from app.utils.exceptions import ConfigurationError
 from app.utils.logger import logger
@@ -18,12 +19,21 @@ from app.utils.logger import logger
 class WebSearchInput(BaseModel):
     """公开的、模型可见的搜索参数。"""
 
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
     query: str = Field(
         ...,
         min_length=2,
         max_length=500,
         description="A concise public-web search query without secrets or internal data",
     )
+    # ToolRuntime 会从模型可见 schema 中隐藏，但必须保留在校验 schema 中，
+    # 否则 StructuredTool 会在 ToolNode 注入后再次校验时丢弃它。
+    runtime: ToolRuntime[AgentContext]
 
 
 def _normalized_results(payload: dict[str, Any]) -> list[dict[str, str]]:
@@ -63,7 +73,7 @@ def create_tavily_search_tool() -> BaseTool:
     )
     async def web_search(
         query: str,
-        runtime: ToolRuntime,
+        runtime: ToolRuntime[AgentContext],
     ) -> tuple[str, dict[str, Any]]:
         from tavily import AsyncTavilyClient
 
@@ -118,7 +128,7 @@ def get_default_tools() -> list[BaseTool]:
 
     try:
         search_tool = create_tavily_search_tool()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - optional tool registration must fail closed
         logger.error(
             "Failed to initialize Tavily search tool | error_type=%s",
             type(exc).__name__,

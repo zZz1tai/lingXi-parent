@@ -149,11 +149,22 @@ agent:
   service-api-key: ${AGENT_SERVICE_API_KEY:}
   chat-invoke-url: /api/v1/chat/invoke
   chat-stream-url: /api/v1/chat/stream
+  chat-stream-v2-url: /api/v1/chat/stream
+  chat-resume-url: /api/v1/chat/resume
   smart-questions-url: /api/v1/chat/smart-questions
+  memory-list-url: /api/v1/chat/memory/list
+  memory-preference-url: /api/v1/chat/memory/preference
+  memory-clear-url: /api/v1/chat/memory
   style: professional
   max-iterations: 5
   connect-timeout: 5000
   read-timeout: 60000
+  # 单轮业务工具令牌仅短期有效，并限制最多调用次数
+  tool-token-ttl-seconds: 300
+  tool-max-calls-per-run: 5
+  # 阶段5受控写操作默认关闭；完成数据库迁移并启用持久 checkpoint 后再显式开启
+  write-actions-enabled: ${AGENT_WRITE_ACTIONS_ENABLED:false}
+  write-action-proposal-ttl-minutes: 15
 # Video Generation API 配置 (调用 Python Agent)
 video:
   base-url: http://localhost:5000

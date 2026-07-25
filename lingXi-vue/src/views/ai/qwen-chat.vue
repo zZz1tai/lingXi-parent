@@ -8,6 +8,16 @@
           <div class="logo-area">
             <img src="/favicon.ico" alt="灵犀助手" class="logo-icon" />
             <h2 class="logo-text">灵犀助手</h2>
+            <el-button
+              class="memory-btn"
+              text
+              circle
+              aria-label="管理回答偏好"
+              title="管理回答偏好"
+              @click="openMemoryDialog"
+            >
+              <el-icon><Collection /></el-icon>
+            </el-button>
           </div>
         </div>
         
@@ -115,6 +125,108 @@
                   </div>
                   <div class="message-bubble assistant-bubble">
                     <div class="message-text markdown-content" v-html="renderMarkdown(item.content)"></div>
+                    <div v-if="item.activities?.length" class="agent-work-trace">
+                      <div
+                        v-for="activity in item.activities"
+                        :key="activity.tool"
+                        class="work-trace-row"
+                        :class="`is-${activity.status}`"
+                      >
+                        <span class="status-lamp" aria-hidden="true"></span>
+                        <span class="work-label">{{ activity.label }}</span>
+                        <span v-if="activity.resultCount !== null" class="work-count">
+                          {{ activity.resultCount }} 项
+                        </span>
+                        <span class="work-status">{{ activityStatusText(activity.status) }}</span>
+                      </div>
+                    </div>
+                    <section
+                      v-if="item.pendingAction"
+                      class="approval-card"
+                      :class="`is-${item.pendingAction.decision}`"
+                    >
+                      <div class="approval-card-header">
+                        <div>
+                          <span class="approval-eyebrow">需要人工确认</span>
+                          <h4>创建维修工单</h4>
+                        </div>
+                        <span class="approval-state">
+                          {{ actionDecisionText(item.pendingAction) }}
+                        </span>
+                      </div>
+                      <dl class="approval-facts">
+                        <div>
+                          <dt>目标设备</dt>
+                          <dd>{{ item.pendingAction.target?.inner_code || '未知设备' }}</dd>
+                        </div>
+                        <div>
+                          <dt>工单状态</dt>
+                          <dd>创建后为待处理</dd>
+                        </div>
+                      </dl>
+                      <label class="approval-description-label">工单描述</label>
+                      <el-input
+                        v-model="item.pendingAction.description"
+                        type="textarea"
+                        :rows="3"
+                        maxlength="500"
+                        show-word-limit
+                        :disabled="item.pendingAction.decision !== 'pending' || item.pendingAction.submitting"
+                      />
+                      <p class="approval-impact">
+                        <strong>影响范围：</strong>{{ item.pendingAction.impact }}
+                      </p>
+                      <p v-if="item.pendingAction.error" class="approval-error">
+                        {{ item.pendingAction.error }}
+                      </p>
+                      <p
+                        v-if="item.pendingAction.decision === 'approved' && item.pendingAction.result?.task_code"
+                        class="approval-result"
+                      >
+                        已创建工单 {{ item.pendingAction.result.task_code }}
+                      </p>
+                      <p v-else-if="item.pendingAction.decision === 'rejected'" class="approval-result is-rejected">
+                        已拒绝，未执行任何写操作
+                      </p>
+                      <div
+                        v-if="item.pendingAction.decision === 'pending'"
+                        class="approval-actions"
+                      >
+                        <el-button
+                          :disabled="item.pendingAction.submitting"
+                          :loading="item.pendingAction.submitting && item.pendingAction.submittingDecision === 'reject'"
+                          @click="handleActionDecision(item, 'reject')"
+                        >
+                          拒绝
+                        </el-button>
+                        <el-button
+                          type="primary"
+                          :disabled="item.pendingAction.submitting || !item.pendingAction.description?.trim()"
+                          :loading="item.pendingAction.submitting && item.pendingAction.submittingDecision === 'approve'"
+                          @click="handleActionDecision(item, 'approve')"
+                        >
+                          批准并创建
+                        </el-button>
+                      </div>
+                    </section>
+                    <div v-if="item.citations?.length" class="citation-strip">
+                      <div class="citation-heading">参考资料</div>
+                      <div class="citation-list">
+                        <span
+                          v-for="citation in item.citations"
+                          :key="citation.source_id"
+                          class="citation-chip"
+                          :title="citation.source_id"
+                        >
+                          {{ citation.title || '内部资料' }}
+                          <small v-if="citation.section">{{ citation.section }}</small>
+                        </span>
+                      </div>
+                    </div>
+                    <div v-if="item.memorySaved?.length" class="memory-saved-note">
+                      <el-icon><CircleCheck /></el-icon>
+                      已记住：{{ item.memorySaved.map(memoryPreferenceText).join('、') }}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -144,7 +256,7 @@
                 <div class="typing-dot"></div>
               </div>
               <span class="typing-text">
-                {{ currentDraft?.assistantContent ? '灵犀正在输入...' : '灵犀正在思考...' }}
+                {{ currentActivityLabel }}
               </span>
             </div>
           </div>
@@ -242,6 +354,71 @@
         </span>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="memoryDialogVisible"
+      title="回答偏好"
+      width="460px"
+      align-center
+    >
+      <div class="memory-dialog" v-loading="memoryLoading">
+        <p class="memory-intro">
+          这些偏好会跨对话生效。这里只保存选项值，不保存聊天原文、权限或实时业务数据。
+        </p>
+        <el-alert
+          v-if="!memoryEnabled && !memoryLoading"
+          title="长期偏好当前未启用"
+          description="管理员启用长期 Store 后即可使用。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <el-form v-else label-position="top" class="memory-form">
+          <el-form-item label="回答篇幅">
+            <el-select v-model="memoryForm.answer_length" placeholder="保持默认">
+              <el-option label="简短" value="short" />
+              <el-option label="均衡" value="balanced" />
+              <el-option label="详细" value="detailed" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="回答结构">
+            <el-select v-model="memoryForm.answer_structure" placeholder="保持默认">
+              <el-option label="结论优先" value="conclusion_first" />
+              <el-option label="自然组织" value="natural" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="数字格式">
+            <el-select v-model="memoryForm.number_format" placeholder="保持默认">
+              <el-option label="保留两位小数" value="two_decimals" />
+              <el-option label="按内容自适应" value="adaptive" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <span class="dialog-footer memory-footer">
+          <el-button
+            v-if="memoryEnabled"
+            type="danger"
+            plain
+            :disabled="memorySaving"
+            @click="clearMemories"
+          >
+            清空偏好
+          </el-button>
+          <span class="footer-spacer"></span>
+          <el-button @click="memoryDialogVisible = false">关闭</el-button>
+          <el-button
+            type="primary"
+            :loading="memorySaving"
+            :disabled="!memoryEnabled"
+            @click="saveMemories"
+          >
+            保存偏好
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -249,7 +426,22 @@
 import { ref, computed, nextTick, onMounted, watch } from 'vue';
 import dayjs from 'dayjs';
 import { marked } from 'marked';
-import { ElMessage, ElDialog, ElButton, ElInput, ElIcon, ElDropdown, ElDropdownMenu, ElDropdownItem, ElMessageBox } from 'element-plus';
+import {
+  ElAlert,
+  ElButton,
+  ElDialog,
+  ElDropdown,
+  ElDropdownItem,
+  ElDropdownMenu,
+  ElForm,
+  ElFormItem,
+  ElIcon,
+  ElInput,
+  ElMessage,
+  ElMessageBox,
+  ElOption,
+  ElSelect
+} from 'element-plus';
 import { 
   Plus, 
   ChatDotRound, 
@@ -260,9 +452,21 @@ import {
   Lightning, 
   Promotion,
   ChatDotSquare,
-  DataAnalysis
+  DataAnalysis,
+  Collection,
+  CircleCheck
 } from '@element-plus/icons-vue';
-import { getChatHistory, getSessions, createSession, updateSession, deleteSessionById, generateSmartQuestions } from '@/api/ai';
+import {
+  clearLongTermMemories,
+  createSession,
+  deleteSessionById,
+  generateSmartQuestions,
+  getChatHistory,
+  getLongTermMemories,
+  getSessions,
+  updateLongTermPreference,
+  updateSession
+} from '@/api/ai';
 import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
 
@@ -291,6 +495,15 @@ const enableDataAnalysis = ref(false);
 const chatContainer = ref(null);
 const smartQuestions = ref([]);
 const validQuestions = ref([]);
+const memoryDialogVisible = ref(false);
+const memoryLoading = ref(false);
+const memorySaving = ref(false);
+const memoryEnabled = ref(false);
+const memoryForm = ref({
+  answer_length: '',
+  answer_structure: '',
+  number_format: ''
+});
 
 // 计算是否有有效的快捷提问
 const hasValidQuestions = computed(() => {
@@ -313,7 +526,36 @@ const currentEditingSession = ref(null);
 const userStore = useUserStore();
 const aiChatStore = useAiChatStore();
 const currentDraft = computed(() => aiChatStore.draftFor(currentSessionId.value));
-const loading = computed(() => currentDraft.value?.status === 'streaming');
+const loading = computed(() => ['streaming', 'resuming'].includes(currentDraft.value?.status));
+const currentActivityLabel = computed(() => {
+  const running = [...(currentDraft.value?.activities || [])]
+    .reverse()
+    .find(item => item.status === 'running');
+  if (running) return `${running.label}...`;
+  return currentDraft.value?.assistantContent ? '灵犀正在输入...' : '灵犀正在思考...';
+});
+
+const activityStatusText = status => ({
+  running: '进行中',
+  completed: '已完成',
+  error: '未完成'
+}[status] || '处理中');
+
+const memoryPreferenceText = item => {
+  const labels = {
+    answer_length: { short: '简短回答', balanced: '均衡篇幅', detailed: '详细回答' },
+    answer_structure: { conclusion_first: '结论优先', natural: '自然组织' },
+    number_format: { two_decimals: '数字保留两位小数', adaptive: '数字格式自适应' }
+  };
+  return labels[item.preference]?.[item.value] || '回答偏好';
+};
+
+const actionDecisionText = action => ({
+  pending: action.error ? '等待重试' : '等待确认',
+  approved: '已批准',
+  rejected: '已拒绝',
+  failed: '已失效'
+}[action.decision] || '处理中');
 
 // 自动滚动到底部
 const scrollToBottom = () => {
@@ -331,7 +573,12 @@ const appendMessage = (isUser, content, id) => {
     isUser,
     content,
     time: dayjs().format('HH:mm'),
-    createTime: new Date()
+    createTime: new Date(),
+    activities: [],
+    citations: [],
+    memorySaved: [],
+    clarification: '',
+    pendingAction: null
   };
   history.value.push(newMessage);
   scrollToBottom();
@@ -356,6 +603,117 @@ const syncStreamDraft = () => {
   } else {
     assistantMessage.content = draft.assistantContent;
   }
+  assistantMessage.activities = draft.activities;
+  assistantMessage.citations = draft.citations;
+  assistantMessage.memorySaved = draft.memorySaved;
+  assistantMessage.clarification = draft.clarification;
+  assistantMessage.pendingAction = draft.pendingAction;
+};
+
+const handleActionDecision = async (item, decision) => {
+  const action = item.pendingAction;
+  const sessionId = currentSessionId.value;
+  if (!action || !sessionId || action.decision !== 'pending' || action.submitting) return;
+  if (decision === 'approve' && !action.description?.trim()) {
+    ElMessage.warning('请填写工单描述');
+    return;
+  }
+  try {
+    await aiChatStore.decideAction({
+      sessionId,
+      actionId: action.action_id,
+      decision,
+      description: action.description?.trim()
+    });
+    syncStreamDraft();
+    await nextTick();
+    ElMessage.success(decision === 'approve' ? '维修工单已创建' : '已拒绝创建维修工单');
+    aiChatStore.clearDraft(sessionId);
+  } catch (err) {
+    syncStreamDraft();
+    if (aiChatStore.draftFor(sessionId)?.status === 'completed') {
+      await nextTick();
+      aiChatStore.clearDraft(sessionId);
+    }
+    ElMessage.error('操作失败：' + (err?.msg || err?.message || '请稍后重试'));
+  }
+};
+
+const loadMemories = async () => {
+  memoryLoading.value = true;
+  try {
+    const response = await getLongTermMemories();
+    const data = response.data || {};
+    memoryEnabled.value = Boolean(data.enabled);
+    memoryForm.value = {
+      answer_length: '',
+      answer_structure: '',
+      number_format: ''
+    };
+    for (const item of data.items || []) {
+      if (Object.prototype.hasOwnProperty.call(memoryForm.value, item.preference)) {
+        memoryForm.value[item.preference] = item.value;
+      }
+    }
+  } catch (err) {
+    memoryEnabled.value = false;
+    ElMessage.error('获取回答偏好失败：' + (err?.msg || err?.message || '未知错误'));
+  } finally {
+    memoryLoading.value = false;
+  }
+};
+
+const openMemoryDialog = async () => {
+  memoryDialogVisible.value = true;
+  await loadMemories();
+};
+
+const saveMemories = async () => {
+  const entries = Object.entries(memoryForm.value).filter(([, value]) => value);
+  if (!entries.length) {
+    ElMessage.info('请选择至少一项偏好');
+    return;
+  }
+  memorySaving.value = true;
+  try {
+    await Promise.all(
+      entries.map(([preference, value]) => updateLongTermPreference(preference, value))
+    );
+    ElMessage.success('回答偏好已保存');
+    await loadMemories();
+  } catch (err) {
+    ElMessage.error('保存回答偏好失败：' + (err?.msg || err?.message || '未知错误'));
+  } finally {
+    memorySaving.value = false;
+  }
+};
+
+const clearMemories = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '清空后，新对话将不再应用这些回答偏好。',
+      '清空回答偏好',
+      {
+        confirmButtonText: '清空',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    );
+    memorySaving.value = true;
+    await clearLongTermMemories();
+    memoryForm.value = {
+      answer_length: '',
+      answer_structure: '',
+      number_format: ''
+    };
+    ElMessage.success('回答偏好已清空');
+  } catch (err) {
+    if (err !== 'cancel') {
+      ElMessage.error('清空回答偏好失败：' + (err?.msg || err?.message || '未知错误'));
+    }
+  } finally {
+    memorySaving.value = false;
+  }
 };
 
 // 发送消息
@@ -367,6 +725,10 @@ const sendMessage = async () => {
   }
   if (loading.value) {
     ElMessage.warning('数据正在处理，请勿重复提交');
+    return;
+  }
+  if (currentDraft.value?.status === 'awaiting_approval') {
+    ElMessage.warning('请先处理当前消息中的待确认操作');
     return;
   }
   
@@ -396,7 +758,7 @@ const sendMessage = async () => {
       userMessageId,
       assistantMessageId
     });
-    completed = true;
+    completed = aiChatStore.draftFor(sessionId)?.status === 'completed';
   } catch (err) {
     error.value = err?.msg || err?.message || '发送失败，请稍后重试';
     ElMessage.error('发送失败：' + error.value);
@@ -407,7 +769,9 @@ const sendMessage = async () => {
   } finally {
     // 先让订阅草稿的页面实例完成最后一次渲染，再释放全局流状态。
     await nextTick();
-    aiChatStore.clearDraft(sessionId);
+    if (aiChatStore.draftFor(sessionId)?.status !== 'awaiting_approval') {
+      aiChatStore.clearDraft(sessionId);
+    }
     // 生成智能快捷提问
     if (completed && currentSessionId.value === sessionId && history.value.length > 0) {
       generateSmartQuestions(history.value, userStore.id, userStore.name, sessionId)
@@ -572,7 +936,9 @@ const confirmRename = async () => {
 
 // 删除会话
 const deleteSession = async (session) => {
-  if (aiChatStore.draftFor(session.sessionId)?.status === 'streaming') {
+  if (['streaming', 'resuming', 'awaiting_approval'].includes(
+    aiChatStore.draftFor(session.sessionId)?.status
+  )) {
     ElMessage.warning('该会话正在生成回答，请等待完成后再删除');
     return;
   }
@@ -698,6 +1064,19 @@ onMounted(async () => {
         font-weight: 600;
         color: #1e293b;
         margin: 0;
+      }
+
+      .memory-btn {
+        margin-left: auto;
+        color: #0f766e;
+        background: #ecfdf5;
+        border: 1px solid #ccfbf1;
+
+        &:hover,
+        &:focus-visible {
+          color: #164e63;
+          background: #dff7f1;
+        }
       }
     }
   }
@@ -1232,6 +1611,231 @@ onMounted(async () => {
     border: 1px solid #e2e8f0;
     border-radius: 16px 16px 16px 4px;
     color: #1e293b;
+
+    .agent-work-trace {
+      margin: 12px 0 14px;
+      padding: 9px 10px;
+      border: 1px solid #dce8e7;
+      border-left: 3px solid #0f766e;
+      border-radius: 8px;
+      background: #f3faf8;
+    }
+
+    .work-trace-row {
+      display: grid;
+      grid-template-columns: 10px minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 8px;
+      min-height: 26px;
+      color: #365b5a;
+      font-size: 12px;
+
+      & + .work-trace-row {
+        border-top: 1px solid #deebe9;
+      }
+
+      .status-lamp {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #0d9488;
+        box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12);
+      }
+
+      &.is-running .status-lamp {
+        animation: status-pulse 1.4s ease-in-out infinite;
+      }
+
+      &.is-completed .status-lamp {
+        background: #22c55e;
+        box-shadow: none;
+      }
+
+      &.is-error .status-lamp {
+        background: #ef4444;
+        box-shadow: none;
+      }
+
+      .work-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 600;
+      }
+
+      .work-count,
+      .work-status {
+        color: #68817f;
+        font-variant-numeric: tabular-nums;
+      }
+    }
+
+    .approval-card {
+      margin: 14px 0;
+      padding: 16px;
+      border: 1px solid #f0c36a;
+      border-left: 4px solid #d97706;
+      border-radius: 12px;
+      background: #fffbeb;
+
+      &.is-approved {
+        border-color: #86cbb4;
+        border-left-color: #059669;
+        background: #f0fdf4;
+      }
+
+      &.is-rejected {
+        border-color: #cbd5e1;
+        border-left-color: #64748b;
+        background: #f8fafc;
+      }
+
+      .approval-card-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 14px;
+
+        h4 {
+          margin: 2px 0 0;
+          color: #1e293b;
+          font-size: 15px;
+        }
+      }
+
+      .approval-eyebrow {
+        color: #92400e;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+
+      .approval-state {
+        flex: none;
+        padding: 4px 8px;
+        color: #92400e;
+        background: rgba(245, 158, 11, 0.12);
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .approval-facts {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin: 0 0 14px;
+
+        div {
+          padding: 9px 10px;
+          background: rgba(255, 255, 255, 0.68);
+          border: 1px solid rgba(148, 163, 184, 0.22);
+          border-radius: 8px;
+        }
+
+        dt {
+          color: #64748b;
+          font-size: 11px;
+        }
+
+        dd {
+          margin: 3px 0 0;
+          color: #0f172a;
+          font-size: 13px;
+          font-weight: 650;
+        }
+      }
+
+      .approval-description-label {
+        display: block;
+        margin-bottom: 6px;
+        color: #475569;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .approval-impact {
+        margin: 10px 0 0;
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .approval-error,
+      .approval-result {
+        margin: 10px 0 0;
+        color: #b91c1c;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .approval-result {
+        color: #047857;
+
+        &.is-rejected {
+          color: #475569;
+        }
+      }
+
+      .approval-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 14px;
+      }
+    }
+
+    .citation-strip {
+      margin: 12px 0 14px;
+      padding-top: 10px;
+      border-top: 1px solid #e2e8f0;
+
+      .citation-heading {
+        margin-bottom: 7px;
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+
+      .citation-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .citation-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        max-width: 100%;
+        padding: 5px 8px;
+        color: #0f5f5a;
+        background: #ecfdf5;
+        border: 1px solid #ccfbf1;
+        border-radius: 6px;
+        font-size: 12px;
+
+        small {
+          overflow: hidden;
+          max-width: 180px;
+          color: #64748b;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+      }
+    }
+
+    .memory-saved-note {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 10px 0 12px;
+      color: #0f766e;
+      font-size: 12px;
+      font-weight: 600;
+    }
   }
 }
 
@@ -1303,7 +1907,7 @@ onMounted(async () => {
   padding: 16px;
   background: #f8fafc;
   border-radius: 16px;
-  max-width: 200px;
+  max-width: 320px;
   margin: 0 auto;
 
   .typing-indicator {
@@ -1466,6 +2070,41 @@ onMounted(async () => {
   padding: 8px 0;
 }
 
+.memory-dialog {
+  min-height: 220px;
+
+  .memory-intro {
+    margin: 0 0 18px;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .memory-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 14px;
+
+    :deep(.el-form-item:last-child) {
+      grid-column: 1 / -1;
+    }
+
+    :deep(.el-select) {
+      width: 100%;
+    }
+  }
+}
+
+.memory-footer {
+  display: flex;
+  width: 100%;
+  align-items: center;
+
+  .footer-spacer {
+    flex: 1;
+  }
+}
+
 /* 动画 */
 @keyframes float {
   0%, 100% {
@@ -1484,6 +2123,19 @@ onMounted(async () => {
   30% {
     transform: translateY(-6px);
     opacity: 1;
+  }
+}
+
+@keyframes status-pulse {
+  0%, 100% { transform: scale(0.82); opacity: 0.65; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-icon,
+  .typing-dot,
+  .status-lamp {
+    animation: none !important;
   }
 }
 
@@ -1530,6 +2182,14 @@ onMounted(async () => {
       flex: 1;
       min-width: 120px;
       justify-content: center;
+    }
+  }
+
+  .memory-dialog .memory-form {
+    grid-template-columns: 1fr;
+
+    :deep(.el-form-item:last-child) {
+      grid-column: auto;
     }
   }
 }

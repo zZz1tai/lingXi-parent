@@ -23,6 +23,14 @@ public interface TaskMapper
      */
     public Task selectTaskByTaskId(Long taskId);
 
+    /** 根据 AI 受控动作ID查询幂等创建的工单。 */
+    public Task selectTaskByAgentActionId(String agentActionId);
+
+    /** 查询设备指定类型的待处理或进行中工单数量。 */
+    public int countUnfinishedTasks(
+            @org.apache.ibatis.annotations.Param("innerCode") String innerCode,
+            @org.apache.ibatis.annotations.Param("productTypeId") Long productTypeId);
+
     /**
      * 查询工单列表
      * 

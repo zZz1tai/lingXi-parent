@@ -19,6 +19,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langgraph.errors import GraphRecursionError
+from langgraph.types import Command
 
 from app.agents.builder import get_recursion_limit
 from app.api.dependencies import (
@@ -26,6 +27,7 @@ from app.api.dependencies import (
     create_llm,
     delete_agent_thread,
     get_agent,
+    get_memory_service,
     get_request_id,
 )
 from app.agents.state import checkpoint_thread_id
@@ -38,13 +40,21 @@ from app.config.settings import settings
 from app.schemas.request import (
     ChatMode,
     ChatRequest,
+    ActionResumeRequest,
     DeleteChatThreadRequest,
+    MemoryPreferenceRequest,
+    MemoryUserRequest,
     SmartQuestionsRequest,
 )
 from app.schemas.response import (
     BaseResponse,
     ChatData,
     ChatResponse,
+    MemoryListData,
+    MemoryListResponse,
+    MemoryMutationData,
+    MemoryMutationResponse,
+    MemoryPreferenceData,
     SmartQuestionsData,
     SmartQuestionsResponse,
     StreamEvent,
@@ -52,6 +62,7 @@ from app.schemas.response import (
 )
 from app.utils.exceptions import AgentError, AgentTimeoutError, SearchError
 from app.utils.logger import logger
+from app.services.memory import MemoryPreference
 
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
@@ -71,6 +82,64 @@ class MemoryDeleteError(AgentError):
             code="MEMORY_DELETE_FAILED",
             status_code=503,
         )
+
+
+class MemoryUnavailableError(AgentError):
+    """长期记忆功能未启用。"""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Long-term memory is not enabled",
+            code="MEMORY_NOT_CONFIGURED",
+            status_code=503,
+        )
+
+
+def _memory_data(item: MemoryPreference) -> MemoryPreferenceData:
+    return MemoryPreferenceData(
+        preference=item.preference,
+        value=item.value,
+        updated_at=item.updated_at,
+    )
+
+
+async def _recall_preferences(
+    user_id: str | None,
+    *,
+    request_id: str,
+) -> tuple[MemoryPreference, ...]:
+    service = get_memory_service()
+    if service is None or not user_id:
+        return ()
+    try:
+        return await service.recall_preferences(user_id)
+    except Exception as exc:
+        logger.warning(
+            "Long-term memory recall failed | request_id=%s | error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        return ()
+
+
+async def _capture_preferences(
+    user_id: str | None,
+    message: str,
+    *,
+    request_id: str,
+) -> tuple[MemoryPreference, ...]:
+    service = get_memory_service()
+    if service is None or not user_id:
+        return ()
+    try:
+        return await service.capture_explicit_preferences(user_id, message)
+    except Exception as exc:
+        logger.warning(
+            "Long-term memory write failed | request_id=%s | error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        return ()
 
 
 def _add_stream_text(current: int, text: str) -> int:
@@ -99,14 +168,16 @@ def _build_agent_input(request: ChatRequest) -> dict[str, Any]:
     return {"messages": [HumanMessage(content=request.message)]}
 
 
-def _public_thread_id(request: ChatRequest, request_id: str) -> str:
+def _public_thread_id(
+    request: ChatRequest | ActionResumeRequest, request_id: str
+) -> str:
     """使用显式对话ID或隔离的一次性回退。"""
 
     return request.thread_id or request_id
 
 
 def _build_agent_config(
-    request: ChatRequest,
+    request: ChatRequest | ActionResumeRequest,
     *,
     request_id: str,
 ) -> dict[str, Any]:
@@ -225,6 +296,108 @@ async def delete_chat_thread(
     return BaseResponse(success=True, message="deleted")
 
 
+@router.post(
+    "/memory/list",
+    response_model=MemoryListResponse,
+    summary="List normalized long-term preferences",
+)
+async def list_long_term_memories(
+    request: MemoryUserRequest,
+    request_id: str = Depends(get_request_id),
+) -> MemoryListResponse:
+    service = get_memory_service()
+    if service is None:
+        return MemoryListResponse(
+            success=True,
+            message="disabled",
+            data=MemoryListData(enabled=False, items=[]),
+        )
+    try:
+        items = await service.recall_preferences(request.user_id)
+    except Exception as exc:
+        logger.error(
+            "Long-term memory listing failed | request_id=%s | error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        raise MemoryUnavailableError() from exc
+    return MemoryListResponse(
+        success=True,
+        message="ok",
+        data=MemoryListData(
+            enabled=True,
+            items=[_memory_data(item) for item in items],
+        ),
+    )
+
+
+@router.put(
+    "/memory/preference",
+    response_model=MemoryMutationResponse,
+    summary="Update one normalized long-term preference",
+)
+async def update_long_term_preference(
+    request: MemoryPreferenceRequest,
+    request_id: str = Depends(get_request_id),
+) -> MemoryMutationResponse:
+    service = get_memory_service()
+    if service is None:
+        raise MemoryUnavailableError()
+    try:
+        item = await service.upsert_preference(
+            request.user_id,
+            preference=request.preference,  # type: ignore[arg-type]
+            value=request.value,
+            source="user_settings",
+        )
+    except ValueError:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Long-term memory update failed | request_id=%s | error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        raise MemoryUnavailableError() from exc
+    return MemoryMutationResponse(
+        success=True,
+        message="updated",
+        data=MemoryMutationData(enabled=True, affected=1, item=_memory_data(item)),
+    )
+
+
+@router.delete(
+    "/memory",
+    response_model=MemoryMutationResponse,
+    summary="Clear all long-term preferences for one user",
+)
+async def clear_long_term_memories(
+    request: MemoryUserRequest,
+    request_id: str = Depends(get_request_id),
+) -> MemoryMutationResponse:
+    service = get_memory_service()
+    if service is None:
+        return MemoryMutationResponse(
+            success=True,
+            message="disabled",
+            data=MemoryMutationData(enabled=False, affected=0),
+        )
+    try:
+        affected = await service.clear_user(request.user_id)
+    except Exception as exc:
+        logger.error(
+            "Long-term memory clearing failed | request_id=%s | error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        raise MemoryUnavailableError() from exc
+    return MemoryMutationResponse(
+        success=True,
+        message="cleared",
+        data=MemoryMutationData(enabled=True, affected=affected),
+    )
+
+
 @router.post("/invoke", response_model=ChatResponse, summary="Synchronous chat")
 async def chat_invoke(
     request: ChatRequest,
@@ -241,6 +414,11 @@ async def chat_invoke(
                 request.message,
                 request.context_data,
             )
+            memory_saved = await _capture_preferences(
+                request.user_id,
+                request.message,
+                request_id=request_id,
+            )
             return ChatResponse(
                 success=True,
                 message="ok",
@@ -250,6 +428,7 @@ async def chat_invoke(
                     iterations=0,
                     request_id=request_id,
                     thread_id=public_thread_id,
+                    memory_saved=[_memory_data(item) for item in memory_saved],
                 ),
             )
         except AgentError:
@@ -263,12 +442,23 @@ async def chat_invoke(
             raise SearchError("Context analysis failed") from exc
 
     try:
+        recalled_preferences = await _recall_preferences(
+            request.user_id,
+            request_id=request_id,
+        )
         context = create_agent_context(
             llm_config=request.llm_config,
             user_id=request.user_id or "",
             thread_id=public_thread_id,
+            checkpointed=request.thread_id is not None,
             style=request.style,
             business_tag=request.business_tag or "",
+            user_context=request.user_context,
+            agent_request_id=request.agent_request_id or "",
+            tool_access_token=request.tool_access_token,
+            memory_preferences=tuple(
+                (item.preference, item.value) for item in recalled_preferences
+            ),
         )
         agent = (
             get_agent(
@@ -287,6 +477,11 @@ async def chat_invoke(
         final_response = _final_ai_response(messages)
         if not final_response:
             raise SearchError("Agent returned no displayable answer")
+        memory_saved = await _capture_preferences(
+            request.user_id,
+            request.message,
+            request_id=request_id,
+        )
 
         logger.info(
             "Chat invoke completed | request_id=%s | elapsed=%.2fs | iterations=%d | response_length=%d",
@@ -304,6 +499,7 @@ async def chat_invoke(
                 iterations=_count_iterations(messages),
                 request_id=request_id,
                 thread_id=public_thread_id,
+                memory_saved=[_memory_data(item) for item in memory_saved],
             ),
         )
     except GraphRecursionError as exc:
@@ -389,6 +585,19 @@ async def _stream_context_analysis(
                     thread_id=public_thread_id,
                 )
             )
+        for item in await _capture_preferences(
+            request.user_id,
+            request.message,
+            request_id=request_id,
+        ):
+            yield _format_sse_event(
+                StreamEvent(
+                    type="memory_saved",
+                    data=_memory_data(item).model_dump(mode="json"),
+                    request_id=request_id,
+                    thread_id=public_thread_id,
+                )
+            )
         yield _format_sse_event(
             StreamEvent(
                 type="done",
@@ -439,17 +648,151 @@ def _messages_from_update(update: Any) -> list[BaseMessage]:
     return messages
 
 
-def _json_safe(value: Any) -> Any:
-    try:
-        json.dumps(value)
-        return value
-    except (TypeError, ValueError):
-        return str(value)[:2_000]
+def _safe_custom_event(
+    chunk: Any,
+    *,
+    request_id: str,
+    thread_id: str,
+) -> StreamEvent:
+    """把工具自定义事件转换为稳定、白名单化的公开事件。"""
+    if not isinstance(chunk, dict):
+        return StreamEvent(
+            type="custom",
+            data={"status": "received"},
+            request_id=request_id,
+            thread_id=thread_id,
+        )
+
+    event_type = str(chunk.get("type") or "")
+    tool_name = str(chunk.get("tool") or "unknown")[:128]
+    if event_type == "tool_progress":
+        progress = {
+            key: chunk[key]
+            for key in ("status", "result_count")
+            if key in chunk and isinstance(chunk[key], (str, int, float, bool))
+        }
+        return StreamEvent(
+            type="tool_progress",
+            tool=tool_name,
+            data=progress,
+            request_id=request_id,
+            thread_id=thread_id,
+        )
+    if event_type == "citation" and isinstance(chunk.get("citation"), dict):
+        raw_citation = chunk["citation"]
+        citation = {
+            key: raw_citation[key]
+            for key in ("title", "section", "version", "source_id", "score")
+            if key in raw_citation
+            and isinstance(raw_citation[key], (str, int, float))
+        }
+        return StreamEvent(
+            type="citation",
+            tool=tool_name,
+            data=citation,
+            request_id=request_id,
+            thread_id=thread_id,
+        )
+    if event_type in {"action_completed", "action_rejected"}:
+        action = _safe_public_action(chunk.get("action"))
+        return StreamEvent(
+            type=event_type,  # type: ignore[arg-type]
+            data=action,
+            request_id=request_id,
+            thread_id=thread_id,
+        )
+    return StreamEvent(
+        type="custom",
+        data={"status": "received"},
+        request_id=request_id,
+        thread_id=thread_id,
+    )
+
+
+def _safe_public_action(raw: Any) -> dict[str, Any]:
+    """只保留审批卡和执行结果需要的动作字段。"""
+    if not isinstance(raw, dict):
+        raise ValueError("action payload must be an object")
+    action_id = str(raw.get("action_id") or "")
+    action_type = str(raw.get("action_type") or "")
+    status = str(raw.get("status") or "")
+    description = str(raw.get("description") or "")
+    impact = str(raw.get("impact") or "")
+    target = raw.get("target")
+    inner_code = str(target.get("inner_code") or "") if isinstance(target, dict) else ""
+    if (
+        not action_id
+        or len(action_id) > 64
+        or action_type != "CREATE_MAINTENANCE_TASK"
+        or status
+        not in {"PENDING", "APPROVED", "REJECTED", "SUCCEEDED", "FAILED", "EXPIRED"}
+        or not inner_code
+        or len(inner_code) > 64
+        or not description
+        or len(description) > 500
+        or not impact
+        or len(impact) > 256
+    ):
+        raise ValueError("action payload is invalid")
+    safe: dict[str, Any] = {
+        "action_id": action_id,
+        "action_type": action_type,
+        "status": status,
+        "target": {"inner_code": inner_code},
+        "description": description,
+        "impact": impact,
+    }
+    expires_at = raw.get("expires_at")
+    if isinstance(expires_at, str) and len(expires_at) <= 128:
+        safe["expires_at"] = expires_at
+    result = raw.get("result")
+    if isinstance(result, dict):
+        task_id = result.get("task_id")
+        task_code = result.get("task_code")
+        if isinstance(task_id, int) and task_id > 0 and isinstance(task_code, str):
+            safe["result"] = {"task_id": task_id, "task_code": task_code[:64]}
+    return safe
+
+
+def _approval_from_update(chunk: Any) -> dict[str, Any] | None:
+    if not isinstance(chunk, dict) or "__interrupt__" not in chunk:
+        return None
+    interrupts = chunk.get("__interrupt__")
+    candidates = interrupts if isinstance(interrupts, (list, tuple)) else (interrupts,)
+    for candidate in candidates:
+        value = getattr(candidate, "value", candidate)
+        if not isinstance(value, dict) or value.get("type") != "approval_required":
+            continue
+        return _safe_public_action(value.get("action"))
+    raise ValueError("unsupported interrupt payload")
+
+
+def _safe_tool_input(tool_name: str, arguments: Any) -> dict[str, Any]:
+    """仅返回适合用户理解的非敏感查询范围摘要。"""
+
+    if not isinstance(arguments, dict):
+        return {}
+    allowed_by_tool = {
+        "query_sales_summary": {"start", "end", "granularity", "region_id"},
+        "query_task_statistics": {"start", "end", "task_type", "region_id"},
+        "query_abnormal_devices": {"limit", "region_id"},
+        "lookup_device": {"region_id"},
+        "search_knowledge": {"document_type", "product_model"},
+        "web_search": set(),
+    }
+    allowed = allowed_by_tool.get(tool_name, set())
+    return {
+        key: value
+        for key, value in arguments.items()
+        if key in allowed and isinstance(value, (str, int, float, bool))
+    }
 
 
 async def _stream_agent_events(
-    request: ChatRequest,
+    request: ChatRequest | ActionResumeRequest,
     request_id: str,
+    *,
+    resume: bool = False,
 ) -> AsyncGenerator[str, None]:
     """将LangChain v1消息/更新/自定义模式转换为SSE。"""
 
@@ -457,25 +800,48 @@ async def _stream_agent_events(
     emitted_text = False
     emitted_characters = 0
     final_response = ""
+    interrupted = False
     agent_stream: Any = None
     try:
+        recalled_preferences = await _recall_preferences(
+            request.user_id,
+            request_id=request_id,
+        )
         context = create_agent_context(
             llm_config=request.llm_config,
             user_id=request.user_id or "",
             thread_id=public_thread_id,
+            checkpointed=request.thread_id is not None,
             style=request.style,
-            business_tag=request.business_tag or "",
+            business_tag=(
+                request.business_tag or "" if isinstance(request, ChatRequest) else ""
+            ),
+            user_context=request.user_context,
+            agent_request_id=request.agent_request_id or "",
+            tool_access_token=request.tool_access_token,
+            memory_preferences=tuple(
+                (item.preference, item.value) for item in recalled_preferences
+            ),
         )
         agent = (
             get_agent(
-                checkpointed=request.thread_id is not None,
+            checkpointed=True if resume else request.thread_id is not None,
                 model=context.model,
             )
             if context.model is not None
             else get_agent(checkpointed=request.thread_id is not None)
         )
+        agent_input: dict[str, Any] | Command
+        if resume:
+            assert isinstance(request, ActionResumeRequest)
+            agent_input = Command(
+                resume={"action_id": request.action_id, "decision": request.decision}
+            )
+        else:
+            assert isinstance(request, ChatRequest)
+            agent_input = _build_agent_input(request)
         agent_stream = agent.astream(
-            _build_agent_input(request),
+            agent_input,
             config=_build_agent_config(request, request_id=request_id),
             context=context,
             stream_mode=["messages", "updates", "custom"],
@@ -512,9 +878,8 @@ async def _stream_agent_events(
 
             if stream_mode == "custom":
                 yield _format_sse_event(
-                    StreamEvent(
-                        type="custom",
-                        data=_json_safe(chunk),
+                    _safe_custom_event(
+                        chunk,
                         request_id=request_id,
                         thread_id=public_thread_id,
                     )
@@ -524,30 +889,54 @@ async def _stream_agent_events(
             if stream_mode != "updates":
                 continue
 
+            approval = _approval_from_update(chunk)
+            if approval is not None:
+                interrupted = True
+                yield _format_sse_event(
+                    StreamEvent(
+                        type="approval_required",
+                        data=approval,
+                        request_id=request_id,
+                        thread_id=public_thread_id,
+                    )
+                )
+                continue
+
             update_messages = _messages_from_update(chunk)
             for message in update_messages:
                 if isinstance(message, AIMessage) and message.tool_calls:
                     for tool_call in message.tool_calls:
+                        tool_name = str(tool_call.get("name") or "unknown")
                         yield _format_sse_event(
                             StreamEvent(
                                 type="tool_start",
-                                tool=str(tool_call.get("name") or "unknown"),
-                                tool_input=tool_call.get("args")
-                                if isinstance(tool_call.get("args"), dict)
-                                else {},
+                                tool=tool_name,
+                                tool_input=_safe_tool_input(
+                                    tool_name,
+                                    tool_call.get("args"),
+                                ),
                                 request_id=request_id,
                                 thread_id=public_thread_id,
                             )
                         )
                 elif isinstance(message, ToolMessage):
+                    artifact = getattr(message, "artifact", None)
+                    result_count = None
+                    if isinstance(artifact, dict):
+                        candidate = artifact.get("result_count")
+                        if isinstance(candidate, int) and candidate >= 0:
+                            result_count = candidate
                     yield _format_sse_event(
                         StreamEvent(
                             type="tool_end",
                             tool=message.name or "unknown",
-                            tool_output=_message_text(message)[:1_000],
                             data={
                                 "status": getattr(message, "status", "success"),
-                                "artifact": _json_safe(getattr(message, "artifact", None)),
+                                **(
+                                    {"result_count": result_count}
+                                    if result_count is not None
+                                    else {}
+                                ),
                             },
                             request_id=request_id,
                             thread_id=public_thread_id,
@@ -568,8 +957,24 @@ async def _stream_agent_events(
                 )
             )
 
+        if interrupted:
+            return
         if not emitted_text and final_response:
             _add_stream_text(0, final_response)
+        if isinstance(request, ChatRequest):
+            for item in await _capture_preferences(
+                request.user_id,
+                request.message,
+                request_id=request_id,
+            ):
+                yield _format_sse_event(
+                    StreamEvent(
+                        type="memory_saved",
+                        data=_memory_data(item).model_dump(mode="json"),
+                        request_id=request_id,
+                        thread_id=public_thread_id,
+                    )
+                )
         yield _format_sse_event(
             StreamEvent(
                 type="done",
@@ -734,6 +1139,41 @@ async def chat_stream(
         ):
             yield event
 
+        if not await http_request.is_disconnected():
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post(
+    "/resume",
+    summary="Resume one human-confirmed Agent action",
+    response_class=StreamingResponse,
+)
+async def resume_action(
+    request: ActionResumeRequest,
+    http_request: Request,
+    request_id: str = Depends(get_request_id),
+) -> StreamingResponse:
+    if request.llm_config is not None:
+        create_llm(request.llm_config, profile="action-resume-preflight")
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        async for event in _with_heartbeats(
+            _stream_agent_events(request, request_id, resume=True),
+            http_request=http_request,
+            request_id=request_id,
+            thread_id=request.thread_id,
+        ):
+            yield event
         if not await http_request.is_disconnected():
             yield "data: [DONE]\n\n"
 

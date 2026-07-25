@@ -1,6 +1,7 @@
 package com.lingXi.ai.service.impl;
 
 import com.lingXi.ai.client.AgentClient;
+import com.lingXi.ai.domain.dto.AgentUserContext;
 import com.lingXi.ai.domain.vo.ChatBaseVO;
 import com.lingXi.ai.service.IQwenService;
 import com.lingXi.common.exception.ServiceException;
@@ -55,62 +56,192 @@ public class QwenServiceImpl implements IQwenService {
 
     @Override
     public String chat(String sessionId, String userId, String userName, String userMessage) {
+        return chat(sessionId, AgentUserContext.minimal(userId, userName), userMessage);
+    }
+
+    @Override
+    public String chat(
+            String sessionId, AgentUserContext userContext, String userMessage) {
+        AgentUserContext trustedContext = requireUserContext(userContext);
         String normalizedSessionId = requireValidSessionId(sessionId);
         String normalizedMessage = requireValidText(userMessage, "消息");
         // 先保存用户消息；持久化失败时不调用模型，避免数据库历史与真实对话脱节。
-        saveUserMessage(normalizedSessionId, userId, userName, normalizedMessage);
-        String reply = agentClient.chat(normalizedMessage, normalizedSessionId, userId);
+        saveUserMessage(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName(),
+                normalizedMessage);
+        String reply = agentClient.chat(
+                normalizedMessage, normalizedSessionId, trustedContext);
         // 仅在 Agent 成功返回完整回答后保存助手消息。
-        saveAssistantReply(normalizedSessionId, userId, userName, reply);
+        saveAssistantReply(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName(),
+                reply);
         return reply;
     }
 
     @Override
     public String chatWithContext(String sessionId, String userId, String userName,
                                   String userMessage, Object contextData) {
+        return chatWithContext(
+                sessionId,
+                AgentUserContext.minimal(userId, userName),
+                userMessage,
+                contextData);
+    }
+
+    @Override
+    public String chatWithContext(
+            String sessionId,
+            AgentUserContext userContext,
+            String userMessage,
+            Object contextData) {
+        AgentUserContext trustedContext = requireUserContext(userContext);
         String normalizedSessionId = requireValidSessionId(sessionId);
         String normalizedMessage = requireValidText(userMessage, "问题");
         // 看板数据作为结构化上下文传输，提示词由 Python 统一构造。
-        saveUserMessage(normalizedSessionId, userId, userName, normalizedMessage);
+        saveUserMessage(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName(),
+                normalizedMessage);
         String reply = agentClient.chatWithContext(
-                normalizedMessage, contextData, normalizedSessionId, userId);
-        saveAssistantReply(normalizedSessionId, userId, userName, reply);
+                normalizedMessage, contextData, normalizedSessionId, trustedContext);
+        saveAssistantReply(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName(),
+                reply);
         return reply;
     }
 
     @Override
     public SseEmitter streamChat(String sessionId, String userId, String userName, String userMessage) {
+        return streamChat(
+                sessionId, AgentUserContext.minimal(userId, userName), userMessage);
+    }
+
+    @Override
+    public SseEmitter streamChat(
+            String sessionId, AgentUserContext userContext, String userMessage) {
+        AgentUserContext trustedContext = requireUserContext(userContext);
         String normalizedSessionId = requireValidSessionId(sessionId);
         String normalizedMessage = requireValidText(userMessage, "消息");
-        saveUserMessage(normalizedSessionId, userId, userName, normalizedMessage);
+        saveUserMessage(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName(),
+                normalizedMessage);
         // 完成回调和异常边界可能竞争触发，使用原子标记保证助手回答最多落库一次。
         AtomicBoolean assistantSaved = new AtomicBoolean(false);
         SseEmitter emitter = agentClient.streamChat(
                 normalizedMessage,
                 normalizedSessionId,
-                userId,
+                trustedContext,
                 reply -> saveStreamReplyOnce(
-                        assistantSaved, normalizedSessionId, userId, userName, reply));
+                        assistantSaved,
+                        normalizedSessionId,
+                        trustedContext.getUserId(),
+                        trustedContext.getUserName(),
+                        reply));
         emitter.onCompletion(() -> log.info(
                 "流式聊天完成，sessionIdLength={}", safeLength(normalizedSessionId)));
         return emitter;
     }
 
     @Override
+    public SseEmitter streamChatV2(
+            String sessionId, AgentUserContext userContext, String userMessage) {
+        AgentUserContext trustedContext = requireUserContext(userContext);
+        String normalizedSessionId = requireValidSessionId(sessionId);
+        String normalizedMessage = requireValidText(userMessage, "消息");
+        saveUserMessage(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName(),
+                normalizedMessage);
+        AtomicBoolean assistantSaved = new AtomicBoolean(false);
+        SseEmitter emitter = agentClient.streamChatV2(
+                normalizedMessage,
+                normalizedSessionId,
+                trustedContext,
+                reply -> saveStreamReplyOnce(
+                        assistantSaved,
+                        normalizedSessionId,
+                        trustedContext.getUserId(),
+                        trustedContext.getUserName(),
+                        reply));
+        emitter.onCompletion(() -> log.info(
+                "V2 流式聊天完成，sessionIdLength={}", safeLength(normalizedSessionId)));
+        return emitter;
+    }
+
+    @Override
+    public SseEmitter resumeActionV2(
+            String sessionId,
+            AgentUserContext userContext,
+            String actionId,
+            String decision) {
+        AgentUserContext trustedContext = requireUserContext(userContext);
+        String normalizedSessionId = requireValidSessionId(sessionId);
+        String normalizedActionId = requireActionId(actionId);
+        String normalizedDecision = requireDecision(decision);
+        AtomicBoolean assistantSaved = new AtomicBoolean(false);
+        SseEmitter emitter = agentClient.streamResumeAction(
+                normalizedSessionId,
+                trustedContext,
+                normalizedActionId,
+                normalizedDecision,
+                reply -> saveStreamReplyOnce(
+                        assistantSaved,
+                        normalizedSessionId,
+                        trustedContext.getUserId(),
+                        trustedContext.getUserName(),
+                        reply));
+        emitter.onCompletion(() -> log.info(
+                "受控动作恢复流完成，sessionIdLength={}", safeLength(normalizedSessionId)));
+        return emitter;
+    }
+
+    @Override
     public SseEmitter streamChatWithContext(String sessionId, String userId, String userName,
                                              String userMessage, Object contextData) {
+        return streamChatWithContext(
+                sessionId,
+                AgentUserContext.minimal(userId, userName),
+                userMessage,
+                contextData);
+    }
+
+    @Override
+    public SseEmitter streamChatWithContext(
+            String sessionId,
+            AgentUserContext userContext,
+            String userMessage,
+            Object contextData) {
+        AgentUserContext trustedContext = requireUserContext(userContext);
         String normalizedSessionId = requireValidSessionId(sessionId);
         String normalizedMessage = requireValidText(userMessage, "问题");
-        saveUserMessage(normalizedSessionId, userId, userName, normalizedMessage);
+        saveUserMessage(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName(),
+                normalizedMessage);
         // 与普通流式聊天共享“仅保存一次”的持久化约束。
         AtomicBoolean assistantSaved = new AtomicBoolean(false);
         SseEmitter emitter = agentClient.streamChatWithContext(
                 normalizedMessage,
                 contextData,
                 normalizedSessionId,
-                userId,
+                trustedContext,
                 reply -> saveStreamReplyOnce(
-                        assistantSaved, normalizedSessionId, userId, userName, reply));
+                        assistantSaved,
+                        normalizedSessionId,
+                        trustedContext.getUserId(),
+                        trustedContext.getUserName(),
+                        reply));
         emitter.onCompletion(() -> log.info(
                 "流式上下文聊天完成，sessionIdLength={}",
                 safeLength(normalizedSessionId)));
@@ -119,16 +250,16 @@ public class QwenServiceImpl implements IQwenService {
 
     @Override
     public Map<String, Object> loadDashboardData(String start, String end) {
-        // 使用固定键名形成稳定传输契约，Python 只负责格式化和分析，不反向查询 Java 数据库。
+        // 兼容页面小快照入口：只保留筛选元数据，不再默认搬运全局看板指标。
+        // 实时指标由普通 Agent 通过区域化 Java 只读工具按需查询。
         Map<String, Object> data = new LinkedHashMap<>();
         Map<String, Object> timeRange = new LinkedHashMap<>();
         timeRange.put("start", start);
         timeRange.put("end", end);
+        data.put("page", "dashboard");
         data.put("timeRange", timeRange);
-        data.put("taskStats", dashBoardService.getTaskStats(start, end));
-        data.put("saleStats", dashBoardService.getSaleStats(start, end));
-        data.put("skuSaleRank", dashBoardService.getSkuSaleRank(start, end));
-        data.put("abnormalEquipment", dashBoardService.getAbnormalEquipment());
+        data.put("snapshot", null);
+        data.put("requiresOnDemandTools", true);
         return data;
     }
 
@@ -156,6 +287,47 @@ public class QwenServiceImpl implements IQwenService {
         agentClient.deleteThreadMemory(requireValidSessionId(sessionId), userId);
     }
 
+    @Override
+    public Map<String, Object> listLongTermMemories(String userId) {
+        return agentClient.listLongTermMemories(requireUserId(userId));
+    }
+
+    @Override
+    public Map<String, Object> updateLongTermPreference(
+            String userId, String preference, String value) {
+        return agentClient.updateLongTermPreference(
+                requireUserId(userId),
+                requireValidText(preference, "偏好名称"),
+                requireValidText(value, "偏好值"));
+    }
+
+    @Override
+    public Map<String, Object> clearLongTermMemories(String userId) {
+        return agentClient.clearLongTermMemories(requireUserId(userId));
+    }
+
+    private static String requireUserId(String userId) {
+        if (userId == null || userId.trim().isEmpty() || userId.length() > 128) {
+            throw new ServiceException("用户ID无效");
+        }
+        return userId.trim();
+    }
+
+    private static String requireActionId(String actionId) {
+        if (actionId == null || !actionId.trim().matches("^[A-Za-z0-9_-]{1,64}$")) {
+            throw new ServiceException("受控动作ID无效");
+        }
+        return actionId.trim();
+    }
+
+    private static String requireDecision(String decision) {
+        String normalized = decision == null ? "" : decision.trim().toLowerCase();
+        if (!"approve".equals(normalized) && !"reject".equals(normalized)) {
+            throw new ServiceException("受控动作决定无效");
+        }
+        return normalized;
+    }
+
     /**
      * 校验并标准化会话ID
      *
@@ -175,6 +347,14 @@ public class QwenServiceImpl implements IQwenService {
             throw new ServiceException("会话ID格式无效");
         }
         return normalized;
+    }
+
+    /** 拒绝缺失的可信上下文，防止服务实现退回浏览器身份字段。 */
+    private static AgentUserContext requireUserContext(AgentUserContext userContext) {
+        if (userContext == null) {
+            throw new ServiceException("用户上下文不能为空");
+        }
+        return userContext;
     }
 
     /**
