@@ -1,4 +1,100 @@
 import request from '@/utils/request';
+import { getToken } from '@/utils/auth';
+
+const apiBaseUrl = (import.meta.env.VITE_APP_BASE_API || '').replace(/\/$/, '');
+
+function apiUrl(path) {
+  return `${apiBaseUrl}/${path.replace(/^\//, '')}`;
+}
+
+async function responseError(response) {
+  const fallback = `请求失败（${response.status}）`;
+  try {
+    const text = await response.text();
+    if (!text) return fallback;
+    const payload = JSON.parse(text);
+    return payload.msg || payload.message || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function parseSseEvent(block) {
+  let event = 'message';
+  const data = [];
+
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim();
+    } else if (line.startsWith('data:')) {
+      data.push(line.slice(5).replace(/^ /, ''));
+    }
+  }
+
+  return { event, data: data.join('\n') };
+}
+
+async function streamSse(path, { body, query, signal, onChunk } = {}) {
+  const search = new URLSearchParams();
+  Object.entries(query || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      search.set(key, String(value));
+    }
+  });
+  const queryString = search.toString();
+  const token = getToken();
+  const response = await fetch(`${apiUrl(path)}${queryString ? `?${queryString}` : ''}`, {
+    method: 'POST',
+    headers: {
+      Accept: 'text/event-stream',
+      ...(body ? { 'Content-Type': 'application/json;charset=utf-8' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
+    body: body ? JSON.stringify(body) : undefined,
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(await responseError(response));
+  }
+  if (!response.body) {
+    throw new Error('浏览器未返回可读取的流式响应');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  const consume = (block) => {
+    if (!block.trim()) return;
+    const parsed = parseSseEvent(block);
+    if (parsed.event === 'error') {
+      throw new Error(parsed.data || '流式请求失败');
+    }
+    if (parsed.data && parsed.data !== '[DONE]') {
+      onChunk?.(parsed.data);
+    }
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer = `${buffer}${decoder.decode(value, { stream: !done })}`.replace(/\r\n/g, '\n');
+
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary !== -1) {
+        consume(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+      }
+
+      if (done) break;
+    }
+    consume(buffer);
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 /**
  * 生成或获取会话ID
@@ -36,6 +132,23 @@ export function chatWithQwen(message, userId, userName) {
 }
 
 /**
+ * 流式调用灵犀智能助手，收到文本片段时立即交给 onChunk。
+ */
+export function streamChatWithQwen(
+  message,
+  sessionId,
+  userId,
+  userName,
+  { signal, onChunk } = {}
+) {
+  return streamSse('/api/ai/chat/stream', {
+    body: { sessionId, userId, userName, message },
+    signal,
+    onChunk
+  });
+}
+
+/**
  * 基于数据看板分析用户问题
  * @param {string} question 用户问题
  * @param {string} start 开始时间（可选）
@@ -62,6 +175,25 @@ export function analyzeDashboard(question, start, end, userId, userName) {
     // 后端返回的是 AjaxResult { code: 200, msg: 'success', data: 'answer' }
     // 响应拦截器已经返回了 res.data，所以这里 res 就是 AjaxResult 对象
     return res.data || res.msg || '分析完成';
+  });
+}
+
+/**
+ * 流式分析数据看板。该后端接口使用查询参数绑定 AnalyzeVO。
+ */
+export function streamAnalyzeDashboard(
+  question,
+  start,
+  end,
+  sessionId,
+  userId,
+  userName,
+  { signal, onChunk } = {}
+) {
+  return streamSse('/api/ai/analyze/stream', {
+    query: { question, start, end, sessionId, userId, userName },
+    signal,
+    onChunk
   });
 }
 
@@ -160,13 +292,13 @@ export function deleteSessionById(sessionId) {
  * @param {string} userName 用户名
  * @returns {Promise<Array>}
  */
-export function generateSmartQuestions(chatHistory, userId, userName) {
+export function generateSmartQuestions(chatHistory, userId, userName, sessionId = getSessionId()) {
   return request({
     url: '/api/ai/generate-questions',
     method: 'post',
     data: {
       chatHistory,
-      sessionId: getSessionId(),
+      sessionId,
       userId: userId,
       userName: userName
     },

@@ -143,7 +143,9 @@
                 <div class="typing-dot"></div>
                 <div class="typing-dot"></div>
               </div>
-              <span class="typing-text">灵犀正在思考...</span>
+              <span class="typing-text">
+                {{ currentDraft?.assistantContent ? '灵犀正在输入...' : '灵犀正在思考...' }}
+              </span>
             </div>
           </div>
         </div>
@@ -260,7 +262,8 @@ import {
   ChatDotSquare,
   DataAnalysis
 } from '@element-plus/icons-vue';
-import { chatWithQwen, analyzeDashboard, getChatHistory, saveChatHistory, getSessions, createSession, updateSession, deleteSessionById, generateSmartQuestions } from '@/api/ai';
+import { getChatHistory, getSessions, createSession, updateSession, deleteSessionById, generateSmartQuestions } from '@/api/ai';
+import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
 
 // 配置marked
@@ -283,7 +286,6 @@ const renderMarkdown = (content) => {
 // 聊天相关状态
 const message = ref('');
 const history = ref([]);
-const loading = ref(false);
 const error = ref('');
 const enableDataAnalysis = ref(false);
 const chatContainer = ref(null);
@@ -309,6 +311,9 @@ const currentEditingSession = ref(null);
 
 // 获取当前用户信息
 const userStore = useUserStore();
+const aiChatStore = useAiChatStore();
+const currentDraft = computed(() => aiChatStore.draftFor(currentSessionId.value));
+const loading = computed(() => currentDraft.value?.status === 'streaming');
 
 // 自动滚动到底部
 const scrollToBottom = () => {
@@ -320,9 +325,9 @@ const scrollToBottom = () => {
 };
 
 // 添加消息
-const appendMessage = (isUser, content) => {
+const appendMessage = (isUser, content, id) => {
   const newMessage = {
-    id: `${isUser ? 'user' : 'assistant'}-${Date.now()}-${Math.random()}`,
+    id: id || `${isUser ? 'user' : 'assistant'}-${Date.now()}-${Math.random()}`,
     isUser,
     content,
     time: dayjs().format('HH:mm'),
@@ -330,6 +335,27 @@ const appendMessage = (isUser, content) => {
   };
   history.value.push(newMessage);
   scrollToBottom();
+  return history.value[history.value.length - 1];
+};
+
+// 页面重新激活或切回会话时，把仍在后台生成的草稿接回当前消息列表。
+const syncStreamDraft = () => {
+  const draft = currentDraft.value;
+  if (!draft) return;
+
+  const hasEquivalentUserMessage = history.value.some(item => (
+    item.isUser && item.content === draft.userContent
+  ));
+  if (!hasEquivalentUserMessage) {
+    appendMessage(true, draft.userContent, draft.userMessageId);
+  }
+
+  let assistantMessage = history.value.find(item => item.id === draft.assistantMessageId);
+  if (!assistantMessage) {
+    assistantMessage = appendMessage(false, draft.assistantContent, draft.assistantMessageId);
+  } else {
+    assistantMessage.content = draft.assistantContent;
+  }
 };
 
 // 发送消息
@@ -344,28 +370,47 @@ const sendMessage = async () => {
     return;
   }
   
+  const sessionId = currentSessionId.value;
+  if (!sessionId) {
+    ElMessage.warning('请先创建或选择一个会话');
+    return;
+  }
+
+  const messageKey = `${Date.now()}-${Math.random()}`;
+  const userMessageId = `user-stream-${messageKey}`;
+  const assistantMessageId = `assistant-stream-${messageKey}`;
+
   error.value = '';
-  loading.value = true;
-  appendMessage(true, content);
+  appendMessage(true, content, userMessageId);
+  appendMessage(false, '', assistantMessageId);
   message.value = '';
-  
+
+  let completed = false;
   try {
-    let reply;
-    if (enableDataAnalysis.value) {
-      reply = await analyzeDashboard(content, null, null, userStore.id, userStore.name);
-    } else {
-      reply = await chatWithQwen(content, userStore.id, userStore.name);
-    }
-    appendMessage(false, reply);
+    await aiChatStore.streamMessage({
+      sessionId,
+      message: content,
+      userId: userStore.id,
+      userName: userStore.name,
+      dataAnalysis: enableDataAnalysis.value,
+      userMessageId,
+      assistantMessageId
+    });
+    completed = true;
   } catch (err) {
     error.value = err?.msg || err?.message || '发送失败，请稍后重试';
     ElMessage.error('发送失败：' + error.value);
-    history.value.pop();
+    const assistantIndex = history.value.findIndex(item => item.id === assistantMessageId);
+    if (assistantIndex !== -1 && !history.value[assistantIndex].content) {
+      history.value.splice(assistantIndex, 1);
+    }
   } finally {
-    loading.value = false;
+    // 先让订阅草稿的页面实例完成最后一次渲染，再释放全局流状态。
+    await nextTick();
+    aiChatStore.clearDraft(sessionId);
     // 生成智能快捷提问
-    if (history.value.length > 0) {
-      generateSmartQuestions(history.value, userStore.id, userStore.name)
+    if (completed && currentSessionId.value === sessionId && history.value.length > 0) {
+      generateSmartQuestions(history.value, userStore.id, userStore.name, sessionId)
         .then(res => {
           smartQuestions.value = res.data || [];
         })
@@ -417,8 +462,11 @@ const loadSessions = async () => {
     sessions.value = res.data || [];
     if (sessions.value.length === 0) {
       await createNewSession();
-    } else if (!currentSessionId.value) {
-      switchSession(sessions.value[0]);
+    } else {
+      const selectedSession = sessions.value.find(
+        session => session.sessionId === currentSessionId.value
+      ) || sessions.value[0];
+      await switchSession(selectedSession);
     }
   } catch (err) {
     console.error('加载会话列表失败:', err);
@@ -439,18 +487,27 @@ const loadChatHistory = async () => {
         isUser: item.messageType === 'user'
       }));
       history.value = formattedHistory;
+      syncStreamDraft();
       scrollToBottom();
       // 生成智能快捷提问
-      generateSmartQuestions(history.value, userStore.id, userStore.name)
-        .then(res => {
-          smartQuestions.value = res.data || [];
-        })
-        .catch(err => {
-          console.error('生成智能快捷提问失败:', err);
-        });
+      if (!loading.value) {
+        generateSmartQuestions(
+          history.value,
+          userStore.id,
+          userStore.name,
+          currentSessionId.value
+        )
+          .then(res => {
+            smartQuestions.value = res.data || [];
+          })
+          .catch(err => {
+            console.error('生成智能快捷提问失败:', err);
+          });
+      }
     } else {
       history.value = [];
       smartQuestions.value = [];
+      syncStreamDraft();
     }
   } catch (err) {
     console.error('加载对话历史失败:', err);
@@ -465,7 +522,7 @@ const createNewSession = async () => {
     const newSession = res.data;
     sessions.value.unshift(newSession);
     smartQuestions.value = [];
-    switchSession(newSession);
+    await switchSession(newSession);
     ElMessage.success('新会话已创建');
   } catch (err) {
     console.error('创建会话失败:', err);
@@ -515,6 +572,11 @@ const confirmRename = async () => {
 
 // 删除会话
 const deleteSession = async (session) => {
+  if (aiChatStore.draftFor(session.sessionId)?.status === 'streaming') {
+    ElMessage.warning('该会话正在生成回答，请等待完成后再删除');
+    return;
+  }
+
   try {
     // 添加确认提示，包含会话名称
     await ElMessageBox.confirm(
@@ -564,6 +626,11 @@ const handleSessionAction = (command, session) => {
 
 // 监听消息变化，自动滚动
 watch(history, () => {
+  scrollToBottom();
+}, { deep: true });
+
+watch(currentDraft, () => {
+  syncStreamDraft();
   scrollToBottom();
 }, { deep: true });
 
