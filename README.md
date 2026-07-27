@@ -31,6 +31,7 @@ dkd-parent / lingXi-admin ─ Spring Boot 业务入口（HTTP 8080）
 | [`dkd-parent/lingXi-system`](dkd-parent/lingXi-system) | 系统管理与权限领域 | 用户、角色、菜单、字典等 |
 | [`dkd-parent/lingXi-framework`](dkd-parent/lingXi-framework) | 认证、缓存、Web、MyBatis 等框架配置 | Spring Security、Redis |
 | [`dkd-parent/lingXi-quartz`](dkd-parent/lingXi-quartz) | 定时任务 | Quartz |
+| [`dkd-parent/lingXi-generator`](dkd-parent/lingXi-generator) | 代码生成 | Velocity |
 | [`dkd-parent/lingXi-common`](dkd-parent/lingXi-common) | 跨模块工具、常量与基础模型 | Java 通用库 |
 | [`lingXi-agent`](lingXi-agent) | AI 执行服务 | Python、FastAPI、LangChain 1.3、LangGraph 1.2、Pydantic v2 |
 | [`dkd-parent/sql`](dkd-parent/sql) | 数据库初始化与演进脚本 | MySQL |
