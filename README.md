@@ -65,10 +65,29 @@ Java 启动类是 `com.lingXi.LingXiApplication`。它由 `lingXi-admin` 模块�
 | 文件 | 需要配置的内容 |
 | --- | --- |
 | `dkd-parent/lingXi-admin/src/main/resources/application-druid.yml` | MySQL 地址、数据库名、账号、密码。 |
-| `dkd-parent/lingXi-admin/src/main/resources/application.yml` | Redis、上传目录 `ruoyi.profile`、OSS、Agent 地址和超时。 |
+| `dkd-parent/lingXi-admin/src/main/resources/application.yml` | Redis 密码、上传目录 `ruoyi.profile`、Agent 地址和超时。 |
 | `lingXi-agent/.env` | Agent 服务密钥、供应商白名单、可选的 Tavily / PostgreSQL 连接参数。 |
 | `lingXi-vue/.env.development` | 开发 API 前缀（默认 `/dev-api`）。 |
 | `lingXi-vue/.env.production` | 生产 API 前缀（默认 `/prod-api`）。 |
+
+### 敏感配置管理（系统安全配置）
+
+阿里云 OSS、Token 签名密钥、Agent 服务 API Key 等敏感配置项已从 `application.yml` 迁移到数据库 `sys_config` 表，通过后台管理界面维护。
+
+**配置路径：** 参数管理 → 安全配置
+
+| 配置项 | 说明 |
+| --- | --- |
+| 阿里云 OSS AccessKey / SecretKey | 文件上传服务的认证凭据 |
+| 阿里云 OSS Endpoint / BucketName | OSS 连接地址和存储桶 |
+| 阿里云 OSS 访问域名 / 基础路径 | 文件访问 URL 和存储前缀 |
+| Agent 服务 API Key | Java 调用 Python Agent 的认证密钥（可选，也可通过环境变量提供） |
+
+首次部署时需执行数据库迁移脚本初始化配置项：
+
+```powershell
+mysql -u root -p dkd < dkd-parent/sql/system_security_config_migration.sql
+```
 
 ### Java 与 Agent 的服务认证
 

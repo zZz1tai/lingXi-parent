@@ -91,7 +91,7 @@ token:
   # 令牌自定义标识
   header: Authorization
   # 令牌密钥
-  secret: abcdefghijklmnopqrstuvwxyz
+  secret: ${TOKEN_SECRET:abcdefghijklmnopqrstuvwxyz}
   # 令牌有效期
   expireTime: 120
 
@@ -134,12 +134,12 @@ dromara:
     aliyun-oss:
       - platform: aliyun-oss-1 # 存储平台标识
         enable-storage: true  # 启用存储
-        access-key: LTAI5tByVGY3NdXocpvfF5Hy
-        secret-key: zQcBJNHFim03PupID0QJJLNvwQWwqM
-        end-point: oss-cn-beijing.aliyuncs.com
-        bucket-name: java-ai-itzhou
-        domain: https://java-ai-itzhou.oss-cn-beijing.aliyuncs.com/ # 访问域名，注意“/”结尾，例如：https://abc.oss-cn-shanghai.aliyuncs.com/
-        base-path: dkd-images/ # 基础路径
+        access-key: ${OSS_ACCESS_KEY:}
+        secret-key: ${OSS_SECRET_KEY:}
+        end-point: ${OSS_ENDPOINT:}
+        bucket-name: ${OSS_BUCKET_NAME:}
+        domain: ${OSS_DOMAIN:} # 访问域名，注意"/"结尾
+        base-path: ${OSS_BASE_PATH:} # 基础路径
 
 # LingXi-Agent 配置
 agent:

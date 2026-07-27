@@ -19,6 +19,7 @@ import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.common.core.page.TableDataInfo;
 import com.lingXi.common.enums.BusinessType;
 import com.lingXi.common.utils.poi.ExcelUtil;
+import com.lingXi.system.config.SystemSecurityConfigService;
 import com.lingXi.system.domain.SysConfig;
 import com.lingXi.system.service.ISysConfigService;
 
@@ -36,6 +37,15 @@ public class SysConfigController extends BaseController
 
     @Autowired
     private ISysConfigService configService;
+
+    /**
+     * 判断是否为敏感配置键（AI视频模型配置或系统安全配置）。
+     */
+    private boolean isSensitiveKey(String configKey)
+    {
+        return AI_VIDEO_API_KEY.equals(configKey)
+                || SystemSecurityConfigService.SENSITIVE_KEYS.contains(configKey);
+    }
 
     /**
      * 获取参数配置列表
@@ -97,7 +107,7 @@ public class SysConfigController extends BaseController
     {
         if (isSensitiveKey(config.getConfigKey()))
         {
-            return error("AI 服务 API Key 只能在 AI 模型配置页面维护");
+            return error("敏感配置项只能在专用配置页面维护");
         }
         if (!configService.checkConfigKeyUnique(config))
         {
@@ -119,7 +129,7 @@ public class SysConfigController extends BaseController
         SysConfig existing = configService.selectConfigById(config.getConfigId());
         if (isSensitiveKey(config.getConfigKey()) || isSensitiveConfig(existing))
         {
-            return error("AI 服务 API Key 只能在 AI 模型配置页面维护");
+            return error("敏感配置项只能在专用配置页面维护");
         }
         if (!configService.checkConfigKeyUnique(config))
         {
@@ -141,7 +151,7 @@ public class SysConfigController extends BaseController
         {
             if (isSensitiveConfig(configService.selectConfigById(configId)))
             {
-                return error("AI 服务 API Key 只能在 AI 模型配置页面维护");
+                return error("敏感配置项只能在专用配置页面维护");
             }
         }
         configService.deleteConfigByIds(configIds);
@@ -180,10 +190,5 @@ public class SysConfigController extends BaseController
     private boolean isSensitiveConfig(SysConfig config)
     {
         return config != null && isSensitiveKey(config.getConfigKey());
-    }
-
-    private boolean isSensitiveKey(String configKey)
-    {
-        return AI_VIDEO_API_KEY.equals(configKey);
     }
 }

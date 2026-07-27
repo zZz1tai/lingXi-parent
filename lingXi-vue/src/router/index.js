@@ -169,6 +169,20 @@ export const dynamicRoutes = [
     ]
   },
   {
+    path: '/system/security-config',
+    component: Layout,
+    hidden: true,
+    permissions: ['system:config:edit'],
+    children: [
+      {
+        path: 'index',
+        component: () => import('@/views/system/securityConfig/index'),
+        name: 'SystemSecurityConfig',
+        meta: { title: '系统安全配置', activeMenu: '/system/config' }
+      }
+    ]
+  },
+  {
     path: '/system/user-auth',
     component: Layout,
     hidden: true,

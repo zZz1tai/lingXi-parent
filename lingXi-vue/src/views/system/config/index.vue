@@ -84,15 +84,24 @@
                v-hasPermi="['system:config:export']"
             >导出</el-button>
          </el-col>
-         <el-col :span="1.5">
-            <el-button
-               type="danger"
-               plain
-               icon="Refresh"
-               @click="handleRefreshCache"
-               v-hasPermi="['system:config:remove']"
-            >刷新缓存</el-button>
-         </el-col>
+          <el-col :span="1.5">
+             <el-button
+                type="danger"
+                plain
+                icon="Refresh"
+                @click="handleRefreshCache"
+                v-hasPermi="['system:config:remove']"
+             >刷新缓存</el-button>
+          </el-col>
+          <el-col :span="1.5">
+             <el-button
+                type="warning"
+                plain
+                icon="Lock"
+                @click="router.push('/system/security-config/index')"
+                v-hasPermi="['system:config:edit']"
+             >安全配置</el-button>
+          </el-col>
          <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
       </el-row>
 
@@ -168,6 +177,7 @@
 import { listConfig, getConfig, delConfig, addConfig, updateConfig, refreshCache } from "@/api/system/config";
 
 const { proxy } = getCurrentInstance();
+const router = useRouter();
 const { sys_yes_no } = proxy.useDict("sys_yes_no");
 
 const configList = ref([]);
