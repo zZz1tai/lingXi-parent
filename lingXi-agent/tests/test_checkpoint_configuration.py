@@ -85,7 +85,13 @@ class CheckpointLifespanIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(captured["backend"], "postgres")
         self.assertEqual(captured["postgres_dsn"], dsn)
-        configure.assert_called_once_with(saver)
+        configure.assert_called_once_with(
+            saver,
+            store=None,
+            knowledge_retriever=None,
+            agent_tool_client=None,
+            memory_service=None,
+        )
 
 
 if __name__ == "__main__":

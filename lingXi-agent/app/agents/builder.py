@@ -8,10 +8,10 @@ from typing import Any, Literal
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ProviderStrategy, ToolStrategy
 from langchain_core.language_models import BaseChatModel
-from langchain_core.stores import BaseStore
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.store.base import BaseStore
 from pydantic import BaseModel
 
 from app.agents.middleware import build_agent_middleware

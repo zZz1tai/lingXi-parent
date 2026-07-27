@@ -9,6 +9,7 @@ from typing import Literal
 
 from langchain.agents import AgentState
 from langchain_core.language_models import BaseChatModel
+from pydantic import SecretStr
 
 
 class RetailAgentState(AgentState):
@@ -27,8 +28,22 @@ class AgentContext:
 
     user_id: str = ""
     thread_id: str = ""
+    checkpointed: bool = False
     style: Literal["professional", "casual"] = "professional"
     business_tag: str = ""
+    user_name: str = ""
+    role_code: str = ""
+    role_name: str = ""
+    region_id: int | None = None
+    region_name: str = ""
+    permissions: tuple[str, ...] = ()
+    memory_preferences: tuple[tuple[str, str], ...] = ()
+    agent_request_id: str = ""
+    tool_access_token: SecretStr | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     model: BaseChatModel | None = field(default=None, repr=False, compare=False)
 
 

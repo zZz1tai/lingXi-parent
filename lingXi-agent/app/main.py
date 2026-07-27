@@ -25,12 +25,16 @@ from app.config.settings import settings
 from app.api.auth import require_service_auth
 from app.api.middleware import ResourceLimitMiddleware
 from app.agents.checkpoints import checkpointer_lifespan
+from app.agents.stores import store_lifespan
 from app.api.dependencies import configure_agent_runtime, reset_singletons
 from app.services.http_client import (
     close_http_client,
     http_client_ready,
     initialize_http_client,
 )
+from app.services.knowledge import create_knowledge_retriever
+from app.services.agent_tool_client import create_agent_tool_client
+from app.services.memory import LongTermMemoryService
 from app.schemas.response import HealthData, HealthResponse
 from app.utils.exceptions import (
     AgentError,
@@ -76,14 +80,43 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "SERVICE_API_KEY is not set. Protected endpoints will fail closed."
         )
 
+    knowledge_retriever = create_knowledge_retriever(
+        backend=settings.knowledge_backend,
+        index_path=settings.knowledge_index_path,
+        max_index_bytes=settings.knowledge_max_index_bytes,
+    )
+    agent_tool_client = create_agent_tool_client()
+
     async with AsyncExitStack() as stack:
+        store = await stack.enter_async_context(
+            store_lifespan(
+                backend=settings.agent_store_backend,
+                postgres_dsn=settings.agent_store_postgres_dsn_value,
+            )
+        )
         checkpointer = await stack.enter_async_context(
             checkpointer_lifespan(
                 backend=settings.agent_checkpointer_backend,
                 postgres_dsn=settings.agent_postgres_dsn_value,
             )
         )
-        configure_agent_runtime(checkpointer)
+        memory_service = (
+            LongTermMemoryService(
+                store,
+                namespace_secret=settings.agent_memory_namespace_secret_value,
+                max_recall=settings.agent_memory_max_recall,
+                write_confidence=settings.agent_memory_write_confidence,
+            )
+            if settings.agent_memory_enabled and store is not None
+            else None
+        )
+        configure_agent_runtime(
+            checkpointer,
+            store=store,
+            knowledge_retriever=knowledge_retriever,
+            agent_tool_client=agent_tool_client,
+            memory_service=memory_service,
+        )
         try:
             await initialize_http_client()
             stack.push_async_callback(close_http_client)
@@ -182,6 +215,7 @@ async def health_check() -> HealthResponse:
             version="1.0.0",
             model=settings.model_name,
             search_tool="tavily" if settings.tavily_api_key else "unconfigured",
+            knowledge_tool=settings.knowledge_backend,
         ),
     )
 
@@ -220,6 +254,7 @@ async def readiness_check():
             version="1.0.0",
             model=settings.model_name,
             search_tool="tavily" if settings.tavily_api_key else "unconfigured",
+            knowledge_tool=settings.knowledge_backend,
         ),
     )
 

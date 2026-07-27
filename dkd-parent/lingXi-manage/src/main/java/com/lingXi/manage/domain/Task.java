@@ -66,4 +66,7 @@ public class Task extends BaseEntity
     @Excel(name = "地址")
     private String addr;
 
+    /** AI 受控动作ID；仅用于人工确认写操作的持久幂等。 */
+    private String agentActionId;
+
 }

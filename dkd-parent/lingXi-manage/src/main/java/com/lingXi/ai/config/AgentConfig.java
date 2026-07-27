@@ -29,10 +29,20 @@ public class AgentConfig implements EnvironmentAware {
     private String chatInvokeUrl;
     /** 流式对话接口路径 */
     private String chatStreamUrl;
+    /** 结构化流式对话接口路径；Python 当前与旧流共用同一上游端点。 */
+    private String chatStreamV2Url = "/api/v1/chat/stream";
+    /** 人工确认后恢复同一 LangGraph checkpoint 的流式接口路径。 */
+    private String chatResumeUrl = "/api/v1/chat/resume";
     /** 智能问题生成接口路径 */
     private String smartQuestionsUrl;
     /** 删除 Python checkpoint 会话记忆接口路径 */
     private String threadDeleteUrl = "/api/v1/chat/thread";
+    /** 查看当前用户长期回答偏好接口路径。 */
+    private String memoryListUrl = "/api/v1/chat/memory/list";
+    /** 修改当前用户单项长期回答偏好接口路径。 */
+    private String memoryPreferenceUrl = "/api/v1/chat/memory/preference";
+    /** 清空当前用户长期回答偏好接口路径。 */
+    private String memoryClearUrl = "/api/v1/chat/memory";
     /** 回答风格: professional 或 casual */
     private String style;
     /** 最大迭代次数 */
@@ -49,6 +59,14 @@ public class AgentConfig implements EnvironmentAware {
     private Integer streamMaxPoolSize = 16;
     /** Agent 流式转发等待队列长度 */
     private Integer streamQueueCapacity = 100;
+    /** 短期工具令牌有效期（秒），服务端强制不超过15分钟。 */
+    private Integer toolTokenTtlSeconds = 300;
+    /** 单轮对话最多允许调用的 Java 业务工具次数。 */
+    private Integer toolMaxCallsPerRun = 5;
+    /** 受控写操作总开关；默认关闭，避免迁移或 checkpoint 未就绪时开放写入。 */
+    private boolean writeActionsEnabled = false;
+    /** 待审批提案的最长有效时间（分钟），服务端强制不超过60分钟。 */
+    private Integer writeActionProposalTtlMinutes = 15;
 
     /** 保存 Spring 运行时环境，供认证密钥的配置回退逻辑使用。 */
     @Override

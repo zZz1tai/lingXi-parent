@@ -19,10 +19,16 @@ from pydantic import SecretStr
 from app.agents.builder import build_search_agent
 from app.agents.checkpoints import create_in_memory_checkpointer
 from app.agents.state import AgentContext, checkpoint_thread_id
+from app.agents.tools.knowledge_search import create_knowledge_search_tool
+from app.agents.tools.business_data import create_business_data_tools
+from app.agents.tools.web_search import get_default_tools
 from app.config.settings import settings
-from app.schemas.request import LLMConfig
+from app.schemas.request import LLMConfig, UserContext
 from app.security.outbound import validate_outbound_http_url
 from app.services.http_client import get_http_client
+from app.services.agent_tool_client import AgentToolClient
+from app.services.knowledge import KnowledgeRetriever
+from app.services.memory import LongTermMemoryService
 from app.utils.exceptions import (
     AgentError,
     ConfigurationError,
@@ -37,6 +43,9 @@ _agent_instance: CompiledStateGraph | None = None
 _ephemeral_agent_instance: CompiledStateGraph | None = None
 _checkpointer_instance: BaseCheckpointSaver | None = None
 _store_instance: BaseStore | None = None
+_knowledge_retriever_instance: KnowledgeRetriever | None = None
+_agent_tool_client_instance: AgentToolClient | None = None
+_memory_service_instance: LongTermMemoryService | None = None
 
 _model_cache: OrderedDict[str, BaseChatModel] = OrderedDict()
 _model_cache_lock = RLock()
@@ -253,13 +262,20 @@ def configure_agent_runtime(
     checkpointer: BaseCheckpointSaver,
     *,
     store: BaseStore | None = None,
+    knowledge_retriever: KnowledgeRetriever | None = None,
+    agent_tool_client: AgentToolClient | None = None,
+    memory_service: LongTermMemoryService | None = None,
 ) -> None:
-    """在服务前注入生命周期拥有的持久化内存/存储资源。"""
+    """在服务前注入生命周期拥有的持久化内存、Store 和知识后端。"""
 
     global _checkpointer_instance, _store_instance, _agent_instance
-    global _ephemeral_agent_instance
+    global _ephemeral_agent_instance, _knowledge_retriever_instance
+    global _agent_tool_client_instance, _memory_service_instance
     _checkpointer_instance = checkpointer
     _store_instance = store
+    _knowledge_retriever_instance = knowledge_retriever
+    _agent_tool_client_instance = agent_tool_client
+    _memory_service_instance = memory_service
     _agent_instance = None
     _ephemeral_agent_instance = None
 
@@ -276,6 +292,12 @@ def get_checkpointer() -> BaseCheckpointSaver:
     return _checkpointer_instance
 
 
+def get_memory_service() -> LongTermMemoryService | None:
+    """返回生命周期拥有的长期记忆服务；功能关闭时为 ``None``。"""
+
+    return _memory_service_instance
+
+
 def get_agent(
     *,
     checkpointed: bool = True,
@@ -286,6 +308,7 @@ def get_agent(
     if model is not None:
         return build_search_agent(
             model=model,
+            tools=_runtime_tools(),
             checkpointer=get_checkpointer() if checkpointed else None,
             store=_store_instance,
         )
@@ -295,6 +318,7 @@ def get_agent(
         if _agent_instance is None:
             _agent_instance = build_search_agent(
                 model=get_llm(profile="agent-default"),
+                tools=_runtime_tools(),
                 checkpointer=get_checkpointer(),
                 store=_store_instance,
             )
@@ -304,11 +328,22 @@ def get_agent(
     if _ephemeral_agent_instance is None:
         _ephemeral_agent_instance = build_search_agent(
             model=get_llm(profile="agent-default"),
+            tools=_runtime_tools(),
             checkpointer=None,
             store=_store_instance,
         )
         logger.info("Ephemeral search agent initialized and cached")
     return _ephemeral_agent_instance
+
+
+def _runtime_tools() -> list[Any]:
+    """装配当前进程可用工具；知识后端未启用时不暴露工具。"""
+    tools = list(get_default_tools())
+    if _knowledge_retriever_instance is not None:
+        tools.append(create_knowledge_search_tool(_knowledge_retriever_instance))
+    if _agent_tool_client_instance is not None:
+        tools.extend(create_business_data_tools(_agent_tool_client_instance))
+    return tools
 
 
 async def delete_agent_thread(*, user_id: str, thread_id: str) -> None:
@@ -324,8 +359,13 @@ def create_agent_context(
     llm_config: LLMConfig | None,
     user_id: str,
     thread_id: str,
+    checkpointed: bool = False,
     style: str,
     business_tag: str,
+    user_context: UserContext | None = None,
+    agent_request_id: str = "",
+    tool_access_token: SecretStr | None = None,
+    memory_preferences: tuple[tuple[str, str], ...] = (),
 ) -> AgentContext:
     """构建不可变上下文并解析任何有界的模型覆盖。"""
 
@@ -337,8 +377,20 @@ def create_agent_context(
     return AgentContext(
         user_id=user_id,
         thread_id=thread_id,
+        checkpointed=checkpointed,
         style="casual" if style == "casual" else "professional",
         business_tag=business_tag,
+        user_name=user_context.user_name if user_context is not None else "",
+        role_code=(user_context.role_code or "") if user_context is not None else "",
+        role_name=(user_context.role_name or "") if user_context is not None else "",
+        region_id=user_context.region_id if user_context is not None else None,
+        region_name=(user_context.region_name or "") if user_context is not None else "",
+        permissions=(
+            tuple(user_context.permissions) if user_context is not None else ()
+        ),
+        memory_preferences=memory_preferences,
+        agent_request_id=agent_request_id,
+        tool_access_token=tool_access_token,
         model=model,
     )
 
@@ -356,12 +408,16 @@ def reset_singletons() -> None:
     """重置用于测试和应用程序关闭的进程本地缓存。"""
 
     global _llm_instance, _agent_instance, _ephemeral_agent_instance
-    global _checkpointer_instance, _store_instance
+    global _checkpointer_instance, _store_instance, _knowledge_retriever_instance
+    global _agent_tool_client_instance, _memory_service_instance
     _llm_instance = None
     _agent_instance = None
     _ephemeral_agent_instance = None
     _checkpointer_instance = None
     _store_instance = None
+    _knowledge_retriever_instance = None
+    _agent_tool_client_instance = None
+    _memory_service_instance = None
     with _model_cache_lock:
         _model_cache.clear()
     logger.info("LangChain runtime singletons reset")

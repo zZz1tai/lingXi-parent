@@ -6,6 +6,13 @@ import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lingXi.ai.config.AgentConfig;
+import com.lingXi.ai.domain.dto.AgentUserContext;
+import com.lingXi.ai.domain.dto.tool.AgentToolException;
+import com.lingXi.ai.service.AgentToolTokenService;
+import com.lingXi.common.core.domain.entity.SysRole;
+import com.lingXi.common.core.domain.entity.SysUser;
+import com.lingXi.common.core.domain.model.LoginUser;
+import com.lingXi.manage.domain.Emp;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -22,6 +29,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -52,11 +60,14 @@ class AgentClientContractTest {
     private final AtomicReference<String> deleteMethod = new AtomicReference<>();
     private final AtomicReference<String> deleteServiceKey = new AtomicReference<>();
     private final AtomicReference<String> questionsRequest = new AtomicReference<>();
+    private final AtomicReference<String> memoryRequest = new AtomicReference<>();
+    private final AtomicReference<String> memoryMethod = new AtomicReference<>();
     private HttpServer server;
     private ExecutorService serverExecutor;
     private ExecutorService clientExecutor;
     private AgentConfig config;
     private AgentClient client;
+    private AgentToolTokenService toolTokenService;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -91,6 +102,24 @@ class AgentClientContractTest {
                     "{\"success\":true,\"data\":{\"questions\":[\"问题1\","
                             + "\"问题2\",\"问题3\"]}}");
         });
+        server.createContext("/memory/list", exchange -> {
+            memoryMethod.set(exchange.getRequestMethod());
+            memoryRequest.set(readRequest(exchange));
+            send(exchange, 200,
+                    "{\"success\":true,\"data\":{\"enabled\":true,\"items\":[]}}");
+        });
+        server.createContext("/memory/preference", exchange -> {
+            memoryMethod.set(exchange.getRequestMethod());
+            memoryRequest.set(readRequest(exchange));
+            send(exchange, 200,
+                    "{\"success\":true,\"data\":{\"enabled\":true,\"affected\":1}}");
+        });
+        server.createContext("/memory/clear", exchange -> {
+            memoryMethod.set(exchange.getRequestMethod());
+            memoryRequest.set(readRequest(exchange));
+            send(exchange, 200,
+                    "{\"success\":true,\"data\":{\"enabled\":true,\"affected\":1}}");
+        });
         server.start();
 
         config = new AgentConfig();
@@ -99,15 +128,20 @@ class AgentClientContractTest {
         config.setServiceApiKey("offline-service-key");
         config.setChatInvokeUrl("/invoke");
         config.setChatStreamUrl("/stream");
+        config.setChatStreamV2Url("/stream");
         config.setThreadDeleteUrl("/thread");
         config.setSmartQuestionsUrl("/questions");
+        config.setMemoryListUrl("/memory/list");
+        config.setMemoryPreferenceUrl("/memory/preference");
+        config.setMemoryClearUrl("/memory/clear");
         config.setStyle("professional");
         config.setMaxIterations(5);
         config.setConnectTimeout(2000);
         config.setReadTimeout(5000);
 
         clientExecutor = Executors.newSingleThreadExecutor();
-        client = new AgentClient(config, clientExecutor);
+        toolTokenService = new AgentToolTokenService(config);
+        client = new AgentClient(config, toolTokenService, clientExecutor);
     }
 
     @AfterEach
@@ -132,6 +166,105 @@ class AgentClientContractTest {
                 objectMapper.readTree(invokeRequest.get()),
                 "session-sync-1",
                 "user-sync-9");
+        assertFalse(objectMapper.readTree(invokeRequest.get()).has("user_context"));
+        assertFalse(objectMapper.readTree(invokeRequest.get()).has("agent_request_id"));
+        assertFalse(objectMapper.readTree(invokeRequest.get()).has("tool_access_token"));
+    }
+
+    @Test
+    void trustedUserContextIsWhitelistedAndCarriedToPython() throws Exception {
+        AgentUserContext userContext = new AgentUserContext(
+                "42",
+                "张三",
+                "1002",
+                "运营员",
+                12L,
+                "上海一区",
+                Arrays.asList("manage:vm:list", "manage:task:list"));
+
+        client.chat("分析本区设备", "session-trusted", userContext);
+
+        JsonNode request = objectMapper.readTree(invokeRequest.get());
+        assertIdentityContract(request, "session-trusted", "42");
+        JsonNode context = request.path("user_context");
+        assertEquals("张三", context.path("user_name").asText());
+        assertEquals("1002", context.path("role_code").asText());
+        assertEquals("运营员", context.path("role_name").asText());
+        assertEquals(12L, context.path("region_id").asLong());
+        assertEquals("上海一区", context.path("region_name").asText());
+        assertEquals("manage:task:list", context.path("permissions").get(0).asText());
+        assertEquals("manage:vm:list", context.path("permissions").get(1).asText());
+        assertEquals(6, context.size());
+        assertFalse(context.has("user_id"));
+        assertFalse(context.has("password"));
+        assertFalse(context.has("token"));
+        String agentRequestId = request.path("agent_request_id").asText();
+        String toolAccessToken = request.path("tool_access_token").asText();
+        assertTrue(agentRequestId.matches("^req-[a-f0-9]{32}$"));
+        assertTrue(toolAccessToken.length() >= 40);
+        assertThrows(
+                AgentToolException.class,
+                () -> toolTokenService.validateAndConsume(
+                        toolAccessToken,
+                        agentRequestId,
+                        "session-trusted",
+                        "lookup_device"));
+    }
+
+    @Test
+    void authenticatedContextUsesBusinessScopeAndLoginPermissions() {
+        SysRole fallbackRole = new SysRole();
+        fallbackRole.setRoleKey("fallback-role");
+        fallbackRole.setRoleName("系统角色");
+        fallbackRole.setRoleSort(1);
+        SysUser user = new SysUser();
+        user.setUserName("trusted-login");
+        user.setRoles(Arrays.asList(fallbackRole));
+        LoginUser loginUser = new LoginUser(
+                42L,
+                null,
+                user,
+                new HashSet<>(Arrays.asList("manage:vm:list", "manage:task:list")));
+        Emp employee = new Emp();
+        employee.setRoleCode("1002");
+        employee.setRoleName("运营员");
+        employee.setRegionId(12L);
+        employee.setRegionName("上海一区");
+
+        AgentUserContext context = AgentUserContext.fromAuthenticated(
+                loginUser, employee);
+
+        assertEquals("42", context.getUserId());
+        assertEquals("trusted-login", context.getUserName());
+        assertEquals("1002", context.getRoleCode());
+        assertEquals("运营员", context.getRoleName());
+        assertEquals(12L, context.getRegionId());
+        assertEquals("上海一区", context.getRegionName());
+        assertEquals(
+                Arrays.asList("manage:task:list", "manage:vm:list"),
+                context.getPermissions());
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> context.getPermissions().add("forged:permission"));
+    }
+
+    @Test
+    void authenticatedContextFallsBackToSystemRole() {
+        SysRole role = new SysRole();
+        role.setRoleKey("admin");
+        role.setRoleName("管理员");
+        role.setRoleSort(1);
+        SysUser user = new SysUser();
+        user.setUserName("admin-user");
+        user.setRoles(Arrays.asList(role));
+        LoginUser loginUser = new LoginUser(
+                1L, null, user, new HashSet<>(Arrays.asList("*:*:*")));
+
+        AgentUserContext context = AgentUserContext.fromAuthenticated(loginUser, null);
+
+        assertEquals("admin", context.getRoleCode());
+        assertEquals("管理员", context.getRoleName());
+        assertEquals(Arrays.asList("*:*:*"), context.getPermissions());
     }
 
     @Test
@@ -196,6 +329,91 @@ class AgentClientContractTest {
                 objectMapper.readTree(streamRequest.get()),
                 "session-stream-3",
                 "user-stream-7");
+    }
+
+    @Test
+    void structuredStreamForwardsOnlyPublicFieldsAndStillPersistsFullReply()
+            throws Exception {
+        String secret = "SENTINEL_PRIVATE_TOOL_VALUE";
+        streamResponse.set(
+                "data: {\"type\":\"tool_start\",\"tool\":\"lookup_device\","
+                        + "\"tool_input\":{\"tool_access_token\":\"" + secret + "\"}}\n\n"
+                        + "data: {\"type\":\"citation\",\"tool\":\"search_knowledge\","
+                        + "\"data\":{\"title\":\"操作规范\",\"source_id\":\"sop#1\","
+                        + "\"secret\":\"" + secret + "\"}}\n\n"
+                        + "data: {\"type\":\"tool_end\",\"tool\":\"lookup_device\","
+                        + "\"tool_output\":\"" + secret + "\","
+                        + "\"data\":{\"status\":\"success\",\"result_count\":1}}\n\n"
+                        + "data: {\"type\":\"memory_saved\","
+                        + "\"data\":{\"preference\":\"answer_length\","
+                        + "\"value\":\"short\",\"evidence\":\"" + secret + "\"}}\n\n"
+                        + "data: {\"type\":\"token\",\"content\":\"完成\"}\n\n"
+                        + "data: {\"type\":\"done\"}\n\n"
+                        + "data: [DONE]\n\n");
+        CountDownLatch completed = new CountDownLatch(1);
+        AtomicReference<String> reply = new AtomicReference<>();
+        AgentUserContext context = new AgentUserContext(
+                "42", "张三", "1002", "运营员", 12L, "上海一区",
+                Collections.singletonList("manage:vm:list"));
+
+        SseEmitter emitter = client.streamChatV2(
+                "查询设备", "session-v2", context, value -> {
+                    reply.set(value);
+                    completed.countDown();
+                });
+
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals("完成", reply.get());
+        String emitted = emittedData(emitter);
+        assertTrue(emitted.contains("lookup_device"));
+        assertTrue(emitted.contains("操作规范"));
+        assertTrue(emitted.contains("answer_length"));
+        assertTrue(emitted.contains("完成"));
+        assertFalse(emitted.contains(secret));
+        assertFalse(emitted.contains("tool_access_token"));
+        assertFalse(emitted.contains("tool_output"));
+    }
+
+    @Test
+    void approvalEventForwardsOnlyPublicActionFields() throws Exception {
+        String secret = "SENTINEL_PRIVATE_ACTION_VALUE";
+        streamResponse.set(
+                "data: {\"type\":\"approval_required\",\"data\":{"
+                        + "\"action_id\":\"action-123\","
+                        + "\"action_type\":\"CREATE_MAINTENANCE_TASK\","
+                        + "\"status\":\"PENDING\","
+                        + "\"description\":\"检查设备\","
+                        + "\"impact\":\"只创建一张待处理维修工单\","
+                        + "\"expires_at\":\"2026-07-25T08:30:00Z\","
+                        + "\"target\":{\"inner_code\":\"A001\"},"
+                        + "\"user_id\":\"" + secret + "\","
+                        + "\"thread_id\":\"" + secret + "\","
+                        + "\"region_id\":12,"
+                        + "\"idempotency_key\":\"" + secret + "\","
+                        + "\"tool_access_token\":\"" + secret + "\"}}\n\n"
+                        + "data: [DONE]\n\n");
+        AtomicInteger callbackCount = new AtomicInteger();
+        AgentUserContext context = new AgentUserContext(
+                "42", "张三", "1002", "运营员", 12L, "上海一区",
+                Collections.singletonList("manage:task:add"));
+
+        SseEmitter emitter = client.streamChatV2(
+                "创建维修工单", "session-approval", context,
+                ignored -> callbackCount.incrementAndGet());
+        awaitClientTasks();
+
+        String emitted = emittedData(emitter);
+        assertEquals(0, callbackCount.get());
+        assertTrue(emitted.contains("approval_required"));
+        assertTrue(emitted.contains("action-123"));
+        assertTrue(emitted.contains("A001"));
+        assertTrue(emitted.contains("检查设备"));
+        assertFalse(emitted.contains(secret));
+        assertFalse(emitted.contains("user_id"));
+        assertFalse(emitted.contains("thread_id"));
+        assertFalse(emitted.contains("region_id"));
+        assertFalse(emitted.contains("idempotency_key"));
+        assertFalse(emitted.contains("tool_access_token"));
     }
 
     @Test
@@ -324,6 +542,29 @@ class AgentClientContractTest {
 
         assertThrows(RuntimeException.class,
                 () -> client.deleteThreadMemory("session-delete-5", "user-delete-7"));
+    }
+
+    @Test
+    void longTermMemoryCallsCarryOnlyServerSelectedUserIdentity() throws Exception {
+        Map<String, Object> listed = client.listLongTermMemories("user-memory-1");
+        assertTrue(Boolean.TRUE.equals(listed.get("enabled")));
+        assertEquals("POST", memoryMethod.get());
+        JsonNode request = objectMapper.readTree(memoryRequest.get());
+        assertEquals("user-memory-1", request.path("user_id").asText());
+        assertEquals(1, request.size());
+
+        client.updateLongTermPreference(
+                "user-memory-1", "answer_length", "short");
+        assertEquals("PUT", memoryMethod.get());
+        request = objectMapper.readTree(memoryRequest.get());
+        assertEquals("answer_length", request.path("preference").asText());
+        assertEquals("short", request.path("value").asText());
+
+        client.clearLongTermMemories("user-memory-1");
+        assertEquals("DELETE", memoryMethod.get());
+        request = objectMapper.readTree(memoryRequest.get());
+        assertEquals("user-memory-1", request.path("user_id").asText());
+        assertEquals(1, request.size());
     }
 
     @Test

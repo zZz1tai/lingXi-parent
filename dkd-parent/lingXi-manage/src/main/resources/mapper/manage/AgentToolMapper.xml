@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.ai.mapper.AgentToolMapper">
+
+    <select id="selectSalesSummary" resultType="java.util.Map">
+        SELECT
+            COUNT(*) AS order_count,
+            COALESCE(SUM(amount), 0) AS order_amount_cent,
+            COALESCE(ROUND(AVG(amount)), 0) AS average_order_amount_cent
+        FROM tb_order
+        WHERE region_id = #{regionId}
+          AND create_time &gt;= #{start}
+          AND create_time &lt; #{endExclusive}
+          AND status IN (1, 2)
+    </select>
+
+    <select id="selectSalesTrend" resultType="java.util.Map">
+        SELECT
+            <choose>
+                <when test="granularity == 'month'">
+                    DATE_FORMAT(create_time, '%Y-%m') AS period
+                </when>
+                <otherwise>
+                    DATE_FORMAT(create_time, '%Y-%m-%d') AS period
+                </otherwise>
+            </choose>,
+            COUNT(*) AS order_count,
+            COALESCE(SUM(amount), 0) AS order_amount_cent
+        FROM tb_order
+        WHERE region_id = #{regionId}
+          AND create_time &gt;= #{start}
+          AND create_time &lt; #{endExclusive}
+          AND status IN (1, 2)
+        GROUP BY period
+        ORDER BY period
+    </select>
+
+    <select id="selectTaskStatistics" resultType="java.util.Map">
+        SELECT
+            COUNT(*) AS total,
+            COALESCE(SUM(CASE WHEN task_status = 1 THEN 1 ELSE 0 END), 0) AS pending_count,
+            COALESCE(SUM(CASE WHEN task_status = 2 THEN 1 ELSE 0 END), 0) AS progress_count,
+            COALESCE(SUM(CASE WHEN task_status = 3 THEN 1 ELSE 0 END), 0) AS canceled_count,
+            COALESCE(SUM(CASE WHEN task_status = 4 THEN 1 ELSE 0 END), 0) AS completed_count,
+            COUNT(DISTINCT CASE WHEN user_id IS NOT NULL THEN user_id END) AS worker_count,
+            ROUND(AVG(CASE WHEN task_status = 4
+                THEN TIMESTAMPDIFF(MINUTE, create_time, update_time) END), 2)
+                AS average_completion_minutes
+        FROM tb_task
+        WHERE region_id = #{regionId}
+          AND create_time &gt;= #{start}
+          AND create_time &lt; #{endExclusive}
+        <if test="taskType != null">
+          AND product_type_id = #{taskType}
+        </if>
+    </select>
+
+    <select id="countAbnormalDevices" resultType="java.lang.Integer">
+        SELECT COUNT(*)
+        FROM tb_vending_machine
+        WHERE region_id = #{regionId}
+          AND (running_status != '{"statusCode":"1001","status":true}'
+               OR running_status IS NULL)
+    </select>
+
+    <select id="selectAbnormalDevices" resultType="java.util.Map">
+        SELECT
+            vm.inner_code AS inner_code,
+            vm.vm_status AS vm_status,
+            vm.running_status AS running_status,
+            vm.update_time AS updated_at,
+            vt.name AS vm_type_name
+        FROM tb_vending_machine vm
+        LEFT JOIN tb_vm_type vt ON vm.vm_type_id = vt.id
+        WHERE vm.region_id = #{regionId}
+          AND (vm.running_status != '{"statusCode":"1001","status":true}'
+               OR vm.running_status IS NULL)
+        ORDER BY vm.update_time DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectDeviceByInnerCodeAndRegion" resultType="java.util.Map">
+        SELECT
+            vm.inner_code AS inner_code,
+            vm.vm_status AS vm_status,
+            vm.running_status AS running_status,
+            vm.last_supply_time AS last_supply_time,
+            vm.update_time AS updated_at,
+            vm.region_id AS region_id,
+            r.region_name AS region_name,
+            vt.name AS vm_type_name
+        FROM tb_vending_machine vm
+        LEFT JOIN tb_vm_type vt ON vm.vm_type_id = vt.id
+        LEFT JOIN tb_region r ON vm.region_id = r.id
+        WHERE vm.inner_code = #{innerCode}
+          AND vm.region_id = #{regionId}
+        LIMIT 1
+    </select>
+</mapper>

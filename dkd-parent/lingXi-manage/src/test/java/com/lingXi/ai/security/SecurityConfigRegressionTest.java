@@ -19,6 +19,9 @@ class SecurityConfigRegressionTest {
     private static final Pattern AI_PERMIT_ALL = Pattern.compile(
             "\\.antMatchers\\s*\\(\\s*\"/api/ai/\\*\\*\"\\s*\\)"
                     + "\\s*\\.permitAll\\s*\\(");
+    private static final Pattern INTERNAL_TOOL_PERMIT_ALL = Pattern.compile(
+            "\\.antMatchers\\s*\\(\\s*\"/internal/ai/tools/\\*\\*\"\\s*\\)"
+                    + "\\s*\\.permitAll\\s*\\(");
 
     @Test
     void aiApiIsNotInAnonymousSecurityWhitelist() throws IOException {
@@ -28,6 +31,16 @@ class SecurityConfigRegressionTest {
                 "/api/ai/** must require authentication");
         assertTrue(source.contains(".anyRequest().authenticated()"),
                 "the authenticated fallback must remain enabled");
+    }
+
+    @Test
+    void internalToolGatewayUsesItsOwnBearerBoundary() throws IOException {
+        String source = Files.readString(findSecurityConfig(), StandardCharsets.UTF_8);
+
+        assertTrue(INTERNAL_TOOL_PERMIT_ALL.matcher(source).find(),
+                "the internal gateway must bypass browser JWT authentication");
+        assertTrue(source.contains(".anyRequest().authenticated()"),
+                "other endpoints must keep the authenticated fallback");
     }
 
     private static Path findSecurityConfig() {
