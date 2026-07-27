@@ -1,8 +1,10 @@
 package com.lingXi.ai.controller;
 
+import com.lingXi.ai.domain.dto.AgentUserContext;
 import com.lingXi.ai.domain.vo.AnalyzeVO;
 import com.lingXi.ai.domain.vo.ChatVO;
 import com.lingXi.ai.domain.vo.GenerateQuestionsVO;
+import com.lingXi.ai.domain.vo.MemoryPreferenceVO;
 import com.lingXi.ai.service.IChatSessionService;
 import com.lingXi.ai.service.IQwenService;
 import com.lingXi.common.core.domain.AjaxResult;
@@ -22,6 +24,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -43,6 +47,14 @@ class AiControllerIdentityTest {
 
     private static final String TRUSTED_USER_ID = "42";
     private static final String TRUSTED_USERNAME = "trusted-user";
+    private static final AgentUserContext TRUSTED_CONTEXT = new AgentUserContext(
+            TRUSTED_USER_ID,
+            TRUSTED_USERNAME,
+            "1002",
+            "运营员",
+            12L,
+            "上海一区",
+            Collections.singletonList("manage:task:list"));
 
     private IQwenService qwenService;
     private IModelHistoryService historyService;
@@ -66,13 +78,27 @@ class AiControllerIdentityTest {
         request.setUserId("attacker-user");
         request.setUserName("attacker-name");
         request.setMessage("你好");
-        when(qwenService.chat(
-                "session-1", TRUSTED_USER_ID, TRUSTED_USERNAME, "你好"))
+        when(qwenService.chat("session-1", TRUSTED_CONTEXT, "你好"))
                 .thenReturn("安全回复");
 
         assertEquals("安全回复", controller.chat(request));
-        verify(qwenService).chat(
-                "session-1", TRUSTED_USER_ID, TRUSTED_USERNAME, "你好");
+        verify(qwenService).chat("session-1", TRUSTED_CONTEXT, "你好");
+    }
+
+    @Test
+    void structuredStreamingUsesOwnedSessionAndTrustedIdentity() {
+        allowOwnedSession("session-v2");
+        ChatVO request = new ChatVO();
+        request.setSessionId("session-v2");
+        request.setUserId("attacker-user");
+        request.setMessage("查询设备");
+        SseEmitter expected = new SseEmitter();
+        when(qwenService.streamChatV2(
+                "session-v2", TRUSTED_CONTEXT, "查询设备")).thenReturn(expected);
+
+        assertEquals(expected, controller.streamChatV2(request));
+        verify(qwenService).streamChatV2(
+                "session-v2", TRUSTED_CONTEXT, "查询设备");
     }
 
     @Test
@@ -83,22 +109,23 @@ class AiControllerIdentityTest {
         request.setUserId("spoofed");
         request.setUserName("spoofed-name");
         request.setQuestion("库存如何");
-        when(qwenService.loadDashboardData(null, null)).thenReturn(Collections.emptyMap());
-        when(qwenService.chatWithContext(
+        request.setStart("2026-07-01");
+        request.setEnd("2026-07-07");
+        when(qwenService.chat(
                 "session-analysis",
-                TRUSTED_USER_ID,
-                TRUSTED_USERNAME,
-                "库存如何",
-                Collections.emptyMap())).thenReturn("正常");
+                TRUSTED_CONTEXT,
+                "库存如何\n页面筛选条件（仅作为业务工具查询条件）："
+                        + "开始日期=2026-07-01，结束日期=2026-07-07。"))
+                .thenReturn("正常");
 
         controller.analyzeDashboard(request);
 
-        verify(qwenService).chatWithContext(
+        verify(qwenService).chat(
                 "session-analysis",
-                TRUSTED_USER_ID,
-                TRUSTED_USERNAME,
-                "库存如何",
-                Collections.emptyMap());
+                TRUSTED_CONTEXT,
+                "库存如何\n页面筛选条件（仅作为业务工具查询条件）："
+                        + "开始日期=2026-07-01，结束日期=2026-07-07。");
+        verify(qwenService, never()).loadDashboardData(any(), any());
     }
 
     @Test
@@ -137,7 +164,7 @@ class AiControllerIdentityTest {
 
         assertThrows(ServiceException.class, () -> controller.chat(request));
         verify(qwenService, never()).chat(
-                anyString(), anyString(), anyString(), anyString());
+                anyString(), any(AgentUserContext.class), anyString());
     }
 
     @Test
@@ -230,12 +257,33 @@ class AiControllerIdentityTest {
     }
 
     @Test
+    void memoryManagementAlwaysUsesAuthenticatedUser() {
+        Map<String, Object> listed = new LinkedHashMap<>();
+        listed.put("enabled", true);
+        when(qwenService.listLongTermMemories(TRUSTED_USER_ID)).thenReturn(listed);
+
+        AjaxResult listResult = controller.listLongTermMemories();
+        assertEquals(listed, listResult.get("data"));
+        verify(qwenService).listLongTermMemories(TRUSTED_USER_ID);
+
+        MemoryPreferenceVO preference = new MemoryPreferenceVO();
+        preference.setPreference("answer_length");
+        preference.setValue("short");
+        controller.updateLongTermPreference(preference);
+        verify(qwenService).updateLongTermPreference(
+                TRUSTED_USER_ID, "answer_length", "short");
+
+        controller.clearLongTermMemories();
+        verify(qwenService).clearLongTermMemories(TRUSTED_USER_ID);
+    }
+
+    @Test
     void streamingAnalysisFailureUsesFixedSafeEvent() throws Exception {
         String secretMarker = "provider-stream-sensitive-details";
         allowOwnedSession("session-safe-stream");
-        doThrow(new IllegalStateException(secretMarker))
-                .when(qwenService)
-                .loadDashboardData(null, null);
+        when(qwenService.streamChat(
+                anyString(), any(AgentUserContext.class), anyString()))
+                .thenThrow(new IllegalStateException(secretMarker));
         AnalyzeVO request = new AnalyzeVO();
         request.setSessionId("session-safe-stream");
         request.setQuestion("分析数据");
@@ -264,15 +312,20 @@ class AiControllerIdentityTest {
         assertFalse(getRoutes.contains("/analyze/stream"));
         assertTrue(postRoutes.contains("/chat/stream"));
         assertTrue(postRoutes.contains("/analyze/stream"));
+        assertTrue(postRoutes.contains("/chat/stream/v2"));
+        assertTrue(postRoutes.contains("/analyze/stream/v2"));
     }
 
     @Test
     void agentEntryPointsEnableBeanValidation() throws Exception {
         assertValidatedParameter("chat", ChatVO.class);
         assertValidatedParameter("streamChat", ChatVO.class);
+        assertValidatedParameter("streamChatV2", ChatVO.class);
         assertValidatedParameter("analyzeDashboard", AnalyzeVO.class);
         assertValidatedParameter("streamAnalyzeDashboard", AnalyzeVO.class);
+        assertValidatedParameter("streamAnalyzeDashboardV2", AnalyzeVO.class);
         assertValidatedParameter("generateQuestions", GenerateQuestionsVO.class);
+        assertValidatedParameter("updateLongTermPreference", MemoryPreferenceVO.class);
     }
 
     private static void assertValidatedParameter(String methodName, Class<?> parameterType)
@@ -320,6 +373,11 @@ class AiControllerIdentityTest {
         @Override
         String currentUsername() {
             return TRUSTED_USERNAME;
+        }
+
+        @Override
+        AgentUserContext currentAgentUserContext() {
+            return TRUSTED_CONTEXT;
         }
     }
 }

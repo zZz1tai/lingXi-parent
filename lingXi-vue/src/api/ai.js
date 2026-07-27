@@ -34,7 +34,20 @@ function parseSseEvent(block) {
   return { event, data: data.join('\n') };
 }
 
-async function streamSse(path, { body, query, signal, onChunk } = {}) {
+function structuredEvent(event, data) {
+  if (!data || data === '[DONE]') return null;
+  try {
+    const payload = JSON.parse(data);
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      return { ...payload, type: payload.type || event };
+    }
+  } catch {
+    // 旧版纯文本 SSE 继续作为 token 处理。
+  }
+  return { type: event === 'message' ? 'token' : event, content: data };
+}
+
+async function streamSse(path, { body, query, signal, onChunk, onEvent } = {}) {
   const search = new URLSearchParams();
   Object.entries(query || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
@@ -68,12 +81,14 @@ async function streamSse(path, { body, query, signal, onChunk } = {}) {
   const consume = (block) => {
     if (!block.trim()) return;
     const parsed = parseSseEvent(block);
-    if (parsed.event === 'error') {
-      throw new Error(parsed.data || '流式请求失败');
+    const payload = structuredEvent(parsed.event, parsed.data);
+    if (!payload) return;
+    if (payload.type === 'error') {
+      throw new Error(payload.content || '流式请求失败');
     }
-    if (parsed.data && parsed.data !== '[DONE]') {
-      onChunk?.(parsed.data);
-    }
+    onEvent?.(payload);
+    if (payload.type === 'token' && payload.content) onChunk?.(payload.content);
+    if (payload.type === 'done' && payload.content) onChunk?.(payload.content);
   };
 
   try {
@@ -139,12 +154,13 @@ export function streamChatWithQwen(
   sessionId,
   userId,
   userName,
-  { signal, onChunk } = {}
+  { signal, onChunk, onEvent } = {}
 ) {
-  return streamSse('/api/ai/chat/stream', {
+  return streamSse('/api/ai/chat/stream/v2', {
     body: { sessionId, userId, userName, message },
     signal,
-    onChunk
+    onChunk,
+    onEvent
   });
 }
 
@@ -188,12 +204,58 @@ export function streamAnalyzeDashboard(
   sessionId,
   userId,
   userName,
-  { signal, onChunk } = {}
+  { signal, onChunk, onEvent } = {}
 ) {
-  return streamSse('/api/ai/analyze/stream', {
+  return streamSse('/api/ai/analyze/stream/v2', {
     query: { question, start, end, sessionId, userId, userName },
     signal,
-    onChunk
+    onChunk,
+    onEvent
+  });
+}
+
+/** 登录用户批准或拒绝受控动作，并继续读取同一条助手消息的 SSE。 */
+export function resumeAgentAction(
+  actionId,
+  sessionId,
+  decision,
+  description,
+  { signal, onChunk, onEvent } = {}
+) {
+  return streamSse(`/api/ai/actions/${encodeURIComponent(actionId)}/decision`, {
+    body: {
+      sessionId,
+      decision,
+      ...(decision === 'approve' ? { description } : {})
+    },
+    signal,
+    onChunk,
+    onEvent
+  });
+}
+
+/** 获取当前登录用户允许查看和修改的长期回答偏好。 */
+export function getLongTermMemories() {
+  return request({
+    url: '/api/ai/memories',
+    method: 'get'
+  });
+}
+
+/** 修改一项枚举化长期回答偏好。 */
+export function updateLongTermPreference(preference, value) {
+  return request({
+    url: '/api/ai/memories',
+    method: 'put',
+    data: { preference, value }
+  });
+}
+
+/** 清空当前登录用户的全部长期回答偏好。 */
+export function clearLongTermMemories() {
+  return request({
+    url: '/api/ai/memories',
+    method: 'delete'
   });
 }
 

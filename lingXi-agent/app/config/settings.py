@@ -65,6 +65,26 @@ class Settings(BaseSettings):
         description="Maximum number of search results per query",
     )
 
+    # ── 内部知识检索配置 ───────────────────────────────────────────
+    knowledge_backend: Literal["disabled", "jsonl"] = Field(
+        default="disabled",
+        validation_alias="KNOWLEDGE_BACKEND",
+        description="Internal knowledge backend; disabled unless explicitly enabled",
+    )
+    knowledge_index_path: Path | None = Field(
+        default=None,
+        validation_alias="KNOWLEDGE_INDEX_PATH",
+        description="UTF-8 JSONL knowledge index path for the jsonl backend",
+    )
+    knowledge_top_k: int = Field(default=8, ge=1, le=20)
+    knowledge_rerank_top_n: int = Field(default=5, ge=1, le=8)
+    knowledge_model_chunk_chars: int = Field(default=2_400, ge=200, le=8_000)
+    knowledge_max_index_bytes: int = Field(
+        default=20 * 1024 * 1024,
+        ge=1_024,
+        le=512 * 1024 * 1024,
+    )
+
     # ── Agent 配置 ─────────────────────────────────────────────────
     max_iterations: int = Field(
         default=5,
@@ -77,6 +97,50 @@ class Settings(BaseSettings):
         ge=5,
         le=120,
         description="Timeout in seconds for individual tool calls",
+    )
+    agent_tools_enabled: bool = Field(
+        default=False,
+        validation_alias="AGENT_TOOLS_ENABLED",
+        description="Expose Java-backed business tools to the Agent",
+    )
+    agent_write_actions_enabled: bool = Field(
+        default=False,
+        validation_alias="AGENT_WRITE_ACTIONS_ENABLED",
+        description="Expose human-confirmed low-risk maintenance task proposals",
+    )
+    agent_tool_base_url: str = Field(
+        default="http://localhost:8080",
+        validation_alias="AGENT_TOOL_BASE_URL",
+        min_length=8,
+        max_length=2048,
+    )
+    agent_tool_allowed_hosts: str = Field(
+        default="localhost,127.0.0.1",
+        validation_alias="AGENT_TOOL_ALLOWED_HOSTS",
+        description="Exact comma-separated destinations for the fixed Java Tool Gateway",
+    )
+    agent_tool_allow_insecure_http: bool = Field(
+        default=True,
+        validation_alias="AGENT_TOOL_ALLOW_INSECURE_HTTP",
+        description="Allow HTTP only for an explicitly allowlisted internal development gateway",
+    )
+    agent_tool_timeout_seconds: float = Field(
+        default=20.0,
+        validation_alias="AGENT_TOOL_TIMEOUT_SECONDS",
+        gt=0,
+        le=60,
+    )
+    agent_tool_max_response_bytes: int = Field(
+        default=256 * 1024,
+        validation_alias="AGENT_TOOL_MAX_RESPONSE_BYTES",
+        ge=1024,
+        le=2 * 1024 * 1024,
+    )
+    agent_tool_model_text_chars: int = Field(
+        default=12_000,
+        validation_alias="AGENT_TOOL_MODEL_TEXT_CHARS",
+        ge=1_000,
+        le=16_000,
     )
 
     # ── 服务安全配置 ───────────────────────────────────────────────
@@ -149,6 +213,39 @@ class Settings(BaseSettings):
         description="PostgreSQL DSN used by the durable checkpoint backend",
     )
 
+    # ── LangGraph 长期 Store 与记忆 ───────────────────────────────
+    agent_store_backend: Literal["disabled", "memory", "postgres"] = Field(
+        default="disabled",
+        validation_alias="AGENT_STORE_BACKEND",
+        description="Cross-thread Store backend",
+    )
+    agent_store_postgres_dsn: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias="AGENT_STORE_POSTGRES_DSN",
+        description="PostgreSQL DSN used by the long-term Store",
+    )
+    agent_memory_enabled: bool = Field(
+        default=False,
+        validation_alias="AGENT_MEMORY_ENABLED",
+    )
+    agent_memory_namespace_secret: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias="AGENT_MEMORY_NAMESPACE_SECRET",
+        description="HMAC secret used to pseudonymize Store user namespaces",
+    )
+    agent_memory_max_recall: int = Field(
+        default=5,
+        validation_alias="AGENT_MEMORY_MAX_RECALL",
+        ge=1,
+        le=20,
+    )
+    agent_memory_write_confidence: float = Field(
+        default=0.9,
+        validation_alias="AGENT_MEMORY_WRITE_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
+
     # ── 服务端配置 ─────────────────────────────────────────────────
     host: str = Field(default="127.0.0.1", description="Server bind host")
     port: int = Field(default=5000, description="Server bind port")
@@ -163,6 +260,25 @@ class Settings(BaseSettings):
             values["port"] = int(deploy_port)
         return values
 
+    @model_validator(mode="after")
+    def _validate_knowledge_limits(self) -> "Settings":
+        if self.knowledge_rerank_top_n > self.knowledge_top_k:
+            raise ValueError("KNOWLEDGE_RERANK_TOP_N must not exceed KNOWLEDGE_TOP_K")
+        if self.agent_memory_enabled:
+            if self.agent_store_backend == "disabled":
+                raise ValueError(
+                    "AGENT_STORE_BACKEND must be enabled when AGENT_MEMORY_ENABLED=true"
+                )
+            if len(self.agent_memory_namespace_secret_value.encode("utf-8")) < 32:
+                raise ValueError(
+                    "AGENT_MEMORY_NAMESPACE_SECRET must contain at least 32 bytes"
+                )
+        if self.agent_write_actions_enabled and not self.agent_tools_enabled:
+            raise ValueError(
+                "AGENT_TOOLS_ENABLED must be true when AGENT_WRITE_ACTIONS_ENABLED=true"
+            )
+        return self
+
     @property
     def service_api_key_value(self) -> str:
         """返回服务共享密钥，不会在 repr/日志中暴露。"""
@@ -174,11 +290,31 @@ class Settings(BaseSettings):
         return self.agent_postgres_dsn.get_secret_value()
 
     @property
+    def agent_store_postgres_dsn_value(self) -> str:
+        """返回长期 Store DSN；未单独配置时复用 checkpoint DSN。"""
+        configured = self.agent_store_postgres_dsn.get_secret_value().strip()
+        return configured or self.agent_postgres_dsn_value
+
+    @property
+    def agent_memory_namespace_secret_value(self) -> str:
+        """仅在记忆服务构造边界返回命名空间 HMAC 密钥。"""
+        return self.agent_memory_namespace_secret.get_secret_value()
+
+    @property
     def outbound_host_allowlist(self) -> set[str]:
         """标准化的提供商主机/权限白名单。"""
         return {
             item.strip().lower().rstrip(".")
             for item in self.outbound_allowed_hosts.split(",")
+            if item.strip()
+        }
+
+    @property
+    def agent_tool_host_allowlist(self) -> set[str]:
+        """标准化的 Java Tool Gateway 精确目的地主机白名单。"""
+        return {
+            item.strip().lower().rstrip(".")
+            for item in self.agent_tool_allowed_hosts.split(",")
             if item.strip()
         }
 

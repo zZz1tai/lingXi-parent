@@ -67,5 +67,8 @@ public interface IVendingMachineService
      */
     public VendingMachine selectVendingMachineByInnerCode(String innerCode);
 
+    /** 在当前事务中锁定目标设备，供受控写操作串行复核。 */
+    public VendingMachine selectVendingMachineByInnerCodeForUpdate(String innerCode);
+
 
 }

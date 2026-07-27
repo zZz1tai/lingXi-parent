@@ -70,4 +70,7 @@ public interface VendingMachineMapper
      */
     @Select("select * from tb_vending_machine where inner_code=#{innerCode}")
     public VendingMachine selectVendingMachineByInnerCode(String innerCode);
+
+    @Select("select * from tb_vending_machine where inner_code=#{innerCode} for update")
+    public VendingMachine selectVendingMachineByInnerCodeForUpdate(String innerCode);
 }

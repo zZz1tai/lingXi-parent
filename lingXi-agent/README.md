@@ -33,7 +33,8 @@ app/
 │   ├── builder.py             # create_agent、ToolStrategy / ProviderStrategy
 │   ├── middleware.py          # 动态 Prompt、模型路由、工具错误与摘要预算
 │   ├── state.py               # AgentState 与不可变请求 Context
-│   └── checkpoints.py         # InMemory / AsyncPostgresSaver 生命周期
+│   ├── checkpoints.py         # InMemory / AsyncPostgresSaver 生命周期
+│   └── stores.py              # InMemory / AsyncPostgresStore 生命周期
 ├── chains/
 │   ├── chapter_analysis.py    # 章节骨架、逐场景生成、局部修复及全局校验
 │   ├── promt.py               # 章节规划、场景生成与修复提示词
@@ -45,6 +46,7 @@ app/
 ├── schemas/                   # Pydantic 请求/响应契约
 └── services/
     ├── chapter_analysis.py    # Story Bible 业务契约与 Prompt 最终化
+    ├── memory.py              # 受控长期偏好召回、写入与清空
     └── video_capabilities.py  # Wanx/Qwen 模型能力单一来源
 ```
 
@@ -56,6 +58,9 @@ app/
 | POST | `/api/v1/chat/stream` | 对话或看板分析 SSE |
 | POST | `/api/v1/chat/smart-questions` | 根据结构化对话历史返回严格 3 条快捷问题 |
 | DELETE | `/api/v1/chat/thread` | 按 `{user_id, thread_id}` 永久删除会话 checkpoint |
+| POST | `/api/v1/chat/memory/list` | 查看当前用户规范化长期回答偏好 |
+| PUT | `/api/v1/chat/memory/preference` | 修改一项长期回答偏好 |
+| DELETE | `/api/v1/chat/memory` | 幂等清空当前用户全部长期回答偏好 |
 | POST | `/api/v1/extract` | 显式 ToolStrategy / ProviderStrategy 结构化提取 |
 | POST | `/api/v1/video/analyze-chapter` | 章节骨架规划、逐场景生成、局部修复及全局校验 |
 | POST | `/api/v1/video/analyze-chapter/stream` | 同上，并以 NDJSON 持续返回阶段进度和最终结果 |
@@ -97,6 +102,93 @@ AGENT_POSTGRES_DSN=postgresql://agent_user:password@postgres:5432/lingxi_agent
 这两个配置统一由 Pydantic Settings 从进程环境或项目 `.env` 加载；DSN
 使用 `SecretStr` 保存，不会出现在配置 repr 或日志中。进程启动时会初始化
 `AsyncPostgresSaver` 所需表，并在退出时关闭连接。
+
+## 长期回答偏好
+
+长期记忆默认完全关闭。启用后仅保存 `answer_length`、
+`answer_structure`、`number_format` 三类枚举偏好；确定性提取只接受用户
+“以后回答简短一点”“以后先说结论”等明确表达。Store 不保存聊天原文、
+角色权限、手机号、验证码、库存、设备状态或其他模型推断事实。
+
+生产配置示例：
+
+```dotenv
+AGENT_STORE_BACKEND=postgres
+# 留空时复用 AGENT_POSTGRES_DSN
+AGENT_STORE_POSTGRES_DSN=postgresql://agent_user:password@postgres:5432/lingxi_agent
+AGENT_MEMORY_ENABLED=true
+AGENT_MEMORY_NAMESPACE_SECRET=replace-with-an-independent-random-secret-of-32-plus-bytes
+AGENT_MEMORY_MAX_RECALL=5
+AGENT_MEMORY_WRITE_CONFIDENCE=0.9
+```
+
+用户 ID 先使用独立密钥做 HMAC-SHA256，再作为 Store 命名空间；密钥和 DSN
+均使用 `SecretStr`，不会进入 Prompt、checkpoint、响应或日志。修改偏好使用
+确定键覆盖，清空操作幂等。开发测试可使用 `AGENT_STORE_BACKEND=memory`，
+多实例生产部署必须使用 PostgreSQL Store。
+
+## 内部知识检索
+
+内部知识工具默认关闭。第一阶段提供权限优先的 JSONL 后端，并通过统一
+`KnowledgeRetriever` 接口与 Agent 解耦，后续可替换为 pgvector 或
+OpenSearch，而不改变 `search_knowledge` 工具契约：
+
+```dotenv
+KNOWLEDGE_BACKEND=jsonl
+KNOWLEDGE_INDEX_PATH=D:/secure/lingxi-knowledge/index.jsonl
+KNOWLEDGE_TOP_K=8
+KNOWLEDGE_RERANK_TOP_N=5
+```
+
+索引在进程启动时严格校验；启用后若文件缺失、格式错误、来源标识重复或
+超过大小上限，服务将拒绝启动。检索在打分前按当前登录角色、文档有效期、
+当前版本和产品型号过滤。索引格式与发布要求见
+[`knowledge/README.md`](knowledge/README.md)。
+
+## Java 只读业务工具
+
+业务工具默认关闭。启用后，普通 Agent 可按需调用 `query_sales_summary`、
+`query_task_statistics`、`query_abnormal_devices` 和 `lookup_device`：
+
+```dotenv
+AGENT_TOOLS_ENABLED=true
+AGENT_TOOL_BASE_URL=http://localhost:8080
+AGENT_TOOL_ALLOWED_HOSTS=localhost,127.0.0.1
+AGENT_TOOL_ALLOW_INSECURE_HTTP=true
+AGENT_TOOL_TIMEOUT_SECONDS=20
+```
+
+生产环境应使用 HTTPS 内部地址并设置
+`AGENT_TOOL_ALLOW_INSECURE_HTTP=false`。Gateway 目标固定且必须命中精确
+白名单，不跟随重定向；响应总大小和模型可见文本均有限制。工具身份只从
+不可变 `AgentContext` 读取，短期令牌不会进入模型消息、工具参数、日志或
+checkpoint。
+
+Java 令牌默认有效 5 分钟、每轮最多调用 5 次，并绑定用户、会话、请求、
+权限和区域。当前令牌 Store 是单 JVM 内存实现，只适合单实例首期部署；
+多实例生产部署前必须迁移到 Redis 等共享 Store。
+
+## 人工确认受控写操作
+
+阶段 5 只开放“创建一张待处理维修工单”。模型只能调用
+`propose_maintenance_task` 生成提案；`execute_maintenance_task` 不注册给
+模型，只会在 Java 登录端记录批准后由 LangGraph `Command(resume=...)`
+恢复的工具内部调用。拒绝、过期或执行失败都不会自动重试。
+
+启用前必须先执行 `dkd-parent/sql/ai_agent_action_migration.sql`，并确保 Java
+与 Python 使用相同的服务认证密钥。生产环境必须使用 PostgreSQL 持久
+checkpoint；两个服务的开关都默认关闭，并需同时显式开启：
+
+```dotenv
+AGENT_TOOLS_ENABLED=true
+AGENT_WRITE_ACTIONS_ENABLED=true
+AGENT_CHECKPOINTER_BACKEND=postgres
+AGENT_POSTGRES_DSN=postgresql://agent_user:password@postgres:5432/lingxi_agent
+```
+
+Java 同样设置 `AGENT_WRITE_ACTIONS_ENABLED=true`。批准时只允许修改工单描述，
+不能更换设备；执行前 Java 会再次检查当前用户、权限、会话、区域、设备状态
+和未完成工单，并以数据库唯一键保证重放不会重复创建。
 
 ## 本地运行
 

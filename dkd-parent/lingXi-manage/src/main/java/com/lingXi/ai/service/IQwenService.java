@@ -1,5 +1,6 @@
 package com.lingXi.ai.service;
 
+import com.lingXi.ai.domain.dto.AgentUserContext;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
@@ -21,6 +22,9 @@ public interface IQwenService {
      */
     String chat(String sessionId, String userId, String userName, String userMessage);
 
+    /** 使用 Java 登录态生成的可信上下文进行聊天。 */
+    String chat(String sessionId, AgentUserContext userContext, String userMessage);
+
     /**
      * 带会话ID的上下文分析，会保存对话历史
      * @param sessionId 会话唯一标识
@@ -32,6 +36,10 @@ public interface IQwenService {
      */
     String chatWithContext(String sessionId, String userId, String userName, String userMessage, Object contextData);
 
+    /** 使用可信用户上下文进行看板小快照分析。 */
+    String chatWithContext(String sessionId, AgentUserContext userContext,
+                           String userMessage, Object contextData);
+
     /**
      * 流式聊天，会保存对话历史
      * @param sessionId 会话唯一标识
@@ -41,6 +49,20 @@ public interface IQwenService {
      * @return SseEmitter 用于发送流式响应
      */
     SseEmitter streamChat(String sessionId, String userId, String userName, String userMessage);
+
+    /** 使用可信用户上下文进行流式聊天。 */
+    SseEmitter streamChat(String sessionId, AgentUserContext userContext, String userMessage);
+
+    /** 使用可信用户上下文返回结构化白名单事件的 V2 流。 */
+    SseEmitter streamChatV2(
+            String sessionId, AgentUserContext userContext, String userMessage);
+
+    /** 恢复已经由登录用户决定的受控动作，不重复保存用户消息。 */
+    SseEmitter resumeActionV2(
+            String sessionId,
+            AgentUserContext userContext,
+            String actionId,
+            String decision);
 
     /**
      * 流式上下文分析，会保存对话历史
@@ -52,12 +74,16 @@ public interface IQwenService {
      * @return SseEmitter 用于发送流式响应
      */
     SseEmitter streamChatWithContext(String sessionId, String userId, String userName, String userMessage, Object contextData);
+
+    /** 使用可信用户上下文进行流式看板小快照分析。 */
+    SseEmitter streamChatWithContext(String sessionId, AgentUserContext userContext,
+                                     String userMessage, Object contextData);
     
     /**
-     * 读取看板结构化数据，由 Python Agent 负责格式化与分析 Prompt
+     * 构造不含业务指标的兼容页面小快照；实时数据必须由业务工具按需查询。
      * @param start 开始时间
      * @param end 结束时间
-     * @return 原始看板数据
+     * @return 页面筛选元数据
      */
     Map<String, Object> loadDashboardData(String start, String end);
 
@@ -77,4 +103,14 @@ public interface IQwenService {
      * @param userId 用户唯一标识
      */
     void clearConversationMemory(String sessionId, String userId);
+
+    /** 查看当前用户的长期回答偏好。 */
+    Map<String, Object> listLongTermMemories(String userId);
+
+    /** 修改当前用户的一项长期回答偏好。 */
+    Map<String, Object> updateLongTermPreference(
+            String userId, String preference, String value);
+
+    /** 清空当前用户的全部长期回答偏好。 */
+    Map<String, Object> clearLongTermMemories(String userId);
 }

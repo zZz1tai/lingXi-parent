@@ -35,6 +35,7 @@ class HealthData(BaseModel):
     version: str = "1.0.0"
     model: str = ""
     search_tool: str = "tavily"
+    knowledge_tool: str = "disabled"
 
 
 class HealthResponse(BaseResponse):
@@ -44,6 +45,14 @@ class HealthResponse(BaseResponse):
 
 
 # ── 对话响应 ────────────────────────────────────────────────────────────────
+
+class MemoryPreferenceData(BaseModel):
+    """用户可查看的规范化长期回答偏好。"""
+
+    preference: str
+    value: str
+    updated_at: str
+
 
 class ChatData(BaseModel):
     """聊天响应的有效负载。"""
@@ -56,6 +65,7 @@ class ChatData(BaseModel):
     iterations: int = Field(default=0, description="Number of agent loop iterations")
     request_id: str = Field(default="", description="Request trace ID")
     thread_id: str = Field(default="", description="Conversation checkpoint ID")
+    memory_saved: list[MemoryPreferenceData] = Field(default_factory=list)
 
 
 class ToolCallRecord(BaseModel):
@@ -72,6 +82,33 @@ class ChatResponse(BaseResponse):
     """``POST /api/v1/chat/invoke``端点的响应。"""
 
     data: Optional[ChatData] = None
+
+
+class MemoryListData(BaseModel):
+    """长期记忆功能状态与当前用户偏好。"""
+
+    enabled: bool
+    items: list[MemoryPreferenceData] = Field(default_factory=list)
+
+
+class MemoryListResponse(BaseResponse):
+    """长期记忆列表响应。"""
+
+    data: MemoryListData
+
+
+class MemoryMutationData(BaseModel):
+    """长期记忆修改或清空结果。"""
+
+    enabled: bool
+    affected: int = 0
+    item: MemoryPreferenceData | None = None
+
+
+class MemoryMutationResponse(BaseResponse):
+    """长期记忆修改响应。"""
+
+    data: MemoryMutationData
 
 
 class SmartQuestionsData(BaseModel):
@@ -135,12 +172,22 @@ class StreamEvent(BaseModel):
         "custom",
         "heartbeat",
         "tool_start",
+        "tool_progress",
         "tool_end",
+        "citation",
+        "clarification",
+        "memory_saved",
+        "approval_required",
+        "action_completed",
+        "action_rejected",
         "done",
         "error",
     ] = Field(
         ...,
-        description="Event type: token / tool_start / tool_end / done / error",
+        description=(
+            "Event type: token / tool_start / tool_progress / tool_end / "
+            "citation / done / error"
+        ),
     )
     content: Optional[str] = Field(default=None, description="Text content (for token/done events)")
     tool: Optional[str] = Field(default=None, description="Tool name (for tool_start/tool_end)")

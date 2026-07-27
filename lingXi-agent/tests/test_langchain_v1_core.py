@@ -29,7 +29,7 @@ from app.agents import middleware as middleware_module
 from app.agents.state import AgentContext, checkpoint_thread_id
 from app.api import dependencies
 from app.api.v1 import chat as chat_api
-from app.schemas.request import ChatRequest, DeleteChatThreadRequest
+from app.schemas.request import ActionResumeRequest, ChatRequest, DeleteChatThreadRequest, UserContext
 
 
 class LangChainV1ContractTests(unittest.TestCase):
@@ -251,6 +251,115 @@ class CheckpointMemoryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class StreamingContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_interrupt_is_a_whitelisted_approval_event_without_done(self) -> None:
+        public_action = {
+            "action_id": "action123",
+            "action_type": "CREATE_MAINTENANCE_TASK",
+            "status": "PENDING",
+            "target": {"inner_code": "A001"},
+            "description": "检查设备",
+            "impact": "只创建一张待处理维修工单，不修改设备状态、库存或配置",
+            "expires_at": "2026-07-25T08:30:00Z",
+            "user_id": "must-not-escape",
+        }
+
+        class InterruptedAgent:
+            async def astream(self, _input, **_kwargs):
+                yield (
+                    "updates",
+                    {
+                        "__interrupt__": (
+                            SimpleNamespace(
+                                value={
+                                    "type": "approval_required",
+                                    "action": public_action,
+                                }
+                            ),
+                        )
+                    },
+                )
+
+        request = ChatRequest(
+            message="创建维修工单", user_id="42", thread_id="thread-1"
+        )
+        with (
+            patch.object(chat_api, "get_agent", return_value=InterruptedAgent()),
+            patch.object(
+                chat_api,
+                "create_agent_context",
+                return_value=AgentContext(
+                    user_id="42", thread_id="thread-1", checkpointed=True
+                ),
+            ),
+        ):
+            payloads = [
+                json.loads(event.removeprefix("data:").strip())
+                async for event in chat_api._stream_agent_events(request, "request-1")
+            ]
+
+        self.assertEqual([payload["type"] for payload in payloads], ["approval_required"])
+        self.assertEqual(payloads[0]["data"]["target"]["inner_code"], "A001")
+        self.assertNotIn("user_id", json.dumps(payloads))
+
+    async def test_resume_uses_command_and_same_checkpoint_without_user_message(self) -> None:
+        captured: dict[str, object] = {}
+
+        class ResumeAgent:
+            async def astream(self, agent_input, **kwargs):
+                captured["input"] = agent_input
+                captured["config"] = kwargs["config"]
+                yield (
+                    "custom",
+                    {
+                        "type": "action_rejected",
+                        "action": {
+                            "action_id": "action123",
+                            "action_type": "CREATE_MAINTENANCE_TASK",
+                            "status": "REJECTED",
+                            "target": {"inner_code": "A001"},
+                            "description": "检查设备",
+                            "impact": "只创建一张待处理维修工单，不修改设备状态、库存或配置",
+                            "expires_at": "2026-07-25T08:30:00Z",
+                        },
+                    },
+                )
+
+        request = ActionResumeRequest(
+            action_id="action123",
+            decision="reject",
+            user_id="42",
+            thread_id="thread-1",
+            user_context=UserContext(
+                user_name="张三", permissions=["manage:task:add"]
+            ),
+            agent_request_id="req-11111111111111111111111111111111",
+            tool_access_token="opaque-secret-token-with-enough-entropy-123456",
+        )
+        with (
+            patch.object(chat_api, "get_agent", return_value=ResumeAgent()),
+            patch.object(
+                chat_api,
+                "create_agent_context",
+                return_value=AgentContext(
+                    user_id="42", thread_id="thread-1", checkpointed=True
+                ),
+            ),
+        ):
+            payloads = [
+                json.loads(event.removeprefix("data:").strip())
+                async for event in chat_api._stream_agent_events(
+                    request, "request-2", resume=True
+                )
+            ]
+
+        self.assertEqual(type(captured["input"]).__name__, "Command")
+        self.assertEqual(payloads[0]["type"], "action_rejected")
+        self.assertEqual(payloads[-1]["type"], "done")
+        self.assertEqual(
+            captured["config"]["configurable"]["thread_id"],
+            checkpoint_thread_id("42", "thread-1"),
+        )
+
     async def test_v1_stream_modes_and_content_blocks_are_normalized(self) -> None:
         class FakeAgent:
             stream_modes = None
@@ -280,7 +389,28 @@ class StreamingContractTests(unittest.IsolatedAsyncioTestCase):
                 )
                 yield (
                     "custom",
-                    {"type": "tool_progress", "status": "completed"},
+                    {
+                        "type": "tool_progress",
+                        "tool": "search_knowledge",
+                        "status": "completed",
+                        "result_count": 2,
+                        "internal_url": "must-not-escape",
+                    },
+                )
+                yield (
+                    "custom",
+                    {
+                        "type": "citation",
+                        "tool": "search_knowledge",
+                        "citation": {
+                            "title": "补货规范",
+                            "section": "完成工单",
+                            "version": "2026-06",
+                            "source_id": "sop#3.2",
+                            "score": 0.91,
+                            "source_uri": "internal://must-not-escape",
+                        },
+                    },
                 )
 
         fake_agent = FakeAgent()
@@ -308,6 +438,12 @@ class StreamingContractTests(unittest.IsolatedAsyncioTestCase):
         payloads = [json.loads(event.removeprefix("data:").strip()) for event in raw_events]
         token = next(payload for payload in payloads if payload["type"] == "token")
         done = next(payload for payload in payloads if payload["type"] == "done")
+        progress = next(
+            payload for payload in payloads if payload["type"] == "tool_progress"
+        )
+        citation = next(
+            payload for payload in payloads if payload["type"] == "citation"
+        )
         self.assertEqual(
             fake_agent.stream_modes,
             ["messages", "updates", "custom"],
@@ -315,6 +451,11 @@ class StreamingContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(token["content"], "你好")
         self.assertEqual(token["content_blocks"], [{"type": "text", "text": "你好"}])
         self.assertNotIn("content", done)
+        self.assertEqual(progress["tool"], "search_knowledge")
+        self.assertEqual(progress["data"], {"status": "completed", "result_count": 2})
+        self.assertNotIn("internal_url", json.dumps(progress))
+        self.assertEqual(citation["data"]["source_id"], "sop#3.2")
+        self.assertNotIn("source_uri", json.dumps(citation))
         self.assertEqual(
             [payload["type"] for payload in payloads].count("done"),
             1,

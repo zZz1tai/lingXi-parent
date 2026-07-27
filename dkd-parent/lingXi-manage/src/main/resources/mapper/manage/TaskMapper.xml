@@ -17,6 +17,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="productTypeId"    column="product_type_id"    />
         <result property="assignorId"    column="assignor_id"    />
         <result property="addr"    column="addr"    />
+        <result property="agentActionId" column="agent_action_id" />
         <result property="createTime"    column="create_time"    />
         <result property="updateTime"    column="update_time"    />
     </resultMap>
@@ -33,13 +34,14 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="productTypeId"    column="product_type_id"    />
         <result property="assignorId"    column="assignor_id"    />
         <result property="addr"    column="addr"    />
+        <result property="agentActionId" column="agent_action_id" />
         <result property="createTime"    column="create_time"    />
         <result property="updateTime"    column="update_time"    />
         <association property="taskType" javaType="TaskType" column="product_type_id" select="com.lingXi.manage.mapper.TaskTypeMapper.selectTaskTypeByTypeId"/>
     </resultMap>
 
     <sql id="selectTaskVo">
-        select task_id, task_code, task_status, create_type, inner_code, user_id, user_name, region_id, `desc`, product_type_id, assignor_id, addr, create_time, update_time from tb_task
+        select task_id, task_code, task_status, create_type, inner_code, user_id, user_name, region_id, `desc`, product_type_id, assignor_id, addr, agent_action_id, create_time, update_time from tb_task
     </sql>
 
     <select id="selectTaskList" parameterType="Task" resultMap="TaskResult">
@@ -62,6 +64,17 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectTaskByTaskId" parameterType="Long" resultMap="TaskResult">
         <include refid="selectTaskVo"/>
         where task_id = #{taskId}
+    </select>
+    <select id="selectTaskByAgentActionId" parameterType="String" resultMap="TaskResult">
+        <include refid="selectTaskVo"/>
+        where agent_action_id = #{agentActionId}
+    </select>
+    <select id="countUnfinishedTasks" resultType="int">
+        select count(1)
+        from tb_task
+        where inner_code = #{innerCode}
+          and product_type_id = #{productTypeId}
+          and task_status in (1, 2)
     </select>
     <select id="selectTaskVoList" resultMap="TaskVoResult">
         <include refid="selectTaskVo"/>
@@ -101,6 +114,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="productTypeId != null">product_type_id,</if>
             <if test="assignorId != null">assignor_id,</if>
             <if test="addr != null">addr,</if>
+            <if test="agentActionId != null and agentActionId != ''">agent_action_id,</if>
             <if test="createTime != null">create_time,</if>
             <if test="updateTime != null">update_time,</if>
          </trim>
@@ -116,6 +130,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="productTypeId != null">#{productTypeId},</if>
             <if test="assignorId != null">#{assignorId},</if>
             <if test="addr != null">#{addr},</if>
+            <if test="agentActionId != null and agentActionId != ''">#{agentActionId},</if>
             <if test="createTime != null">#{createTime},</if>
             <if test="updateTime != null">#{updateTime},</if>
          </trim>
@@ -135,6 +150,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="productTypeId != null">product_type_id = #{productTypeId},</if>
             <if test="assignorId != null">assignor_id = #{assignorId},</if>
             <if test="addr != null">addr = #{addr},</if>
+            <if test="agentActionId != null and agentActionId != ''">agent_action_id = #{agentActionId},</if>
             <if test="createTime != null">create_time = #{createTime},</if>
             <if test="updateTime != null">update_time = #{updateTime},</if>
         </trim>

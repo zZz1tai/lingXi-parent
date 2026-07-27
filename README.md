@@ -26,14 +26,13 @@ dkd-parent / lingXi-admin ─ Spring Boot 业务入口（HTTP 8080）
 | 路径 | 角色 | 主要技术 |
 | --- | --- | --- |
 | [`lingXi-vue`](lingXi-vue) | 管理端及桌面端 UI | Vue 3、Vite 6、Element Plus、Pinia、Vue Router、ECharts、Tauri 2 |
-| [`dkd-parent/lingXi-admin`](dkd-parent/lingXi-admin) | Java Web 服务启动模块 | Spring Boot 2.5、Swagger、Druid |
+| [`dkd-parent/lingXi-admin`](dkd-parent/lingXi-admin) | Java Web 服务启动模块 | Spring Boot 2.5.15、Swagger、Druid |
 | [`dkd-parent/lingXi-manage`](dkd-parent/lingXi-manage) | 智能零售与 AI 业务模块 | MyBatis-Plus、HTTP Agent 客户端、AI 视频业务 |
 | [`dkd-parent/lingXi-system`](dkd-parent/lingXi-system) | 系统管理与权限领域 | 用户、角色、菜单、字典等 |
 | [`dkd-parent/lingXi-framework`](dkd-parent/lingXi-framework) | 认证、缓存、Web、MyBatis 等框架配置 | Spring Security、Redis |
 | [`dkd-parent/lingXi-quartz`](dkd-parent/lingXi-quartz) | 定时任务 | Quartz |
-| [`dkd-parent/lingXi-generator`](dkd-parent/lingXi-generator) | 代码生成 | Velocity |
 | [`dkd-parent/lingXi-common`](dkd-parent/lingXi-common) | 跨模块工具、常量与基础模型 | Java 通用库 |
-| [`lingXi-agent`](lingXi-agent) | AI 执行服务 | Python、FastAPI、LangChain 1、LangGraph 1、Pydantic |
+| [`lingXi-agent`](lingXi-agent) | AI 执行服务 | Python、FastAPI、LangChain 1.3、LangGraph 1.2、Pydantic v2 |
 | [`dkd-parent/sql`](dkd-parent/sql) | 数据库初始化与演进脚本 | MySQL |
 
 Java 启动类是 `com.lingXi.LingXiApplication`。它由 `lingXi-admin` 模块打包，并装配其余 Maven 模块。
@@ -49,12 +48,13 @@ Java 启动类是 `com.lingXi.LingXiApplication`。它由 `lingXi-admin` 模块�
 
 | 组件 | 要求 | 说明 |
 | --- | --- | --- |
-| Java | JDK 8 | 后端 POM 的 `java.version` 为 1.8。 |
+| Java | JDK 11 | 后端 POM 的 `java.version` 为 11。 |
 | Maven | 3.6+ | 用于构建和启动 Java 多模块项目。 |
 | Node.js | 18+（建议） | 用于 Vite 6 前端构建；使用 npm。 |
-| Python | 3.10+（建议） | 用于 FastAPI / LangChain Agent。 |
+| Python | 3.12+（建议） | 用于 FastAPI / LangChain Agent。 |
 | MySQL | 8.0+ | 整合初始化脚本以 MySQL 8.0 / `utf8mb4` 为目标。 |
 | Redis | 6+ | 默认连接 `localhost:6379`。 |
+| PostgreSQL | 14+（可选） | 用于 Agent 生产环境的 checkpoint 和用户记忆持久化；本地开发可用内存模式。 |
 | Windows Terminal | 可选 | 仅根目录一键启动脚本需要 `wt.exe`。 |
 
 ## 配置与安全
@@ -65,7 +65,7 @@ Java 启动类是 `com.lingXi.LingXiApplication`。它由 `lingXi-admin` 模块�
 | --- | --- |
 | `dkd-parent/lingXi-admin/src/main/resources/application-druid.yml` | MySQL 地址、数据库名、账号、密码。 |
 | `dkd-parent/lingXi-admin/src/main/resources/application.yml` | Redis、上传目录 `ruoyi.profile`、OSS、Agent 地址和超时。 |
-| `lingXi-agent/.env` | Agent 服务密钥、供应商白名单、可选的 Tavily / PostgreSQL 参数。 |
+| `lingXi-agent/.env` | Agent 服务密钥、供应商白名单、可选的 Tavily / PostgreSQL 连接参数。 |
 | `lingXi-vue/.env.development` | 开发 API 前缀（默认 `/dev-api`）。 |
 | `lingXi-vue/.env.production` | 生产 API 前缀（默认 `/prod-api`）。 |
 
