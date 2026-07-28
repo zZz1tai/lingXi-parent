@@ -86,9 +86,21 @@
     }
 
     .el-menu-item.is-active {
-      background: rgba(45, 212, 191, .13) !important;
-      color: #5eead4 !important;
-      font-weight: 700;
+      background: rgba(255, 255, 255, .08) !important;
+      color: #ffffff !important;
+      font-weight: 600;
+      position: relative;
+
+      &::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 8px;
+        bottom: 8px;
+        width: 3px;
+        border-radius: 0 2px 2px 0;
+        background: var(--lx-primary-hover);
+      }
     }
 
     .el-menu-item .el-menu-tooltip__trigger {

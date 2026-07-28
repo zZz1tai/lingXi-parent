@@ -118,6 +118,15 @@
     <DetailDialog :detailVisible="detailVisible" :taskId="taskId" :taskDada="form" :detailData="detailData"
       @getList="getList" @handleClose="handleClose" @handleAdd="handleAdd"></DetailDialog>
     <!-- end -->
+    <!-- 工单详情抽屉 -->
+    <TaskDetailDrawer
+      v-model="drawerVisible"
+      :task-data="currentTaskRow"
+      :task-id="taskId"
+      @refresh="getList"
+      @recreate="handleAdd"
+    />
+    <!-- end -->
     <!-- 补货详情 -->
     <ReplenishmentDialog :channelVisible="channelVisible" :innerCode="form.innerCode" @getDetailList="getDetailList"
       @handleClose="channelDetailsClose"></ReplenishmentDialog>
@@ -142,6 +151,7 @@ import { listTaskType } from '@/api/manage/taskType';
 import { loadAllParams } from '@/api/page';
 // 组件
 import DetailDialog from './components/business-detail-dialog.vue'; //详情组件
+import TaskDetailDrawer from './components/task-detail-drawer.vue'; //抽屉详情
 import ReplenishmentDialog from './components/business-replenishment-dialog.vue'; //补货组件
 import TaskConfig from './components/task-config.vue';
 const { proxy } = getCurrentInstance();
@@ -166,6 +176,8 @@ const userList = ref([]); //运维人员
 const channelVisible = ref(false); //补货弹层
 const detailData = ref([]); //货道列表
 const taskConfigVisible = ref(false); //工单配置弹层
+const drawerVisible = ref(false); //抽屉详情
+const currentTaskRow = ref({}); //当前查看的工单行数据
 const data = reactive({
   form: {},
   queryParams: {
@@ -371,8 +383,11 @@ const taskInfo = () => {
 // 查看详情
 const openTaskDetailDialog = (row) => {
   taskId.value = row.taskId;
-  taskInfo();
-  detailVisible.value = true;
+  currentTaskRow.value = row;
+  drawerVisible.value = true;
+  // 旧弹窗逻辑保留备用
+  // taskInfo();
+  // detailVisible.value = true;
 };
 // 关闭详情弹层
 const handleClose = () => {

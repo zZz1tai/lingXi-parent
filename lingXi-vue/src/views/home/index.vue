@@ -1,4 +1,5 @@
 <template>
+  <div class="home-wrapper">
   <div class="app-container home">
     <!-- 第一行：左侧主数据 + 右侧排行榜（同高） -->
     <el-row
@@ -44,6 +45,12 @@
       </el-col>
     </el-row>
   </div>
+
+  <!-- AI 智能助手悬浮面板 -->
+  <div class="ai-panel-dock" :class="{ expanded: !chatCollapsed }">
+    <AiChatPanel :default-collapsed="true" @collapse-change="chatCollapsed = $event" />
+  </div>
+  </div>
 </template>
 
 <script setup name="Index">
@@ -53,9 +60,33 @@ import SkuSaleRankChart from './components/sku-sale-rank-chart.vue'
 import SkuSaleCollectChart from './components/sku-sale-collect-chart.vue'
 import PartnerNodeCollectChart from './components/partner-node-collect-chart.vue'
 import AbnormalEquipmentTable from './components/abnormal-equipment-table.vue'
+import AiChatPanel from '@/components/AiChatPanel/index.vue'
+
+const chatCollapsed = ref(true)
 </script>
 
 <style scoped lang="scss">
+.home-wrapper {
+  position: relative;
+}
+
+.ai-panel-dock {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 44px;
+  height: 44px;
+  z-index: 900;
+  transition: all 0.25s ease;
+
+  &.expanded {
+    width: 440px;
+    height: calc(100vh - 140px);
+    top: 100px;
+    bottom: 24px;
+  }
+}
+
 .home {
   padding: 24px;
   background: var(--lx-canvas);

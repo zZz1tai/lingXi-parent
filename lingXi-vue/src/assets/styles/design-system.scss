@@ -1,36 +1,69 @@
 :root {
-  --lx-primary: #0f766e;
-  --lx-primary-hover: #0d9488;
-  --lx-primary-soft: #e7f6f3;
+  /* ===== Seed Tokens (主题切换入口) ===== */
+  --seed-bg: #f4f7fa;
+  --seed-fg: #243b53;
+  --seed-primary: #0f766e;
+  --seed-accent: #0d9488;
+  --seed-surface: #ffffff;
+  --seed-radius: 12px;
+
+  /* ===== Derived: 品牌与语义色 ===== */
+  --lx-primary: var(--seed-primary);
+  --lx-primary-hover: var(--seed-accent);
+  --lx-primary-soft: color-mix(in srgb, var(--seed-primary) 8%, var(--seed-surface));
+  --lx-primary-glow: color-mix(in srgb, var(--seed-primary) 15%, transparent);
   --lx-navy: #102a43;
-  --lx-text: #243b53;
+  --lx-text: var(--seed-fg);
   --lx-muted: #627d98;
   --lx-border: #d9e2ec;
   --lx-border-soft: #e8eef4;
-  --lx-surface: #ffffff;
-  --lx-canvas: #f4f7fa;
+  --lx-surface: var(--seed-surface);
+  --lx-canvas: var(--seed-bg);
   --lx-danger: #c2414f;
   --lx-warning: #b7791f;
   --lx-success: #20866f;
-  --lx-radius-sm: 8px;
-  --lx-radius: 12px;
-  --lx-radius-lg: 18px;
-  --lx-shadow-sm: 0 1px 2px rgba(16, 42, 67, .04), 0 8px 24px rgba(16, 42, 67, .06);
-  --lx-shadow-lg: 0 24px 64px rgba(16, 42, 67, .14);
+
+  /* ===== Derived: 图表与状态色 ===== */
+  --lx-chart-blue: #3182ce;
+  --lx-chart-slate: #627d98;
+  --lx-chart-silver: #9fb3c8;
+  --lx-status-online-bg: #e6f7f1;
+  --lx-status-offline-bg: #f1f5f9;
+  --lx-status-warning-bg: #fef3c7;
+  --lx-status-danger-bg: #fee2e2;
+
+  /* ===== Derived: 圆角 ===== */
+  --lx-radius-sm: calc(var(--seed-radius) * 0.667);
+  --lx-radius: var(--seed-radius);
+  --lx-radius-lg: calc(var(--seed-radius) * 1.5);
+
+  /* ===== Derived: 间距 ===== */
+  --lx-space-xs: 4px;
+  --lx-space-sm: 8px;
+  --lx-space-md: 16px;
+  --lx-space-lg: 24px;
+  --lx-space-xl: 32px;
+
+  /* ===== Derived: 阴影 ===== */
+  --lx-shadow-sm: 0 1px 3px rgba(16, 42, 67, .06), 0 1px 2px rgba(16, 42, 67, .04);
+  --lx-shadow-md: 0 4px 12px rgba(16, 42, 67, .08), 0 2px 4px rgba(16, 42, 67, .04);
+  --lx-shadow-lg: 0 12px 32px rgba(16, 42, 67, .12), 0 4px 8px rgba(16, 42, 67, .06);
+
+  /* ===== Element Plus Token 映射 ===== */
   --el-color-primary: var(--lx-primary);
-  --el-color-primary-light-3: #31958d;
-  --el-color-primary-light-5: #70b7b0;
-  --el-color-primary-light-7: #b1d9d4;
-  --el-color-primary-light-8: #d2e9e6;
+  --el-color-primary-light-3: color-mix(in srgb, var(--seed-primary) 70%, var(--seed-surface));
+  --el-color-primary-light-5: color-mix(in srgb, var(--seed-primary) 50%, var(--seed-surface));
+  --el-color-primary-light-7: color-mix(in srgb, var(--seed-primary) 30%, var(--seed-surface));
+  --el-color-primary-light-8: color-mix(in srgb, var(--seed-primary) 20%, var(--seed-surface));
   --el-color-primary-light-9: var(--lx-primary-soft);
-  --el-color-primary-dark-2: #0b5e58;
+  --el-color-primary-dark-2: color-mix(in srgb, var(--seed-primary) 85%, #000);
   --el-border-radius-base: var(--lx-radius-sm);
   --el-border-color: var(--lx-border);
   --el-border-color-light: var(--lx-border-soft);
   --el-text-color-primary: var(--lx-navy);
   --el-text-color-regular: var(--lx-text);
   --el-text-color-secondary: var(--lx-muted);
-  --el-fill-color-light: #f5f8fa;
+  --el-fill-color-light: color-mix(in srgb, var(--seed-bg) 60%, var(--seed-surface));
   --el-bg-color-page: var(--lx-canvas);
 }
 
@@ -76,8 +109,8 @@ button, input, textarea, select { font: inherit; }
 .el-form-item__label { color: #486581; font-weight: 600; }
 
 .el-table {
-  --el-table-header-bg-color: #f1f5f8;
-  --el-table-row-hover-bg-color: #f0f8f7;
+  --el-table-header-bg-color: color-mix(in srgb, var(--seed-bg) 70%, var(--seed-surface));
+  --el-table-row-hover-bg-color: var(--lx-primary-soft);
   border-radius: var(--lx-radius);
   border: 1px solid var(--lx-border-soft);
   overflow: hidden;
