@@ -10,7 +10,6 @@ from __future__ import annotations
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-
 # ── 基础异常 ────────────────────────────────────────────────────────────────
 
 class AgentError(Exception):
@@ -53,6 +52,27 @@ class SearchError(AgentError):
             code="SEARCH_ERROR",
             status_code=502,
             public_message="The upstream search service failed",
+        )
+
+
+class ToolExecutionError(AgentError):
+    """向模型暴露经过应用代码审定的安全工具错误。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "TOOL_EXECUTION_ERROR",
+        public_message: str = "工具暂时不可用，请稍后再试",
+        status_code: int = 502,
+    ) -> None:
+        if not code.startswith("TOOL_"):
+            raise ValueError("tool error code must start with TOOL_")
+        super().__init__(
+            message,
+            code=code,
+            status_code=status_code,
+            public_message=public_message,
         )
 
 

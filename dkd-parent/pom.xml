@@ -10,7 +10,7 @@
 
     <name>lingXi-parent</name>
     <url>http://www.ruoyi.vip</url>
-    <description>灵犀终端管理系统</description>
+    <description>灵犀智能应用平台</description>
 
     <properties>
         <dkd.version>3.8.7</dkd.version>

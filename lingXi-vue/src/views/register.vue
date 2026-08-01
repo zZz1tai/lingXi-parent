@@ -1,6 +1,6 @@
 <template>
   <div class="register">
-    <section class="register-brand" aria-label="灵犀终端管理平台介绍">
+    <section class="register-brand" aria-label="灵犀智能应用平台介绍">
       <span>LINGXI · OPERATIONS</span>
       <h1>创建你的灵犀账户</h1>
       <p>一个账户连接终端、渠道、商品与任务，让团队从第一天起就在同一套数据中协作。</p>

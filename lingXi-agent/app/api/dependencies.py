@@ -19,14 +19,16 @@ from pydantic import SecretStr
 from app.agents.builder import build_search_agent
 from app.agents.checkpoints import create_in_memory_checkpointer
 from app.agents.state import AgentContext, checkpoint_thread_id
-from app.agents.tools.knowledge_search import create_knowledge_search_tool
 from app.agents.tools.business_data import create_business_data_tools
+from app.agents.tools.general import create_general_tools
+from app.agents.tools.knowledge_search import create_knowledge_search_tool
+from app.agents.tools.weather import create_weather_tool
 from app.agents.tools.web_search import get_default_tools
 from app.config.settings import settings
 from app.schemas.request import LLMConfig, UserContext
 from app.security.outbound import validate_outbound_http_url
-from app.services.http_client import get_http_client
 from app.services.agent_tool_client import AgentToolClient
+from app.services.http_client import get_http_client
 from app.services.knowledge import KnowledgeRetriever
 from app.services.memory import LongTermMemoryService
 from app.utils.exceptions import (
@@ -36,7 +38,6 @@ from app.utils.exceptions import (
     ModelNotAvailableError,
 )
 from app.utils.logger import logger
-
 
 _llm_instance: BaseChatModel | None = None
 _agent_instance: CompiledStateGraph | None = None
@@ -338,7 +339,10 @@ def get_agent(
 
 def _runtime_tools() -> list[Any]:
     """装配当前进程可用工具；知识后端未启用时不暴露工具。"""
-    tools = list(get_default_tools())
+    tools = create_general_tools()
+    if settings.weather_enabled:
+        tools.append(create_weather_tool())
+    tools.extend(get_default_tools())
     if _knowledge_retriever_instance is not None:
         tools.append(create_knowledge_search_tool(_knowledge_retriever_instance))
     if _agent_tool_client_instance is not None:
@@ -398,7 +402,8 @@ def create_agent_context(
 def get_request_id() -> str:
     """重用请求中间件的ID，仅在直接调用时生成。"""
 
-    from app.utils.logger import generate_request_id, get_request_id as current_request_id
+    from app.utils.logger import generate_request_id
+    from app.utils.logger import get_request_id as current_request_id
 
     current = current_request_id()
     return generate_request_id() if not current or current == "-" else current

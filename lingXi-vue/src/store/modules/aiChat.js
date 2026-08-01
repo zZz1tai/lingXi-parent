@@ -1,6 +1,11 @@
 import { resumeAgentAction, streamAnalyzeDashboard, streamChatWithQwen } from '@/api/ai'
 
 const toolLabels = {
+  get_current_datetime: '查询当前时间',
+  calculate: '进行精确计算',
+  convert_units: '换算单位',
+  date_calculator: '计算日期',
+  get_weather: '查询天气',
   search_knowledge: '检索内部知识',
   web_search: '搜索公开信息',
   query_sales_summary: '查询销售汇总',
@@ -16,7 +21,7 @@ function activityFor(draft, tool) {
   if (!activity) {
     activity = {
       tool,
-      label: toolLabels[tool] || '处理业务数据',
+      label: toolLabels[tool] || '使用智能工具',
       status: 'running',
       resultCount: null
     }

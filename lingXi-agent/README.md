@@ -127,6 +127,23 @@ AGENT_MEMORY_WRITE_CONFIDENCE=0.9
 确定键覆盖，清空操作幂等。开发测试可使用 `AGENT_STORE_BACKEND=memory`，
 多实例生产部署必须使用 PostgreSQL Store。
 
+## 本地通用工具
+
+普通 Agent 始终注册以下无外部副作用的通用工具，不需要额外 API Key：
+
+- `get_current_datetime`：查询 Asia/Shanghai 或指定 IANA 时区的精确日期、时间和星期；
+- `calculate`：执行有长度、复杂度和数值范围限制的安全四则及幂运算，不执行代码；
+- `convert_units`：换算长度、质量、体积、时间、面积、速度和温度，不提供实时汇率；
+- `date_calculator`：日期加减、两个日期的间隔与包含首尾日期的天数计算。
+
+以上工具都通过 `ToolRuntime` 产生安全的 `started` / `completed` 进度事件，
+不访问业务数据库，也不读取用户身份或凭据。
+
+`WEATHER_ENABLED=true` 时还会注册 `get_weather`。它优先访问固定的 Open-Meteo
+HTTPS 地理编码与天气主机，提供当前天气和 1～7 天预报；响应大小受
+`WEATHER_MAX_RESPONSE_BYTES` 限制，用户不能控制目标 URL。若当前网络无法访问
+Open-Meteo 且已配置 Tavily，则自动降级为有来源链接的当日公开天气搜索结果。
+
 ## 内部知识检索
 
 内部知识工具默认关闭。第一阶段提供权限优先的 JSONL 后端，并通过统一
@@ -198,7 +215,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env
 # 修改 .env，设置 AGENT_SERVICE_API_KEY；模型 API Key 由 Java 模型配置页面逐请求传入
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 5000
+ .\.venv\Scripts\python.exe -m app.run
 ```
 
 Swagger 默认关闭；仅在受控开发环境设置 `DOCS_ENABLED=true` 后访问

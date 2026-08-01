@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 from langchain_core.messages import AIMessage, ToolMessage
@@ -48,10 +49,13 @@ def _tool_state(name: str, arguments: dict[str, object]) -> dict[str, object]:
 
 
 class _FakeTavilyClient:
+    last_search_kwargs: ClassVar[dict[str, object]] = {}
+
     def __init__(self, **_kwargs: object) -> None:
         self.closed = False
 
     async def search(self, **_kwargs: object) -> dict[str, object]:
+        type(self).last_search_kwargs = dict(_kwargs)
         return {
             "results": [
                 {
@@ -74,7 +78,14 @@ class ToolRuntimeInjectionTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("tavily.AsyncTavilyClient", _FakeTavilyClient):
             async for mode, chunk in _tool_graph(tool).astream(
-                _tool_state("web_search", {"query": "2026年7月25日 科技新闻"}),
+                _tool_state(
+                    "web_search",
+                    {
+                        "query": "2026年7月25日 科技新闻",
+                        "topic": "news",
+                        "time_range": "day",
+                    },
+                ),
                 context=AgentContext(user_id="42"),
                 stream_mode=["custom", "updates"],
             ):
@@ -94,6 +105,8 @@ class ToolRuntimeInjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.status, "success")
         self.assertEqual(message.artifact["provider"], "tavily")
         self.assertEqual(message.artifact["results"][0]["title"], "示例科技新闻")
+        self.assertEqual(_FakeTavilyClient.last_search_kwargs["topic"], "news")
+        self.assertEqual(_FakeTavilyClient.last_search_kwargs["time_range"], "day")
 
     async def test_business_tool_runtime_survives_explicit_input_schema(self) -> None:
         result = ToolCallResult(

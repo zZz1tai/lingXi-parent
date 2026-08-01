@@ -1,6 +1,6 @@
 <template>
   <div class="login">
-    <section class="login-brand" aria-label="灵犀终端管理平台介绍">
+    <section class="login-brand" aria-label="灵犀智能应用平台介绍">
       <span class="brand-mark">LINGXI · OPERATIONS</span>
       <h1>让终端、销售与任务<br>始终保持同一节奏</h1>
       <p>面向渠道运营团队的一体化数据工作台，快速掌握设备状态、销售趋势和执行进度。</p>

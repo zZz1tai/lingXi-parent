@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LingXiTerminal",
+  "productName": "LingXiAIPlatform",
   "version": "1.0.1",
   "identifier": "com.lingxi.terminal",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "灵犀终端管理系统",
+        "title": "灵犀智能应用平台",
         "width": 1440,
         "height": 900,
         "minWidth": 1024,

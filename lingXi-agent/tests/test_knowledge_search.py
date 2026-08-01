@@ -193,7 +193,17 @@ class KnowledgeConfigurationTests(unittest.TestCase):
         try:
             with patch.object(dependencies, "get_default_tools", return_value=[]):
                 tools = dependencies._runtime_tools()
-            self.assertEqual([tool.name for tool in tools], ["search_knowledge"])
+            self.assertEqual(
+                [tool.name for tool in tools],
+                [
+                    "get_current_datetime",
+                    "calculate",
+                    "convert_units",
+                    "date_calculator",
+                    "get_weather",
+                    "search_knowledge",
+                ],
+            )
         finally:
             dependencies.reset_singletons()
 

@@ -1,4 +1,4 @@
-"""零售 Agent 使用的一等 LangChain v1 中间件。"""
+"""灵犀通用助手使用的一等 LangChain v1 中间件。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from langgraph.types import Command
 from app.agents.prompts import get_system_prompt
 from app.agents.state import AgentContext
 from app.utils.logger import logger
-
 
 GOAL_ORIENTED_SUMMARY_PROMPT = """\
 你负责压缩灵犀助手的历史对话，以便后续继续完成用户目标。
@@ -107,7 +106,8 @@ class RuntimeModelSummarizationMiddleware(SummarizationMiddleware):
                 state,
                 runtime,
             )
-        except Exception as exc:
+        # 摘要属于降级能力，任何提供商/解析异常都不能阻断主对话。
+        except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Conversation summarization failed | error_type=%s",
                 type(exc).__name__,
@@ -123,7 +123,8 @@ class RuntimeModelSummarizationMiddleware(SummarizationMiddleware):
         delegate = self._delegate_for_runtime(runtime)
         try:
             return SummarizationMiddleware.before_model(delegate, state, runtime)
-        except Exception as exc:
+        # 同步入口遵循与异步入口相同的非阻断降级策略。
+        except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Conversation summarization failed | error_type=%s",
                 type(exc).__name__,
@@ -157,7 +158,8 @@ async def handle_tool_errors(
 
     try:
         return await handler(request)
-    except Exception as exc:
+    # 工具实现来自多种后端；此处是统一的最外层安全错误边界。
+    except Exception as exc:  # noqa: BLE001
         tool_name = str(request.tool_call.get("name") or "unknown")
         tool_call_id = str(request.tool_call.get("id") or "")
         logger.warning(
@@ -169,7 +171,7 @@ async def handle_tool_errors(
         public_message = str(getattr(exc, "public_message", ""))
         if error_code.startswith("TOOL_") and public_message:
             safe_content = (
-                f"业务工具调用失败（{error_code}）：{public_message}。"
+                f"工具调用失败（{error_code}）：{public_message}。"
                 "请如实说明限制，不要编造查询结果。"
             )
         else:

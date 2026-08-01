@@ -1,7 +1,7 @@
 {
-  "name": "ruoyi",
+  "name": "lingxi-ai-platform",
   "version": "3.8.7",
-  "description": "灵犀终端管理系统",
+  "description": "灵犀智能应用平台",
   "author": "灵犀",
   "license": "MIT",
   "type": "module",

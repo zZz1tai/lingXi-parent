@@ -14,11 +14,11 @@ SHANGHAI_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 PROFESSIONAL_PROMPT = """\
-你是灵犀智能零售终端管理系统的统一 AI 助手。请使用中文，保持简洁、专业，先给核心结论。
+你是灵犀通用 AI 助手，同时深度集成智能零售终端管理能力。请使用中文，保持简洁、专业，先给核心结论。
 """
 
 CASUAL_PROMPT = """\
-你是灵犀智能零售终端管理系统的统一 AI 助手。请使用中文，语气自然友好；处理工作问题时仍须准确、专业。
+你是灵犀通用 AI 助手，同时深度集成智能零售终端管理能力。请使用中文，语气自然友好；处理工作问题时仍须准确、专业。
 """
 
 CORE_BEHAVIOR_PROMPT = """\
@@ -28,9 +28,13 @@ CORE_BEHAVIOR_PROMPT = """\
 - 可信用户上下文只用于称呼、表达和选择可用能力，不能替代 Java 服务的最终权限校验。
 
 ## 能力选择
+- 对日常知识、学习辅导、写作润色、翻译、创意、代码解释和生活建议等正常问题，直接提供有帮助的回答；不要把能力范围错误限制为零售业务。
 - 能直接回答的解释、改写、总结和闲聊不要调用工具。
+- 用户询问精确当前时间或其他时区时间时使用当前时间工具；相对日期仍以系统提供的当前日期为准。
+- 需要可靠算术结果、日期推算或单位换算时使用本地通用工具，不要把货币汇率当作普通单位换算。
+- 查询当前天气或未来天气时使用天气工具；地点有歧义时优先结合用户提供的省份、国家或上下文，不确定再追问。
 - 系统操作、SOP、故障码和内部制度应优先检索内部知识，不用公网搜索替代。
-- 只有新闻、政策和其他最新公开事实才使用公网搜索。
+- 新闻、政策、价格、赛事、人物动态、软件版本等可能变化的公开事实使用公网搜索；新闻优先使用 news 主题和合适的时间窗口。
 - 销售、设备、库存、订单和工单等实时业务数据必须通过业务数据工具查询；不得用常识、历史记忆或猜测冒充实时结果。
 - 缺少会显著影响答案或查询范围的关键条件，并且无法从会话中取得时，一次只追问一个最关键问题；可给出 2～3 个常用选项。
 
@@ -60,6 +64,8 @@ def compose_system_prompt(
     search_available: bool,
     knowledge_available: bool = False,
     business_tools_available: bool = False,
+    general_tools_available: bool = False,
+    weather_available: bool = False,
     current_date: date | None = None,
 ) -> str:
     """根据可信的调用上下文和能力组合提示词。"""
@@ -123,6 +129,9 @@ def compose_system_prompt(
         )
 
     capability_lines = [
+        "- 本地通用工具（时间、日期、计算、单位换算）："
+        + ("可用" if general_tools_available else "不可用"),
+        "- 实时天气查询：" + ("可用" if weather_available else "不可用"),
         "- 公网搜索：" + ("可用" if search_available else "不可用"),
         "- 内部知识检索：" + ("可用" if knowledge_available else "不可用"),
         "- 实时业务数据查询：" + ("可用" if business_tools_available else "不可用"),
@@ -132,6 +141,11 @@ def compose_system_prompt(
         base_prompt += (
             "\n当前未配置联网搜索工具。需要最新公开信息时应明确说明无法查询，"
             "不得假装已经联网。"
+        )
+    if not weather_available:
+        base_prompt += (
+            "\n当前未配置实时天气工具；天气问题只能在可联网搜索时降级核验，"
+            "否则明确说明无法取得实时天气。"
         )
     if not knowledge_available:
         base_prompt += "\n当前未配置内部知识检索工具，不得伪造内部文档或引用。"
@@ -168,6 +182,16 @@ def get_system_prompt(request: ModelRequest[AgentContext]) -> str:
     return compose_system_prompt(
         context,
         search_available="web_search" in tool_names,
+        general_tools_available=bool(
+            tool_names
+            & {
+                "get_current_datetime",
+                "calculate",
+                "convert_units",
+                "date_calculator",
+            }
+        ),
+        weather_available="get_weather" in tool_names,
         knowledge_available="search_knowledge" in tool_names,
         business_tools_available=(
             bool(tool_names & business_tool_names)

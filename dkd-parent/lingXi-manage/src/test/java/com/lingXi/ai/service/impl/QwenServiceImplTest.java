@@ -29,6 +29,25 @@ import static org.mockito.Mockito.when;
 class QwenServiceImplTest {
 
     @Test
+    void smartQuestionFailureFallsBackToGeneralAssistantPrompts() {
+        AgentClient agentClient = mock(AgentClient.class);
+        IModelHistoryService historyService = mock(IModelHistoryService.class);
+        IDashBoardService dashboardService = mock(IDashBoardService.class);
+        when(agentClient.generateSmartQuestions(any(), anyString()))
+                .thenThrow(new RuntimeException("upstream unavailable"));
+        QwenServiceImpl service = new QwenServiceImpl(
+                agentClient, historyService, dashboardService);
+
+        List<String> questions = service.generateSmartQuestions(
+                "session-questions", "user-1", "用户", Collections.emptyList());
+
+        assertEquals(List.of(
+                "能用更简单的方式解释吗？",
+                "可以给我一个具体例子吗？",
+                "接下来我还能做什么？"), questions);
+    }
+
+    @Test
     void legacyDashboardContextContainsOnlyFiltersAndNoGlobalMetrics() {
         AgentClient agentClient = mock(AgentClient.class);
         IModelHistoryService historyService = mock(IModelHistoryService.class);

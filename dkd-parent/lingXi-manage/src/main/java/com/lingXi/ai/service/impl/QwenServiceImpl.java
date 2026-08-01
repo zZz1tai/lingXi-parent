@@ -274,9 +274,9 @@ public class QwenServiceImpl implements IQwenService {
                     ex.getClass().getSimpleName());
             // 快捷问题属于辅助能力，远端失败时返回固定兜底项，不中断主对话流程。
             List<String> defaults = new ArrayList<>(3);
-            defaults.add("我想了解更多细节？");
-            defaults.add("能不能具体说明一下？");
-            defaults.add("还有哪些相关信息？");
+            defaults.add("能用更简单的方式解释吗？");
+            defaults.add("可以给我一个具体例子吗？");
+            defaults.add("接下来我还能做什么？");
             return defaults;
         }
     }

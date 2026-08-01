@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"
@@ -38,7 +37,7 @@ class Settings(BaseSettings):
         default="",
         description="OpenAI API key (or compatible API key)",
     )
-    openai_api_base: Optional[str] = Field(
+    openai_api_base: str | None = Field(
         default=None,
         description="Custom API base URL for OpenAI-compatible endpoints",
     )
@@ -63,6 +62,18 @@ class Settings(BaseSettings):
         ge=1,
         le=20,
         description="Maximum number of search results per query",
+    )
+    weather_enabled: bool = Field(
+        default=True,
+        validation_alias="WEATHER_ENABLED",
+        description="Expose the fixed-destination Open-Meteo weather tool",
+    )
+    weather_max_response_bytes: int = Field(
+        default=128 * 1024,
+        validation_alias="WEATHER_MAX_RESPONSE_BYTES",
+        ge=16 * 1024,
+        le=1024 * 1024,
+        description="Maximum response bytes accepted from each weather endpoint",
     )
 
     # ── 内部知识检索配置 ───────────────────────────────────────────
@@ -253,7 +264,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="before")
     @classmethod
-    def _read_port_from_env(cls, values: dict) -> dict:  # noqa: N805
+    def _read_port_from_env(cls, values: dict) -> dict:
         """从沙箱环境变量中读取 DEPLOY_RUN_PORT（如果存在）。"""
         deploy_port = os.environ.get("DEPLOY_RUN_PORT")
         if deploy_port and "port" not in values:
@@ -261,7 +272,7 @@ class Settings(BaseSettings):
         return values
 
     @model_validator(mode="after")
-    def _validate_knowledge_limits(self) -> "Settings":
+    def _validate_knowledge_limits(self) -> Settings:
         if self.knowledge_rerank_top_n > self.knowledge_top_k:
             raise ValueError("KNOWLEDGE_RERANK_TOP_N must not exceed KNOWLEDGE_TOP_K")
         if self.agent_memory_enabled:

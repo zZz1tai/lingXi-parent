@@ -1733,7 +1733,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "lingxi-terminal"
+name = "lingxi-ai-platform"
 version = "1.0.1"
 dependencies = [
  "serde_json",

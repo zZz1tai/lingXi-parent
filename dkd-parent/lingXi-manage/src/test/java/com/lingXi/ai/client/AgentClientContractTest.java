@@ -338,6 +338,9 @@ class AgentClientContractTest {
         streamResponse.set(
                 "data: {\"type\":\"tool_start\",\"tool\":\"lookup_device\","
                         + "\"tool_input\":{\"tool_access_token\":\"" + secret + "\"}}\n\n"
+                        + "data: {\"type\":\"tool_start\",\"tool\":\"get_weather\"}\n\n"
+                        + "data: {\"type\":\"tool_end\",\"tool\":\"get_weather\","
+                        + "\"data\":{\"status\":\"success\",\"result_count\":3}}\n\n"
                         + "data: {\"type\":\"citation\",\"tool\":\"search_knowledge\","
                         + "\"data\":{\"title\":\"操作规范\",\"source_id\":\"sop#1\","
                         + "\"secret\":\"" + secret + "\"}}\n\n"
@@ -366,6 +369,7 @@ class AgentClientContractTest {
         assertEquals("完成", reply.get());
         String emitted = emittedData(emitter);
         assertTrue(emitted.contains("lookup_device"));
+        assertTrue(emitted.contains("get_weather"));
         assertTrue(emitted.contains("操作规范"));
         assertTrue(emitted.contains("answer_length"));
         assertTrue(emitted.contains("完成"));

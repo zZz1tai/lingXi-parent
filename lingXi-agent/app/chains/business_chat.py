@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.schemas.request import SmartQuestionHistoryItem, SmartQuestionsOutput
-
 
 CONTEXT_ANALYSIS_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -38,7 +38,8 @@ SMART_QUESTIONS_PROMPT = ChatPromptTemplate.from_messages(
         (
             "system",
             """你负责根据对话记录生成用户接下来最可能点击的快捷提问。
-问题必须从用户视角出发、紧扣已有对话、彼此不重复。只输出符合指定结构的 JSON。""",
+问题必须从用户视角出发、紧扣已有对话、彼此不重复，并覆盖“继续深入、具体示例、下一步行动”中最相关的方向。
+每个问题都应简短自然、可以直接发送；不得假设对话中没有出现的事实。只输出符合指定结构的 JSON。""",
         ),
         (
             "human",

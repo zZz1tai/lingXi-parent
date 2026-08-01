@@ -16,7 +16,8 @@ def test_dynamic_prompt_uses_context_without_rewriting_messages() -> None:
         search_available=False,
     )
 
-    assert "灵犀智能零售终端管理系统" in prompt
+    assert "灵犀通用 AI 助手" in prompt
+    assert "深度集成智能零售终端管理能力" in prompt
     assert "当前未配置联网搜索工具" in prompt
 
 
@@ -45,6 +46,8 @@ def test_trusted_user_context_is_json_encoded_and_applied() -> None:
         search_available=True,
         knowledge_available=True,
         business_tools_available=True,
+        general_tools_available=True,
+        weather_available=True,
     )
 
     assert "当前可信用户上下文" in prompt
@@ -55,6 +58,9 @@ def test_trusted_user_context_is_json_encoded_and_applied() -> None:
     assert "公网搜索：可用" in prompt
     assert "内部知识检索：可用" in prompt
     assert "实时业务数据查询：可用" in prompt
+    assert "本地通用工具（时间、日期、计算、单位换算）：可用" in prompt
+    assert "实时天气查询：可用" in prompt
+    assert "不要把能力范围错误限制为零售业务" in prompt
 
 
 def test_chat_request_validates_trusted_user_context() -> None:

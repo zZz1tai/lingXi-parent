@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Literal
 
 from langchain.tools import ToolRuntime, tool
 from langchain_core.tools import BaseTool
@@ -30,6 +30,14 @@ class WebSearchInput(BaseModel):
         min_length=2,
         max_length=500,
         description="A concise public-web search query without secrets or internal data",
+    )
+    topic: Literal["general", "news", "finance"] = Field(
+        default="general",
+        description="Use news for recent news, finance for market topics, otherwise general",
+    )
+    time_range: Literal["day", "week", "month", "year"] | None = Field(
+        default=None,
+        description="Optional freshness window for time-sensitive public information",
     )
     # ToolRuntime 会从模型可见 schema 中隐藏，但必须保留在校验 schema 中，
     # 否则 StructuredTool 会在 ToolNode 注入后再次校验时丢弃它。
@@ -66,7 +74,8 @@ def create_tavily_search_tool() -> BaseTool:
         args_schema=WebSearchInput,
         response_format="content_and_artifact",
         description=(
-            "Search public web sources for recent or externally verifiable facts. "
+            "Search public web sources for recent or externally verifiable facts. Use topic=news "
+            "for news and topic=finance for markets; apply a time_range when freshness matters. "
             "Never include credentials, customer data, or internal business details "
             "in the query."
         ),
@@ -74,6 +83,8 @@ def create_tavily_search_tool() -> BaseTool:
     async def web_search(
         query: str,
         runtime: ToolRuntime[AgentContext],
+        topic: Literal["general", "news", "finance"] = "general",
+        time_range: Literal["day", "week", "month", "year"] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         from tavily import AsyncTavilyClient
 
@@ -87,6 +98,8 @@ def create_tavily_search_tool() -> BaseTool:
                     query=query,
                     max_results=settings.search_max_results,
                     search_depth="basic",
+                    topic=topic,
+                    time_range=time_range,
                     include_answer=False,
                     include_raw_content=False,
                     timeout=float(settings.tool_timeout),
@@ -105,13 +118,20 @@ def create_tavily_search_tool() -> BaseTool:
         )
 
         model_content = json.dumps(
-            {"query": query, "results": results},
+            {
+                "query": query,
+                "topic": topic,
+                "time_range": time_range,
+                "results": results,
+            },
             ensure_ascii=False,
             separators=(",", ":"),
         )
         artifact = {
             "provider": "tavily",
             "query": query,
+            "topic": topic,
+            "time_range": time_range,
             "results": results,
         }
         return model_content, artifact

@@ -262,7 +262,12 @@ async def readiness_check():
 # ── 命令行入口 ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import asyncio
+    import os
     import uvicorn
+
+    if os.name == "nt":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     uvicorn.run(
         "app.main:app",

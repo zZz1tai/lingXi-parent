@@ -182,6 +182,11 @@ class BusinessDataToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 [tool.name for tool in tools],
                 [
+                    "get_current_datetime",
+                    "calculate",
+                    "convert_units",
+                    "date_calculator",
+                    "get_weather",
                     "query_sales_summary",
                     "query_task_statistics",
                     "query_abnormal_devices",
