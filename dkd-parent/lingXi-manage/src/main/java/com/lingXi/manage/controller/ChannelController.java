@@ -1,12 +1,12 @@
 package com.lingXi.manage.controller;
 
 import java.util.List;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponse;
 
 import com.lingXi.manage.domain.dto.ChannelConfigDto;
 import com.lingXi.manage.domain.vo.ChannelVo;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,7 +32,7 @@ import com.lingXi.common.core.page.TableDataInfo;
  * @author itzhou
  * @date 2025-08-26
  */
-@Api(tags = "售货机货道管理")
+@Tag(name = "售货机货道管理")
 @RestController
 @RequestMapping("/manage/channel")
 public class ChannelController extends BaseController {
@@ -42,7 +42,7 @@ public class ChannelController extends BaseController {
     /**
      * 查询售货机货道列表
      */
-    @ApiOperation("查询售货机货道列表")
+    @Operation(summary = "查询售货机货道列表")
     @PreAuthorize("@ss.hasPermi('manage:channel:list')")
     @GetMapping("/list")
     public TableDataInfo list(Channel channel) {
@@ -54,7 +54,7 @@ public class ChannelController extends BaseController {
     /**
      * 导出售货机货道列表
      */
-    @ApiOperation("导出售货机货道列表")
+    @Operation(summary = "导出售货机货道列表")
     @PreAuthorize("@ss.hasPermi('manage:channel:export')")
     @Log(title = "售货机货道", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
@@ -67,7 +67,7 @@ public class ChannelController extends BaseController {
     /**
      * 获取售货机货道详细信息
      */
-    @ApiOperation("获取售货机货道详细信息")
+    @Operation(summary = "获取售货机货道详细信息")
     @PreAuthorize("@ss.hasPermi('manage:channel:query')")
     @GetMapping(value = "/{id}")
     public AjaxResult getInfo(@PathVariable("id") Long id) {
@@ -77,7 +77,7 @@ public class ChannelController extends BaseController {
     /**
      * 新增售货机货道
      */
-    @ApiOperation("新增售货机货道")
+    @Operation(summary = "新增售货机货道")
     @PreAuthorize("@ss.hasPermi('manage:channel:add')")
     @Log(title = "售货机货道", businessType = BusinessType.INSERT)
     @PostMapping
@@ -88,7 +88,7 @@ public class ChannelController extends BaseController {
     /**
      * 修改售货机货道
      */
-    @ApiOperation("修改售货机货道")
+    @Operation(summary = "修改售货机货道")
     @PreAuthorize("@ss.hasPermi('manage:channel:edit')")
     @Log(title = "售货机货道", businessType = BusinessType.UPDATE)
     @PutMapping
@@ -99,7 +99,7 @@ public class ChannelController extends BaseController {
     /**
      * 删除售货机货道
      */
-    @ApiOperation("删除售货机货道")
+    @Operation(summary = "删除售货机货道")
     @PreAuthorize("@ss.hasPermi('manage:channel:remove')")
     @Log(title = "售货机货道", businessType = BusinessType.DELETE)
     @DeleteMapping("/{ids}")
@@ -110,7 +110,7 @@ public class ChannelController extends BaseController {
     /**
      * 根据售货机编号查询售货机货道列表
      */
-    @ApiOperation("根据售货机编号查询售货机货道列表")
+    @Operation(summary = "根据售货机编号查询售货机货道列表")
     @GetMapping("/list/{innerCode}")
     public AjaxResult list(@PathVariable("innerCode") String innerCode) {
 
@@ -118,7 +118,7 @@ public class ChannelController extends BaseController {
         return success(voList);
     }
 
-    @ApiOperation("配置售货机货道")
+    @Operation(summary = "配置售货机货道")
     @PreAuthorize("@ss.hasPermi('manage:channel:edit')")
     @Log(title = "售货机货道", businessType = BusinessType.UPDATE)
     @PutMapping("/config")

@@ -17,10 +17,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SecurityConfigRegressionTest {
 
     private static final Pattern AI_PERMIT_ALL = Pattern.compile(
-            "\\.antMatchers\\s*\\(\\s*\"/api/ai/\\*\\*\"\\s*\\)"
+            "\\.(?:requestMatchers|antMatchers)\\s*\\(\\s*\"/api/ai/\\*\\*\"\\s*\\)"
                     + "\\s*\\.permitAll\\s*\\(");
     private static final Pattern INTERNAL_TOOL_PERMIT_ALL = Pattern.compile(
-            "\\.antMatchers\\s*\\(\\s*\"/internal/ai/tools/\\*\\*\"\\s*\\)"
+            "\\.(?:requestMatchers|antMatchers)\\s*\\(\\s*\"/internal/ai/tools/\\*\\*\"\\s*\\)"
                     + "\\s*\\.permitAll\\s*\\(");
 
     @Test

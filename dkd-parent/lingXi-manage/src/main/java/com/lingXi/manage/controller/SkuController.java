@@ -1,9 +1,9 @@
 package com.lingXi.manage.controller;
 
 import java.util.List;
-import javax.servlet.http.HttpServletResponse;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import jakarta.servlet.http.HttpServletResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,7 +30,7 @@ import org.springframework.web.multipart.MultipartFile;
  * @author itzhou
  * @date 2025-08-29
  */
-@Api(tags = "商品管理")
+@Tag(name = "商品管理")
 @RestController
 @RequestMapping("/manage/sku")
 public class SkuController extends BaseController
@@ -41,7 +41,7 @@ public class SkuController extends BaseController
     /**
      * 查询商品管理列表
      */
-    @ApiOperation("查询商品管理列表")
+    @Operation(summary = "查询商品管理列表")
     @PreAuthorize("@ss.hasPermi('manage:sku:list')")
     @GetMapping("/list")
     public TableDataInfo list(Sku sku)
@@ -54,7 +54,7 @@ public class SkuController extends BaseController
     /**
      * 导出商品管理列表
      */
-    @ApiOperation("导出商品管理列表")
+    @Operation(summary = "导出商品管理列表")
     @PreAuthorize("@ss.hasPermi('manage:sku:export')")
     @Log(title = "商品管理", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
@@ -68,7 +68,7 @@ public class SkuController extends BaseController
     /**
      * 获取商品管理详细信息
      */
-    @ApiOperation("获取商品管理详细信息")
+    @Operation(summary = "获取商品管理详细信息")
     @PreAuthorize("@ss.hasPermi('manage:sku:query')")
     @GetMapping(value = "/{skuId}")
     public AjaxResult getInfo(@PathVariable("skuId") Long skuId)
@@ -79,7 +79,7 @@ public class SkuController extends BaseController
     /**
      * 新增商品管理
      */
-    @ApiOperation("新增商品管理")
+    @Operation(summary = "新增商品管理")
     @PreAuthorize("@ss.hasPermi('manage:sku:add')")
     @Log(title = "商品管理", businessType = BusinessType.INSERT)
     @PostMapping
@@ -91,7 +91,7 @@ public class SkuController extends BaseController
     /**
      * 修改商品管理
      */
-    @ApiOperation("修改商品管理")
+    @Operation(summary = "修改商品管理")
     @PreAuthorize("@ss.hasPermi('manage:sku:edit')")
     @Log(title = "商品管理", businessType = BusinessType.UPDATE)
     @PutMapping
@@ -103,7 +103,7 @@ public class SkuController extends BaseController
     /**
      * 删除商品管理
      */
-    @ApiOperation("删除商品管理")
+    @Operation(summary = "删除商品管理")
     @PreAuthorize("@ss.hasPermi('manage:sku:remove')")
     @Log(title = "商品管理", businessType = BusinessType.DELETE)
 	@DeleteMapping("/{skuIds}")
@@ -115,7 +115,7 @@ public class SkuController extends BaseController
     /**
      * 导入商品管理列表
      */
-    @ApiOperation("导入商品管理列表")
+    @Operation(summary = "导入商品管理列表")
     @PreAuthorize("@ss.hasPermi('manage:sku:add')")
     @Log(title = "商品管理", businessType = BusinessType.IMPORT)
     @PostMapping("/import")

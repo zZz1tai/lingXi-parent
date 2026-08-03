@@ -1,9 +1,9 @@
 package com.lingXi.manage.controller;
 
 import java.util.List;
-import javax.servlet.http.HttpServletResponse;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import jakarta.servlet.http.HttpServletResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,7 +29,7 @@ import com.lingXi.common.core.page.TableDataInfo;
  * @author itzhou
  * @date 2025-08-26
  */
-@Api(tags = "设备类型管理")
+@Tag(name = "设备类型管理")
 @RestController
 @RequestMapping("/manage/vmType")
 public class VmTypeController extends BaseController
@@ -40,7 +40,7 @@ public class VmTypeController extends BaseController
     /**
      * 查询设备类型管理列表
      */
-    @ApiOperation("查询设备类型管理列表")
+    @Operation(summary = "查询设备类型管理列表")
     @PreAuthorize("@ss.hasPermi('manage:vmType:list')")
     @GetMapping("/list")
     public TableDataInfo list(VmType vmType)
@@ -53,7 +53,7 @@ public class VmTypeController extends BaseController
     /**
      * 导出设备类型管理列表
      */
-    @ApiOperation("导出设备类型管理列表")
+    @Operation(summary = "导出设备类型管理列表")
     @PreAuthorize("@ss.hasPermi('manage:vmType:export')")
     @Log(title = "设备类型管理", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
@@ -67,7 +67,7 @@ public class VmTypeController extends BaseController
     /**
      * 获取设备类型管理详细信息
      */
-    @ApiOperation("获取设备类型管理详细信息")
+    @Operation(summary = "获取设备类型管理详细信息")
     @GetMapping(value = "/{id}")
     public AjaxResult getInfo(@PathVariable("id") Long id)
     {
@@ -77,7 +77,7 @@ public class VmTypeController extends BaseController
     /**
      * 新增设备类型管理
      */
-    @ApiOperation("新增设备类型管理")
+    @Operation(summary = "新增设备类型管理")
     @PreAuthorize("@ss.hasPermi('manage:vmType:add')")
     @Log(title = "设备类型管理", businessType = BusinessType.INSERT)
     @PostMapping
@@ -89,7 +89,7 @@ public class VmTypeController extends BaseController
     /**
      * 修改设备类型管理
      */
-    @ApiOperation("修改设备类型管理")
+    @Operation(summary = "修改设备类型管理")
     @PreAuthorize("@ss.hasPermi('manage:vmType:edit')")
     @Log(title = "设备类型管理", businessType = BusinessType.UPDATE)
     @PutMapping
@@ -101,7 +101,7 @@ public class VmTypeController extends BaseController
     /**
      * 删除设备类型管理
      */
-    @ApiOperation("删除设备类型管理")
+    @Operation(summary = "删除设备类型管理")
     @PreAuthorize("@ss.hasPermi('manage:vmType:remove')")
     @Log(title = "设备类型管理", businessType = BusinessType.DELETE)
 	@DeleteMapping("/{ids}")

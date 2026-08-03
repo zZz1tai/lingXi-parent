@@ -1,9 +1,9 @@
 package com.lingXi.manage.controller;
 
 import java.util.List;
-import javax.servlet.http.HttpServletResponse;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import jakarta.servlet.http.HttpServletResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,7 +29,7 @@ import com.lingXi.common.core.page.TableDataInfo;
  * @author itzhou
  * @date 2025-08-28
  */
-@Api(tags = "策略管理")
+@Tag(name = "策略管理")
 @RestController
 @RequestMapping("/manage/policy")
 public class PolicyController extends BaseController
@@ -40,7 +40,7 @@ public class PolicyController extends BaseController
     /**
      * 查询策略管理列表
      */
-    @ApiOperation("查询策略管理列表")
+    @Operation(summary = "查询策略管理列表")
     @PreAuthorize("@ss.hasPermi('manage:policy:list')")
     @GetMapping("/list")
     public TableDataInfo list(Policy policy)
@@ -53,7 +53,7 @@ public class PolicyController extends BaseController
     /**
      * 导出策略管理列表
      */
-    @ApiOperation("导出策略管理列表")
+    @Operation(summary = "导出策略管理列表")
     @PreAuthorize("@ss.hasPermi('manage:policy:export')")
     @Log(title = "策略管理", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
@@ -67,7 +67,7 @@ public class PolicyController extends BaseController
     /**
      * 获取策略管理详细信息
      */
-    @ApiOperation("获取策略管理详细信息")
+    @Operation(summary = "获取策略管理详细信息")
     @PreAuthorize("@ss.hasPermi('manage:policy:query')")
     @GetMapping(value = "/{policyId}")
     public AjaxResult getInfo(@PathVariable("policyId") Long policyId)
@@ -78,7 +78,7 @@ public class PolicyController extends BaseController
     /**
      * 获取策略管理详细信息（无需权限）
      */
-    @ApiOperation("获取策略管理详细信息（无需权限）")
+    @Operation(summary = "获取策略管理详细信息（无需权限）")
     @GetMapping(value = "/info/{policyId}")
     public AjaxResult getPolicyInfo(@PathVariable("policyId") Long policyId)
     {
@@ -88,7 +88,7 @@ public class PolicyController extends BaseController
     /**
      * 新增策略管理
      */
-    @ApiOperation("新增策略管理")
+    @Operation(summary = "新增策略管理")
     @PreAuthorize("@ss.hasPermi('manage:policy:add')")
     @Log(title = "策略管理", businessType = BusinessType.INSERT)
     @PostMapping
@@ -100,7 +100,7 @@ public class PolicyController extends BaseController
     /**
      * 修改策略管理
      */
-    @ApiOperation("修改策略管理")
+    @Operation(summary = "修改策略管理")
     @PreAuthorize("@ss.hasPermi('manage:policy:edit')")
     @Log(title = "策略管理", businessType = BusinessType.UPDATE)
     @PutMapping
@@ -112,7 +112,7 @@ public class PolicyController extends BaseController
     /**
      * 删除策略管理
      */
-    @ApiOperation("删除策略管理")
+    @Operation(summary = "删除策略管理")
     @PreAuthorize("@ss.hasPermi('manage:policy:remove')")
     @Log(title = "策略管理", businessType = BusinessType.DELETE)
 	@DeleteMapping("/{policyIds}")

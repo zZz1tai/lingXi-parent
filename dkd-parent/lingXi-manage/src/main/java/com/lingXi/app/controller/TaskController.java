@@ -6,18 +6,18 @@ import com.lingXi.app.domain.vo.Pager;
 import com.lingXi.app.domain.vo.TaskSearchVo;
 import com.lingXi.app.service.TaskService;
 import com.lingXi.common.utils.SecurityUtils;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
-import javax.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotNull;
 
 // 工单
-@Api(tags = "APP工单管理")
+@Tag(name = "APP工单管理")
 @RestController("appTaskController")
 @RequestMapping("/task-service/task")
 @Slf4j
@@ -34,14 +34,14 @@ public class TaskController{
      * @param taskSearchVo 工单搜索参数
      * @return
      */
-    @ApiOperation("搜索工单")
+    @Operation(summary = "搜索工单")
     @GetMapping("/search")
     public Pager<AppTask> search(TaskSearchVo taskSearchVo) {
         taskService.checkTaskPermission(null);
         return taskService.search(taskSearchVo);
     }
 
-    @ApiOperation("获取用户排名情况")
+    @Operation(summary = "获取用户排名情况")
     @GetMapping("/rank")
     public Map<String, Object> rank() {
         taskService.checkEmpBinding();
@@ -49,7 +49,7 @@ public class TaskController{
         return taskService.getRank(userId);
     }
 
-    @ApiOperation("获取用户排名情况（兼容旧路径）")
+    @Operation(summary = "获取用户排名情况（兼容旧路径）")
     @GetMapping("/rank/{userId}")
     public Map<String, Object> rank(@PathVariable("userId") Long userId) {
         taskService.checkEmpBinding();
@@ -57,7 +57,7 @@ public class TaskController{
     }
 
 
-    @ApiOperation("接受工单")
+    @Operation(summary = "接受工单")
     @GetMapping("/accept/{taskId}")
     public Boolean accept(@PathVariable("taskId") Long taskId ){
         taskService.checkTaskPermission(taskId);
@@ -68,7 +68,7 @@ public class TaskController{
     }
 
 
-    @ApiOperation("拒绝/取消工单")
+    @Operation(summary = "拒绝/取消工单")
     @PostMapping("/cancel/{taskId}")
     public Boolean cancel(@PathVariable("taskId")Long taskId,@RequestBody CancelTaskDto cancelTaskDto){
         taskService.checkTaskPermission(taskId);
@@ -79,7 +79,7 @@ public class TaskController{
     }
 
 
-    @ApiOperation("完成工单")
+    @Operation(summary = "完成工单")
     @GetMapping("/complete/{taskId}")
     public Boolean complete(@PathVariable("taskId")Long taskId){
         taskService.checkTaskPermission(taskId);

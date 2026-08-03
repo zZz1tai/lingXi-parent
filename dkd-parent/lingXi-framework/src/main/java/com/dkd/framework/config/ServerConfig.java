@@ -1,6 +1,6 @@
 package com.dkd.framework.config;
 
-import javax.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Component;
 import com.lingXi.common.utils.ServletUtils;
 

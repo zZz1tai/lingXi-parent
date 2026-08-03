@@ -1,12 +1,12 @@
 package com.lingXi.manage.controller;
 
 import java.util.List;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponse;
 
 import com.lingXi.manage.domain.VendingMachine;
 import com.lingXi.manage.service.IVendingMachineService;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,7 +34,7 @@ import static com.lingXi.common.constant.DkdContants.*;
  * @author itzhou
  * @date 2025-08-26
  */
-@Api(tags = "人员列表管理")
+@Tag(name = "人员列表管理")
 @RestController
 @RequestMapping("/manage/emp")
 public class EmpController extends BaseController
@@ -47,7 +47,7 @@ public class EmpController extends BaseController
     /**
      * 查询人员列表列表
      */
-    @ApiOperation("查询人员列表列表")
+    @Operation(summary = "查询人员列表列表")
     @PreAuthorize("@ss.hasPermi('manage:emp:list')")
     @GetMapping("/list")
     public TableDataInfo list(Emp emp)
@@ -60,7 +60,7 @@ public class EmpController extends BaseController
     /**
      * 导出人员列表列表
      */
-    @ApiOperation("导出人员列表列表")
+    @Operation(summary = "导出人员列表列表")
     @PreAuthorize("@ss.hasPermi('manage:emp:export')")
     @Log(title = "人员列表", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
@@ -74,7 +74,7 @@ public class EmpController extends BaseController
     /**
      * 获取人员列表详细信息
      */
-    @ApiOperation("获取人员列表详细信息")
+    @Operation(summary = "获取人员列表详细信息")
     @PreAuthorize("@ss.hasPermi('manage:emp:query')")
     @GetMapping(value = "/{id}")
     public AjaxResult getInfo(@PathVariable("id") Long id)
@@ -85,7 +85,7 @@ public class EmpController extends BaseController
     /**
      * 新增人员列表
      */
-    @ApiOperation("新增人员列表")
+    @Operation(summary = "新增人员列表")
     @PreAuthorize("@ss.hasPermi('manage:emp:add')")
     @Log(title = "人员列表", businessType = BusinessType.INSERT)
     @PostMapping
@@ -97,7 +97,7 @@ public class EmpController extends BaseController
     /**
      * 修改人员列表
      */
-    @ApiOperation("修改人员列表")
+    @Operation(summary = "修改人员列表")
     @PreAuthorize("@ss.hasPermi('manage:emp:edit')")
     @Log(title = "人员列表", businessType = BusinessType.UPDATE)
     @PutMapping
@@ -109,7 +109,7 @@ public class EmpController extends BaseController
     /**
      * 删除人员列表
      */
-    @ApiOperation("删除人员列表")
+    @Operation(summary = "删除人员列表")
     @PreAuthorize("@ss.hasPermi('manage:emp:remove')")
     @Log(title = "人员列表", businessType = BusinessType.DELETE)
 	@DeleteMapping("/{ids}")
@@ -122,7 +122,7 @@ public class EmpController extends BaseController
     /**
      * 根据售货机获取维修人员列表
      */
-    @ApiOperation("根据售货机获取维修人员列表")
+    @Operation(summary = "根据售货机获取维修人员列表")
     @PreAuthorize("@ss.hasPermi('manage:emp:list')")
     @GetMapping("/operationList/{innerCode}")
     public AjaxResult getOperationListByInnerCode(@PathVariable("innerCode") String innerCode)
@@ -146,7 +146,7 @@ public class EmpController extends BaseController
     /**
      * 根据售货机获取运营人员列表
      */
-    @ApiOperation("根据售货机获取运营人员列表")
+    @Operation(summary = "根据售货机获取运营人员列表")
     @PreAuthorize("@ss.hasPermi('manage:emp:list')")
     @GetMapping("/businessList/{innerCode}")
     public AjaxResult getBusinessListByInnerCode(@PathVariable("innerCode") String innerCode)

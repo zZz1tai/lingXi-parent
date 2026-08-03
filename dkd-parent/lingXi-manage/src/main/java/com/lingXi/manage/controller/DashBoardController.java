@@ -2,8 +2,8 @@ package com.lingXi.manage.controller;
 
 import com.lingXi.manage.service.IDashBoardService;
 import com.lingXi.common.core.domain.AjaxResult;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,7 +19,7 @@ import java.util.*;
  * @author itzhou
  * @date 2025-11-27
  */
-@Api(tags = "首页统计查询")
+@Tag(name = "首页统计查询")
 @RestController
 @RequestMapping("/manage/dashboard")
 public class DashBoardController {
@@ -30,7 +30,7 @@ public class DashBoardController {
     /**
      * 获取工单统计
      */
-    @ApiOperation("获取工单统计")
+    @Operation(summary = "获取工单统计")
     @GetMapping("/taskStats")
     public AjaxResult getTaskStats(@RequestParam(required = false) String start, @RequestParam(required = false) String end) {
         List<Map<String, Object>> taskStats = dashBoardService.getTaskStats(start, end);
@@ -40,7 +40,7 @@ public class DashBoardController {
     /**
      * 获取销售统计
      */
-    @ApiOperation("获取销售统计")
+    @Operation(summary = "获取销售统计")
     @GetMapping("/saleStats")
     public AjaxResult getSaleStats(@RequestParam(required = false) String start, @RequestParam(required = false) String end) {
         Map<String, Object> saleStats = dashBoardService.getSaleStats(start, end);
@@ -50,7 +50,7 @@ public class DashBoardController {
     /**
      * 获取SKU销售排名
      */
-    @ApiOperation("获取SKU销售排名")
+    @Operation(summary = "获取SKU销售排名")
     @GetMapping("/skuSaleRank")
     public AjaxResult getSkuSaleRank(@RequestParam(required = false) String start, @RequestParam(required = false) String end) {
         List<Map<String, Object>> skuSaleRank = dashBoardService.getSkuSaleRank(start, end);
@@ -60,7 +60,7 @@ public class DashBoardController {
     /**
      * 获取SKU销售汇总
      */
-    @ApiOperation("获取SKU销售汇总")
+    @Operation(summary = "获取SKU销售汇总")
     @GetMapping("/skuSaleCollect")
     public AjaxResult getSkuSaleCollect(@RequestParam(required = false) String start,
                                                  @RequestParam(required = false) String end,
@@ -72,7 +72,7 @@ public class DashBoardController {
     /**
      * 获取合作商节点汇总
      */
-    @ApiOperation("获取合作商节点汇总")
+    @Operation(summary = "获取合作商节点汇总")
     @GetMapping("/partnerNodeCollect")
     public AjaxResult getPartnerNodeCollect() {
         Map<String, Object> partnerNodeCollect = dashBoardService.getPartnerNodeCollect();
@@ -82,7 +82,7 @@ public class DashBoardController {
     /**
      * 获取异常设备列表
      */
-    @ApiOperation("获取异常设备列表")
+    @Operation(summary = "获取异常设备列表")
     @GetMapping("/abnormalEquipment")
     public AjaxResult getAbnormalEquipment() {
         List<Map<String, Object>> abnormalEquipment = dashBoardService.getAbnormalEquipment();

@@ -1,9 +1,9 @@
 package com.lingXi.manage.controller;
 
 import java.util.List;
-import javax.servlet.http.HttpServletResponse;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import jakarta.servlet.http.HttpServletResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,7 +29,7 @@ import com.lingXi.common.core.page.TableDataInfo;
  * @author itzhou
  * @date 2025-08-29
  */
-@Api(tags = "商品类型管理")
+@Tag(name = "商品类型管理")
 @RestController
 @RequestMapping("/manage/skuClass")
 public class SkuClassController extends BaseController
@@ -40,7 +40,7 @@ public class SkuClassController extends BaseController
     /**
      * 查询商品类型列表
      */
-    @ApiOperation("查询商品类型列表")
+    @Operation(summary = "查询商品类型列表")
     @PreAuthorize("@ss.hasPermi('manage:skuClass:list')")
     @GetMapping("/list")
     public TableDataInfo list(SkuClass skuClass)
@@ -53,7 +53,7 @@ public class SkuClassController extends BaseController
     /**
      * 导出商品类型列表
      */
-    @ApiOperation("导出商品类型列表")
+    @Operation(summary = "导出商品类型列表")
     @PreAuthorize("@ss.hasPermi('manage:skuClass:export')")
     @Log(title = "商品类型", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
@@ -67,7 +67,7 @@ public class SkuClassController extends BaseController
     /**
      * 获取商品类型详细信息
      */
-    @ApiOperation("获取商品类型详细信息")
+    @Operation(summary = "获取商品类型详细信息")
     @PreAuthorize("@ss.hasPermi('manage:skuClass:query')")
     @GetMapping(value = "/{classId}")
     public AjaxResult getInfo(@PathVariable("classId") Long classId)
@@ -78,7 +78,7 @@ public class SkuClassController extends BaseController
     /**
      * 新增商品类型
      */
-    @ApiOperation("新增商品类型")
+    @Operation(summary = "新增商品类型")
     @PreAuthorize("@ss.hasPermi('manage:skuClass:add')")
     @Log(title = "商品类型", businessType = BusinessType.INSERT)
     @PostMapping
@@ -90,7 +90,7 @@ public class SkuClassController extends BaseController
     /**
      * 修改商品类型
      */
-    @ApiOperation("修改商品类型")
+    @Operation(summary = "修改商品类型")
     @PreAuthorize("@ss.hasPermi('manage:skuClass:edit')")
     @Log(title = "商品类型", businessType = BusinessType.UPDATE)
     @PutMapping
@@ -102,7 +102,7 @@ public class SkuClassController extends BaseController
     /**
      * 删除商品类型
      */
-    @ApiOperation("删除商品类型")
+    @Operation(summary = "删除商品类型")
     @PreAuthorize("@ss.hasPermi('manage:skuClass:remove')")
     @Log(title = "商品类型", businessType = BusinessType.DELETE)
 	@DeleteMapping("/{classIds}")

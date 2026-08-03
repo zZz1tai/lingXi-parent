@@ -2,9 +2,9 @@ package com.lingXi.ai.domain.vo;
 
 import lombok.Data;
 
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.Pattern;
-import javax.validation.constraints.Size;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 /** 浏览器对 AI 受控动作作出决定的最小请求。 */
 @Data

@@ -4,14 +4,14 @@ import com.lingXi.app.domain.AppEmp;
 import com.lingXi.app.domain.vo.EmpVo;
 import com.lingXi.app.service.EmpService;
 import com.lingXi.app.service.RoleService;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 // 员工
-@Api(tags = "APP员工管理")
+@Tag(name = "APP员工管理")
 @RestController("appEmpController")
 @RequestMapping("/user-service/user")
 @Slf4j
@@ -22,7 +22,7 @@ public class EmpController {
     @Autowired
     private RoleService roleService;
 
-    @ApiOperation("查询员工基本信息")
+    @Operation(summary = "查询员工基本信息")
     @GetMapping("/{id}")
     public EmpVo findById(@PathVariable String id) {
         try {
@@ -38,7 +38,7 @@ public class EmpController {
         }
     }
 
-    @ApiOperation("根据用户ID查询员工信息")
+    @Operation(summary = "根据用户ID查询员工信息")
     @GetMapping("/byUserId/{userId}")
     public EmpVo findByUserId(@PathVariable Long userId) {
         AppEmp emp = empService.getByUserId(userId);

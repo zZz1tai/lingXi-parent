@@ -1,6 +1,6 @@
 package com.lingXi.generator.domain;
 
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotBlank;
 import com.lingXi.common.core.domain.BaseEntity;
 import com.lingXi.common.utils.StringUtils;
 

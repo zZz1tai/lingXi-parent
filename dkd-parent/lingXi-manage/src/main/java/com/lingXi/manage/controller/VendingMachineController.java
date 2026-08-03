@@ -1,11 +1,11 @@
 package com.lingXi.manage.controller;
 
 import java.util.List;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponse;
 
 import com.lingXi.manage.domain.VendingMachine;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,7 +32,7 @@ import com.lingXi.common.core.page.TableDataInfo;
  * @author itzhou
  * @date 2025-08-26
  */
-@Api(tags = "设备管理")
+@Tag(name = "设备管理")
 @RestController
 @RequestMapping("/manage/vm")
 public class VendingMachineController extends BaseController
@@ -46,7 +46,7 @@ public class VendingMachineController extends BaseController
     /**
      * 查询设备管理列表
      */
-    @ApiOperation("查询设备管理列表")
+    @Operation(summary = "查询设备管理列表")
     @GetMapping("/list")
     public TableDataInfo list(@RequestParam(required = false) String id,
                               @RequestParam(required = false) String innerCode,
@@ -80,7 +80,7 @@ public class VendingMachineController extends BaseController
     /**
      * 导出设备管理列表
      */
-    @ApiOperation("导出设备管理列表")
+    @Operation(summary = "导出设备管理列表")
     @PreAuthorize("@ss.hasPermi('manage:vm:export')")
     @Log(title = "设备管理", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
@@ -94,7 +94,7 @@ public class VendingMachineController extends BaseController
     /**
      * 获取所有售货机列表（无需权限）
      */
-    @ApiOperation("获取所有售货机列表")
+    @Operation(summary = "获取所有售货机列表")
     @GetMapping("/all")
     public AjaxResult getAllVendingMachines()
     {
@@ -105,7 +105,7 @@ public class VendingMachineController extends BaseController
     /**
      * 新增设备管理
      */
-    @ApiOperation("新增设备管理")
+    @Operation(summary = "新增设备管理")
     @PreAuthorize("@ss.hasPermi('manage:vm:add')")
     @Log(title = "设备管理", businessType = BusinessType.INSERT)
     @PostMapping
@@ -117,7 +117,7 @@ public class VendingMachineController extends BaseController
     /**
      * 修改设备管理
      */
-    @ApiOperation("修改设备管理")
+    @Operation(summary = "修改设备管理")
     @PreAuthorize("@ss.hasPermi('manage:vm:edit')")
     @Log(title = "设备管理", businessType = BusinessType.UPDATE)
     @PutMapping
@@ -129,7 +129,7 @@ public class VendingMachineController extends BaseController
     /**
      * 删除设备管理
      */
-    @ApiOperation("删除设备管理")
+    @Operation(summary = "删除设备管理")
     @PreAuthorize("@ss.hasPermi('manage:vm:remove')")
     @Log(title = "设备管理", businessType = BusinessType.DELETE)
 	@DeleteMapping("/{ids}")
@@ -141,7 +141,7 @@ public class VendingMachineController extends BaseController
     /**
      * 获取设备管理详细信息
      */
-    @ApiOperation("获取设备管理详细信息")
+    @Operation(summary = "获取设备管理详细信息")
     @PreAuthorize("@ss.hasPermi('manage:vm:query')")
     @GetMapping(value = "/{id}")
     public AjaxResult getInfo(@PathVariable("id") Long id)
@@ -152,7 +152,7 @@ public class VendingMachineController extends BaseController
     /**
      * 根据设备ID查询货道信息
      */
-    @ApiOperation("根据设备ID查询货道信息")
+    @Operation(summary = "根据设备ID查询货道信息")
     @GetMapping("/channels/{vmId}")
     public AjaxResult getChannelsByVmId(@PathVariable("vmId") Long vmId)
     {

@@ -3,10 +3,10 @@ package com.lingXi.ai.domain.vo;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 
-import javax.validation.constraints.AssertTrue;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.Pattern;
-import javax.validation.constraints.Size;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 /** 用户在设置界面明确修改的一项长期回答偏好。 */
 @Data

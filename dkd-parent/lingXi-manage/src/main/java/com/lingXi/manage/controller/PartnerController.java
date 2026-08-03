@@ -1,12 +1,12 @@
 package com.lingXi.manage.controller;
 
 import java.util.List;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponse;
 
 import com.lingXi.common.utils.SecurityUtils;
 import com.lingXi.manage.domain.vo.PartnerVo;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,7 +32,7 @@ import com.lingXi.common.core.page.TableDataInfo;
  * @author itzhou
  * @date 2025-08-24
  */
-@Api(tags = "合作商管理")
+@Tag(name = "合作商管理")
 @RestController
 @RequestMapping("/manage/partner")
 public class PartnerController extends BaseController
@@ -43,7 +43,7 @@ public class PartnerController extends BaseController
     /**
      * 查询合作商管理列表
      */
-    @ApiOperation("查询合作商管理列表")
+    @Operation(summary = "查询合作商管理列表")
     @PreAuthorize("@ss.hasPermi('manage:partner:list')")
     @GetMapping("/list")
     public TableDataInfo list(Partner partner)
@@ -56,7 +56,7 @@ public class PartnerController extends BaseController
     /**
      * 导出合作商管理列表
      */
-    @ApiOperation("导出合作商管理列表")
+    @Operation(summary = "导出合作商管理列表")
     @PreAuthorize("@ss.hasPermi('manage:partner:export')")
     @Log(title = "合作商管理", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
@@ -70,7 +70,7 @@ public class PartnerController extends BaseController
     /**
      * 获取合作商管理详细信息
      */
-    @ApiOperation("获取合作商管理详细信息")
+    @Operation(summary = "获取合作商管理详细信息")
     @PreAuthorize("@ss.hasPermi('manage:partner:query')")
     @GetMapping(value = "/{id}")
     public AjaxResult getInfo(@PathVariable("id") Long id)
@@ -81,7 +81,7 @@ public class PartnerController extends BaseController
     /**
      * 新增合作商管理
      */
-    @ApiOperation("新增合作商管理")
+    @Operation(summary = "新增合作商管理")
     @PreAuthorize("@ss.hasPermi('manage:partner:add')")
     @Log(title = "合作商管理", businessType = BusinessType.INSERT)
     @PostMapping
@@ -93,7 +93,7 @@ public class PartnerController extends BaseController
     /**
      * 修改合作商管理
      */
-    @ApiOperation("修改合作商管理")
+    @Operation(summary = "修改合作商管理")
     @PreAuthorize("@ss.hasPermi('manage:partner:edit')")
     @Log(title = "合作商管理", businessType = BusinessType.UPDATE)
     @PutMapping
@@ -105,7 +105,7 @@ public class PartnerController extends BaseController
     /**
      * 删除合作商管理
      */
-    @ApiOperation("删除合作商管理")
+    @Operation(summary = "删除合作商管理")
     @PreAuthorize("@ss.hasPermi('manage:partner:remove')")
     @Log(title = "合作商管理", businessType = BusinessType.DELETE)
 	@DeleteMapping("/{ids}")
@@ -117,7 +117,7 @@ public class PartnerController extends BaseController
     /**
      * 重置合作商的密码
      */
-    @ApiOperation("重置合作商的密码")
+    @Operation(summary = "重置合作商的密码")
     @PreAuthorize("@ss.hasPermi('manage:partner:resetPwd')")
     @Log(title = "合作商管理", businessType = BusinessType.UPDATE)
     @PutMapping("/resetPwd/{id}")

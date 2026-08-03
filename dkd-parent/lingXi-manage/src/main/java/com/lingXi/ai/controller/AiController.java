@@ -17,8 +17,8 @@ import com.lingXi.ai.service.IChatSessionService;
 import com.lingXi.manage.service.IModelHistoryService;
 import com.lingXi.manage.service.IEmpService;
 import com.lingXi.ai.service.IQwenService;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.validation.annotation.Validated;
@@ -32,7 +32,7 @@ import java.util.Map;
  * 千问对话接口控制器
  * <p>提供大模型对话、流式对话、数据分析、会话管理等 REST API。</p>
  */
-@Api(tags = "千问对话接口")
+@Tag(name = "千问对话接口")
 @Slf4j
 @RestController
 @RequestMapping("/api/ai")
@@ -80,7 +80,7 @@ public class AiController {
      * @param chatVO 聊天请求视图对象，包含会话ID和用户消息
      * @return 大模型的文本回复
      */
-    @ApiOperation("发送消息到大模型并返回回复")
+    @Operation(summary = "发送消息到大模型并返回回复")
     @PostMapping("/chat")
     public String chat(@Validated @RequestBody ChatVO chatVO) {
         AgentUserContext userContext = currentAgentUserContext();
@@ -96,7 +96,7 @@ public class AiController {
      * @param generateQuestionsVO 智能快捷提问生成请求视图对象，包含会话ID和对话历史
      * @return 生成的智能快捷提问列表
      */
-    @ApiOperation("生成智能快捷提问")
+    @Operation(summary = "生成智能快捷提问")
     @PostMapping("/generate-questions")
     public AjaxResult generateQuestions(
             @Validated @RequestBody GenerateQuestionsVO generateQuestionsVO) {
@@ -120,7 +120,7 @@ public class AiController {
      * @param chatVO 聊天请求视图对象，包含会话ID和用户消息
      * @return SSE流式响应发射器
      */
-    @ApiOperation("流式发送消息到大模型并返回回复")
+    @Operation(summary = "流式发送消息到大模型并返回回复")
     @PostMapping("/chat/stream")
     public SseEmitter streamChat(@Validated @RequestBody ChatVO chatVO) {
         AgentUserContext userContext = currentAgentUserContext();
@@ -131,7 +131,7 @@ public class AiController {
     }
 
     /** 返回 token、工具进度、引用和记忆提示等结构化白名单事件。 */
-    @ApiOperation("V2 流式发送消息到大模型并返回结构化事件")
+    @Operation(summary = "V2 流式发送消息到大模型并返回结构化事件")
     @PostMapping("/chat/stream/v2")
     public SseEmitter streamChatV2(@Validated @RequestBody ChatVO chatVO) {
         AgentUserContext userContext = currentAgentUserContext();
@@ -147,7 +147,7 @@ public class AiController {
      * @param analyzeVO 数据看板分析请求视图对象，包含会话ID、问题和时间范围
      * @return 分析结果
      */
-    @ApiOperation("基于数据看板分析用户问题")
+    @Operation(summary = "基于数据看板分析用户问题")
     @PostMapping("/analyze")
     public AjaxResult analyzeDashboard(@Validated AnalyzeVO analyzeVO) {
         try {
@@ -169,7 +169,7 @@ public class AiController {
      * @param analyzeVO 数据看板分析请求视图对象，包含会话ID、问题和时间范围
      * @return SSE流式响应发射器
      */
-    @ApiOperation("流式基于数据看板分析用户问题")
+    @Operation(summary = "流式基于数据看板分析用户问题")
     @PostMapping("/analyze/stream")
     public SseEmitter streamAnalyzeDashboard(@Validated AnalyzeVO analyzeVO) {
         try {
@@ -197,7 +197,7 @@ public class AiController {
      * @param historyQueryVO 对话历史查询请求视图对象，包含会话ID和查询范围
      * @return 对话历史记录列表
      */
-    @ApiOperation("获取指定会话的对话历史记录")
+    @Operation(summary = "获取指定会话的对话历史记录")
     @GetMapping("/history")
     public AjaxResult getHistory(HistoryQueryVO historyQueryVO) {
         try {
@@ -223,7 +223,7 @@ public class AiController {
      * @param history 对话历史记录对象
      * @return 保存结果
      */
-    @ApiOperation("保存对话历史记录")
+    @Operation(summary = "保存对话历史记录")
     @PostMapping("/history")
     public AjaxResult saveHistory(@RequestBody ModelHistory history) {
         try {
@@ -247,7 +247,7 @@ public class AiController {
      * @param histories 对话历史记录对象列表
      * @return 保存结果
      */
-    @ApiOperation("批量保存对话历史记录")
+    @Operation(summary = "批量保存对话历史记录")
     @PostMapping("/history/batch")
     public AjaxResult batchSaveHistory(@RequestBody List<ModelHistory> histories) {
         try {
@@ -274,7 +274,7 @@ public class AiController {
      * @param sessionId 会话唯一标识
      * @return 清空结果
      */
-    @ApiOperation("清空指定会话的对话历史记录")
+    @Operation(summary = "清空指定会话的对话历史记录")
     @DeleteMapping("/history")
     public AjaxResult clearHistory(@RequestParam String sessionId) {
         try {
@@ -296,7 +296,7 @@ public class AiController {
      * @param userId 用户唯一标识
      * @return 会话列表
      */
-    @ApiOperation("获取用户的会话列表")
+    @Operation(summary = "获取用户的会话列表")
     @GetMapping("/sessions")
     public AjaxResult getSessions(@RequestParam String userId) {
         try {
@@ -314,7 +314,7 @@ public class AiController {
      * @param userId 用户唯一标识
      * @return 新创建的会话对象
      */
-    @ApiOperation("创建新会话")
+    @Operation(summary = "创建新会话")
     @PostMapping("/sessions")
     public AjaxResult createSession(@RequestParam String userId) {
         try {
@@ -331,7 +331,7 @@ public class AiController {
      * @param chatSession 会话对象，包含新的会话名称
      * @return 更新结果
      */
-    @ApiOperation("更新会话名称")
+    @Operation(summary = "更新会话名称")
     @PutMapping("/sessions")
     public AjaxResult updateSession(@RequestBody ChatSession chatSession) {
         try {
@@ -352,7 +352,7 @@ public class AiController {
      * @param sessionId 会话唯一标识
      * @return 删除结果
      */
-    @ApiOperation("删除会话")
+    @Operation(summary = "删除会话")
     @DeleteMapping("/sessions")
     public AjaxResult deleteSession(@RequestParam String sessionId) {
         try {
@@ -369,7 +369,7 @@ public class AiController {
     }
 
     /** 数据分析兼容入口的结构化 V2 事件流。 */
-    @ApiOperation("V2 流式分析数据并返回结构化事件")
+    @Operation(summary = "V2 流式分析数据并返回结构化事件")
     @PostMapping("/analyze/stream/v2")
     public SseEmitter streamAnalyzeDashboardV2(@Validated AnalyzeVO analyzeVO) {
         try {
@@ -393,7 +393,7 @@ public class AiController {
     }
 
     /** 查看当前登录用户的规范化长期回答偏好。 */
-    @ApiOperation("查看长期回答偏好")
+    @Operation(summary = "查看长期回答偏好")
     @GetMapping("/memories")
     public AjaxResult listLongTermMemories() {
         try {
@@ -404,7 +404,7 @@ public class AiController {
     }
 
     /** 修改当前登录用户的一项长期回答偏好。 */
-    @ApiOperation("修改长期回答偏好")
+    @Operation(summary = "修改长期回答偏好")
     @PutMapping("/memories")
     public AjaxResult updateLongTermPreference(
             @Validated @RequestBody MemoryPreferenceVO preferenceVO) {
@@ -419,7 +419,7 @@ public class AiController {
     }
 
     /** 幂等清空当前登录用户的全部长期回答偏好。 */
-    @ApiOperation("清空长期回答偏好")
+    @Operation(summary = "清空长期回答偏好")
     @DeleteMapping("/memories")
     public AjaxResult clearLongTermMemories() {
         try {

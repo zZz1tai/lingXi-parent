@@ -1,8 +1,8 @@
 package com.lingXi.generator.domain;
 
 import java.util.List;
-import javax.validation.Valid;
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import org.apache.commons.lang3.ArrayUtils;
 import com.lingXi.common.constant.GenConstants;
 import com.lingXi.common.core.domain.BaseEntity;

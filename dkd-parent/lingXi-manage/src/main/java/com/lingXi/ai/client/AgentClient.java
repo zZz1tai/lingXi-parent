@@ -15,7 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import javax.annotation.PreDestroy;
+import jakarta.annotation.PreDestroy;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;

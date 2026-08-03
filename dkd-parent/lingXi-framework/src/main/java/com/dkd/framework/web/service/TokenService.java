@@ -1,9 +1,13 @@
 package com.dkd.framework.web.service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import javax.servlet.http.HttpServletRequest;
+import javax.crypto.SecretKey;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +26,7 @@ import eu.bitwalker.useragentutils.UserAgent;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.security.Keys;
 
 /**
  * token验证处理
@@ -169,6 +174,25 @@ public class TokenService
     }
 
     /**
+     * 生成HS512签名密钥：对配置的密钥做SHA-512派生，保证任意长度的secret都能满足HS512的512位密钥要求
+     *
+     * @return 签名密钥
+     */
+    private SecretKey generateKey()
+    {
+        try
+        {
+            MessageDigest digest = MessageDigest.getInstance("SHA-512");
+            byte[] hash = digest.digest(secret.getBytes(StandardCharsets.UTF_8));
+            return Keys.hmacShaKeyFor(hash);
+        }
+        catch (NoSuchAlgorithmException e)
+        {
+            throw new IllegalStateException("SHA-512 算法不可用", e);
+        }
+    }
+
+    /**
      * 从数据声明生成令牌
      *
      * @param claims 数据声明
@@ -178,7 +202,7 @@ public class TokenService
     {
         String token = Jwts.builder()
                 .setClaims(claims)
-                .signWith(SignatureAlgorithm.HS512, secret).compact();
+                .signWith(generateKey(), SignatureAlgorithm.HS512).compact();
         return token;
     }
 
@@ -190,8 +214,9 @@ public class TokenService
      */
     private Claims parseToken(String token)
     {
-        return Jwts.parser()
-                .setSigningKey(secret)
+        return Jwts.parserBuilder()
+                .setSigningKey(generateKey())
+                .build()
                 .parseClaimsJws(token)
                 .getBody();
     }

@@ -1,9 +1,9 @@
 package com.lingXi.manage.controller;
 
 import java.util.List;
-import javax.servlet.http.HttpServletResponse;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import jakarta.servlet.http.HttpServletResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,7 +29,7 @@ import com.lingXi.common.core.page.TableDataInfo;
  * @author itzhou
  * @date 2025-08-26
  */
-@Api(tags = "工单角色管理")
+@Tag(name = "工单角色管理")
 @RestController
 @RequestMapping("/manage/role")
 public class RoleController extends BaseController
@@ -40,7 +40,7 @@ public class RoleController extends BaseController
     /**
      * 查询工单角色列表
      */
-    @ApiOperation("查询工单角色列表")
+    @Operation(summary = "查询工单角色列表")
     @PreAuthorize("@ss.hasPermi('manage:role:list')")
     @GetMapping("/list")
     public TableDataInfo list(Role role)
@@ -53,7 +53,7 @@ public class RoleController extends BaseController
     /**
      * 导出工单角色列表
      */
-    @ApiOperation("导出工单角色列表")
+    @Operation(summary = "导出工单角色列表")
     @PreAuthorize("@ss.hasPermi('manage:role:export')")
     @Log(title = "工单角色", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
@@ -67,7 +67,7 @@ public class RoleController extends BaseController
     /**
      * 获取工单角色详细信息
      */
-    @ApiOperation("获取工单角色详细信息")
+    @Operation(summary = "获取工单角色详细信息")
     @PreAuthorize("@ss.hasPermi('manage:role:query')")
     @GetMapping(value = "/{roleId}")
     public AjaxResult getInfo(@PathVariable("roleId") Long roleId)
@@ -78,7 +78,7 @@ public class RoleController extends BaseController
     /**
      * 新增工单角色
      */
-    @ApiOperation("新增工单角色")
+    @Operation(summary = "新增工单角色")
     @PreAuthorize("@ss.hasPermi('manage:role:add')")
     @Log(title = "工单角色", businessType = BusinessType.INSERT)
     @PostMapping
@@ -90,7 +90,7 @@ public class RoleController extends BaseController
     /**
      * 修改工单角色
      */
-    @ApiOperation("修改工单角色")
+    @Operation(summary = "修改工单角色")
     @PreAuthorize("@ss.hasPermi('manage:role:edit')")
     @Log(title = "工单角色", businessType = BusinessType.UPDATE)
     @PutMapping
@@ -102,7 +102,7 @@ public class RoleController extends BaseController
     /**
      * 删除工单角色
      */
-    @ApiOperation("删除工单角色")
+    @Operation(summary = "删除工单角色")
     @PreAuthorize("@ss.hasPermi('manage:role:remove')")
     @Log(title = "工单角色", businessType = BusinessType.DELETE)
 	@DeleteMapping("/{roleIds}")

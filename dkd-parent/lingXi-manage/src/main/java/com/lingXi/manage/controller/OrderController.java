@@ -1,9 +1,9 @@
 package com.lingXi.manage.controller;
 
 import java.util.List;
-import javax.servlet.http.HttpServletResponse;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import jakarta.servlet.http.HttpServletResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,7 +31,7 @@ import com.lingXi.common.core.page.TableDataInfo;
  * @author itheima
  * @date 2024-07-29
  */
-@Api(tags = "订单管理")
+@Tag(name = "订单管理")
 @RestController
 @RequestMapping("/manage/order")
 public class OrderController extends BaseController
@@ -42,7 +42,7 @@ public class OrderController extends BaseController
     /**
      * 查询订单管理列表
      */
-    @ApiOperation("查询订单管理列表")
+    @Operation(summary = "查询订单管理列表")
     @PreAuthorize("@ss.hasPermi('manage:order:list')")
     @GetMapping("/list")
     public TableDataInfo list(Order order)
@@ -55,7 +55,7 @@ public class OrderController extends BaseController
     /**
      * 导出订单管理列表
      */
-    @ApiOperation("导出订单管理列表")
+    @Operation(summary = "导出订单管理列表")
     @PreAuthorize("@ss.hasPermi('manage:order:export')")
     @Log(title = "订单管理", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
@@ -69,7 +69,7 @@ public class OrderController extends BaseController
     /**
      * 获取订单管理详细信息
      */
-    @ApiOperation("获取订单管理详细信息")
+    @Operation(summary = "获取订单管理详细信息")
     @PreAuthorize("@ss.hasPermi('manage:order:query')")
     @GetMapping(value = "/{id}")
     public AjaxResult getInfo(@PathVariable("id") Long id)
@@ -80,7 +80,7 @@ public class OrderController extends BaseController
     /**
      * 新增订单管理
      */
-    @ApiOperation("新增订单管理")
+    @Operation(summary = "新增订单管理")
     @PreAuthorize("@ss.hasPermi('manage:order:add')")
     @Log(title = "订单管理", businessType = BusinessType.INSERT)
     @PostMapping
@@ -92,7 +92,7 @@ public class OrderController extends BaseController
     /**
      * 修改订单管理
      */
-    @ApiOperation("修改订单管理")
+    @Operation(summary = "修改订单管理")
     @PreAuthorize("@ss.hasPermi('manage:order:edit')")
     @Log(title = "订单管理", businessType = BusinessType.UPDATE)
     @PutMapping
@@ -104,7 +104,7 @@ public class OrderController extends BaseController
     /**
      * 删除订单管理
      */
-    @ApiOperation("删除订单管理")
+    @Operation(summary = "删除订单管理")
     @PreAuthorize("@ss.hasPermi('manage:order:remove')")
     @Log(title = "订单管理", businessType = BusinessType.DELETE)
 	@DeleteMapping("/{ids}")
@@ -117,7 +117,7 @@ public class OrderController extends BaseController
      * 获取当前用户的商品推荐列表
      * 基于历史订单分析购买偏好，返回推荐的skuId列表
      */
-    @ApiOperation("获取用户商品推荐列表")
+    @Operation(summary = "获取用户商品推荐列表")
     @GetMapping("/recommend/{userName}")
     public AjaxResult recommend(@PathVariable("userName") String userName)
     {
@@ -137,7 +137,7 @@ public class OrderController extends BaseController
      * - innerCode: 设备编号（传入后优先推荐本机有货商品）
      * - limit: 返回数量（默认10，最大50）
      */
-    @ApiOperation("混合推荐商品列表")
+    @Operation(summary = "混合推荐商品列表")
     @GetMapping("/recommend/hybrid")
     public AjaxResult hybridRecommend(RecommendQuery query)
     {

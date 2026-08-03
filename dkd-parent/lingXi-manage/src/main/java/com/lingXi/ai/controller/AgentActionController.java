@@ -13,8 +13,8 @@ import com.lingXi.common.utils.SecurityUtils;
 import com.lingXi.manage.domain.ChatSession;
 import com.lingXi.manage.domain.Emp;
 import com.lingXi.manage.service.IEmpService;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
@@ -28,7 +28,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.List;
 
 /** 登录用户审批 AI 受控动作并恢复原 LangGraph 会话。 */
-@Api(tags = "AI受控写操作")
+@Tag(name = "AI受控写操作")
 @Slf4j
 @RestController
 @RequestMapping("/api/ai/actions")
@@ -49,7 +49,7 @@ public class AgentActionController {
         this.empService = empService;
     }
 
-    @ApiOperation("批准或拒绝一个待确认的AI受控动作")
+    @Operation(summary = "批准或拒绝一个待确认的AI受控动作")
     @PreAuthorize("@ss.hasPermi('manage:task:add')")
     @Log(title = "AI受控写操作审批", businessType = BusinessType.GRANT)
     @PostMapping("/{actionId}/decision")
