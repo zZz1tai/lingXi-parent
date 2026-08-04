@@ -111,6 +111,27 @@ class AiVideoModelConfigServiceTest
         assertThrows(ServiceException.class, () -> service.updateConfig(input, "tester"));
     }
 
+    @Test
+    void imageConfigDoesNotRequireTextOrVideoModelSettings()
+    {
+        values.put("aivideo.model.apiKey", "sk-image-only-123456");
+        values.put(
+                "aivideo.model.workspaceBaseUrl",
+                "https://workspace.cn-beijing.maas.aliyuncs.com/custom/path");
+        values.put("aivideo.model.imageModel", "qwen-image-current");
+
+        AiVideoModelConfig config = service.getRequiredImageConfig();
+
+        assertEquals("sk-image-only-123456", config.getApiKey());
+        assertEquals("qwen-image-current", config.getImageModel());
+        assertEquals(
+                "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                config.getWorkspaceBaseUrl());
+        assertNull(config.getTextModel());
+        assertNull(config.getVideoModel());
+        assertThrows(ServiceException.class, service::getRequiredConfig);
+    }
+
     private AiVideoModelConfig validInput()
     {
         AiVideoModelConfig input = new AiVideoModelConfig();

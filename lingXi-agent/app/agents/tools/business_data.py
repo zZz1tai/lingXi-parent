@@ -57,6 +57,12 @@ class DeviceLookupInput(_RuntimeToolInput):
     region_id: int | None = Field(default=None, ge=1)
 
 
+class ImageGenerationInput(_RuntimeToolInput):
+    prompt: str = Field(..., min_length=1, max_length=12000)
+    negative_prompt: str | None = Field(default=None, max_length=4000)
+    aspect_ratio: Literal["1:1", "16:9", "9:16"] = "1:1"
+
+
 class MaintenanceTaskProposalInput(_RuntimeToolInput):
     inner_code: str = Field(
         ..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"
@@ -89,6 +95,14 @@ class _PublicAction(_ToolInput):
 class _ResumeDecision(_ToolInput):
     action_id: str = Field(..., min_length=1, max_length=64)
     decision: Literal["approve", "reject"]
+
+
+class _GeneratedImage(_ToolInput):
+    image_url: str = Field(
+        ..., min_length=1, max_length=4096, pattern=r"^https?://[^\s<>]+$"
+    )
+    aspect_ratio: Literal["1:1", "16:9", "9:16"]
+    model_source: Literal["current_server_config"]
 
 
 def create_business_data_tools(client: AgentToolClient) -> list[BaseTool]:
@@ -193,6 +207,47 @@ def create_business_data_tools(client: AgentToolClient) -> list[BaseTool]:
         )
 
     @tool(
+        "generate_image",
+        args_schema=ImageGenerationInput,
+        response_format="content_and_artifact",
+        description=(
+            "Always use this tool whenever the user explicitly asks to create, draw, "
+            "render, or generate a new image. Do not use it to analyze an uploaded "
+            "image. Only provide the visual prompt, optional negative prompt, and "
+            "aspect ratio; the server always selects the current configured image model."
+        ),
+    )
+    async def generate_image(
+        prompt: str,
+        runtime: ToolRuntime[AgentContext],
+        negative_prompt: str | None = None,
+        aspect_ratio: str = "1:1",
+    ) -> tuple[str, dict[str, Any]]:
+        result = await _invoke_result(
+            client,
+            runtime,
+            "generate_image",
+            {
+                "prompt": prompt,
+                "negative_prompt": negative_prompt,
+                "aspect_ratio": aspect_ratio,
+            },
+        )
+        image = _GeneratedImage.model_validate(result.data)
+        image_data = image.model_dump(mode="json")
+        image_url = image.image_url
+        return (
+            "图片已生成。最终回答必须原样包含：\n"
+            f"![生成的图片](<{image_url}>)",
+            {
+                "provider": "lingxi-manage",
+                "tool": "generate_image",
+                "data": image_data,
+                "metadata": result.metadata.model_dump(mode="json"),
+            },
+        )
+
+    @tool(
         "propose_maintenance_task",
         args_schema=MaintenanceTaskProposalInput,
         response_format="content_and_artifact",
@@ -282,6 +337,7 @@ def create_business_data_tools(client: AgentToolClient) -> list[BaseTool]:
         query_task_statistics,
         query_abnormal_devices,
         lookup_device,
+        generate_image,
     ]
     if settings.agent_write_actions_enabled:
         tools.append(propose_maintenance_task)

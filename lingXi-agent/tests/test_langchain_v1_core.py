@@ -156,6 +156,34 @@ class LangChainV1ContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ChatRequest(message="   ")
 
+    def test_generated_image_markdown_is_added_once_from_tool_artifact(self) -> None:
+        image_url = "https://cdn.example.com/generated/cat.png?signature=safe"
+        messages = [
+            ToolMessage(
+                content="图片已生成",
+                name="generate_image",
+                tool_call_id="call-image-1",
+                artifact={
+                    "provider": "lingxi-manage",
+                    "tool": "generate_image",
+                    "data": {
+                        "image_url": image_url,
+                        "aspect_ratio": "1:1",
+                        "model_source": "current_server_config",
+                    },
+                },
+            ),
+            AIMessage(content=f"已为你生成。\n\n![生成的图片](<{image_url}>)"),
+        ]
+
+        response = chat_api._ensure_generated_image_markdown(
+            chat_api._final_ai_response(messages),
+            chat_api._generated_image_urls(messages),
+        )
+
+        self.assertEqual(response.count(image_url), 1)
+        self.assertIn(f"![生成的图片](<{image_url}>)", response)
+
 class CheckpointMemoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_image_ocr_returns_only_bounded_text(self) -> None:
         model = SimpleNamespace(
@@ -341,6 +369,65 @@ class CheckpointMemoryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class StreamingContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generated_image_markdown_is_forced_before_done(self) -> None:
+        image_url = "https://cdn.example.com/generated/cat.png?signature=safe"
+
+        class ImageAgent:
+            async def astream(self, _input, **_kwargs):
+                yield (
+                    "updates",
+                    {
+                        "tools": {
+                            "messages": [
+                                ToolMessage(
+                                    content="图片已生成",
+                                    name="generate_image",
+                                    tool_call_id="call-image-1",
+                                    artifact={
+                                        "provider": "lingxi-manage",
+                                        "tool": "generate_image",
+                                        "data": {
+                                            "image_url": image_url,
+                                            "aspect_ratio": "1:1",
+                                            "model_source": "current_server_config",
+                                        },
+                                    },
+                                )
+                            ]
+                        }
+                    },
+                )
+                yield (
+                    "messages",
+                    (
+                        AIMessageChunk(content="已经为你生成好了。"),
+                        {"langgraph_node": "model"},
+                    ),
+                )
+
+        request = ChatRequest(message="生成一张猫的图片", thread_id="thread-1")
+        with (
+            patch.object(chat_api, "get_agent", return_value=ImageAgent()),
+            patch.object(
+                chat_api,
+                "create_agent_context",
+                return_value=AgentContext(thread_id="thread-1"),
+            ),
+        ):
+            payloads = [
+                json.loads(event.removeprefix("data:").strip())
+                async for event in chat_api._stream_agent_events(request, "request-1")
+            ]
+
+        token_text = "".join(
+            payload.get("content", "")
+            for payload in payloads
+            if payload["type"] == "token"
+        )
+        self.assertIn(f"![生成的图片](<{image_url}>)", token_text)
+        self.assertEqual(token_text.count(image_url), 1)
+        self.assertEqual(payloads[-1]["type"], "done")
+
     async def test_interrupt_is_a_whitelisted_approval_event_without_done(self) -> None:
         public_action = {
             "action_id": "action123",

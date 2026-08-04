@@ -69,6 +69,31 @@ public class AiVideoModelConfigService
     }
 
     /**
+     * 获取聊天生图所需的最小配置，不要求文本和视频模型同时完成配置。
+     *
+     * @return 只保证 API Key、业务空间地址和图片模型可用的内部配置
+     * @throws ServiceException 图片模型配置不完整或不合法时抛出异常
+     */
+    public AiVideoModelConfig getRequiredImageConfig()
+    {
+        AiVideoModelConfig config = readStoredConfig(true);
+        if (!Boolean.TRUE.equals(config.getApiKeyConfigured())
+                || StringUtils.isEmpty(config.getApiKey()))
+        {
+            throw new ServiceException("AI 图片模型配置未完成：请先在模型配置页面保存 API Key");
+        }
+        String apiKey = normalizeOptionalApiKey(config.getApiKey());
+        if (apiKey == null)
+        {
+            throw new ServiceException("AI 图片模型配置未完成：请先在模型配置页面保存 API Key");
+        }
+        config.setApiKey(apiKey);
+        config.setWorkspaceBaseUrl(normalizeWorkspaceBaseUrl(config.getWorkspaceBaseUrl()));
+        config.setImageModel(validateModel(config.getImageModel(), "图片生成模型"));
+        return config;
+    }
+
+    /**
      * 更新模型配置信息并持久化到数据库。
      *
      * @param input    待更新的配置输入

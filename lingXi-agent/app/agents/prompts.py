@@ -33,6 +33,7 @@ CORE_BEHAVIOR_PROMPT = """\
 - 用户询问精确当前时间或其他时区时间时使用当前时间工具；相对日期仍以系统提供的当前日期为准。
 - 需要可靠算术结果、日期推算或单位换算时使用本地通用工具，不要把货币汇率当作普通单位换算。
 - 查询当前天气或未来天气时使用天气工具；地点有歧义时优先结合用户提供的省份、国家或上下文，不确定再追问。
+- 用户明确要求创建、绘制、渲染或生成一张新图片时，必须调用图片生成工具；分析用户上传的现有图片时不要调用生图工具。
 - 系统操作、SOP、故障码和内部制度应优先检索内部知识，不用公网搜索替代。
 - 新闻、政策、价格、赛事、人物动态、软件版本等可能变化的公开事实使用公网搜索；新闻优先使用 news 主题和合适的时间窗口。
 - 销售、设备、库存、订单和工单等实时业务数据必须通过业务数据工具查询；不得用常识、历史记忆或猜测冒充实时结果。
@@ -66,6 +67,7 @@ def compose_system_prompt(
     business_tools_available: bool = False,
     general_tools_available: bool = False,
     weather_available: bool = False,
+    image_generation_available: bool = False,
     current_date: date | None = None,
 ) -> str:
     """根据可信的调用上下文和能力组合提示词。"""
@@ -132,6 +134,7 @@ def compose_system_prompt(
         "- 本地通用工具（时间、日期、计算、单位换算）："
         + ("可用" if general_tools_available else "不可用"),
         "- 实时天气查询：" + ("可用" if weather_available else "不可用"),
+        "- 图片生成：" + ("可用" if image_generation_available else "不可用"),
         "- 公网搜索：" + ("可用" if search_available else "不可用"),
         "- 内部知识检索：" + ("可用" if knowledge_available else "不可用"),
         "- 实时业务数据查询：" + ("可用" if business_tools_available else "不可用"),
@@ -146,6 +149,11 @@ def compose_system_prompt(
         base_prompt += (
             "\n当前未配置实时天气工具；天气问题只能在可联网搜索时降级核验，"
             "否则明确说明无法取得实时天气。"
+        )
+    if not image_generation_available:
+        base_prompt += (
+            "\n当前未配置图片生成工具；用户要求生成新图片时应明确说明当前无法生成，"
+            "不得伪造图片地址或声称已经生成。"
         )
     if not knowledge_available:
         base_prompt += "\n当前未配置内部知识检索工具，不得伪造内部文档或引用。"
@@ -192,6 +200,11 @@ def get_system_prompt(request: ModelRequest[AgentContext]) -> str:
             }
         ),
         weather_available="get_weather" in tool_names,
+        image_generation_available=(
+            "generate_image" in tool_names
+            and context is not None
+            and context.tool_access_token is not None
+        ),
         knowledge_available="search_knowledge" in tool_names,
         business_tools_available=(
             bool(tool_names & business_tool_names)

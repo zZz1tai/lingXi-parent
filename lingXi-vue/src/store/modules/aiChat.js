@@ -12,6 +12,7 @@ const toolLabels = {
   query_task_statistics: '查询工单统计',
   query_abnormal_devices: '查询异常设备',
   lookup_device: '查询设备状态',
+  generate_image: '生成图片',
   propose_maintenance_task: '准备维修工单提案',
   execute_maintenance_task: '创建维修工单'
 }

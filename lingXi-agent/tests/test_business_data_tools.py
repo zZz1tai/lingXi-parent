@@ -170,6 +170,64 @@ class BusinessDataToolTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("opaque-secret-token", json.dumps(events))
 
+    async def test_image_tool_sends_only_prompt_options_and_returns_markdown(self) -> None:
+        result = ToolCallResult(
+            data={
+                "image_url": "https://cdn.example.com/generated/cat.png?signature=safe",
+                "aspect_ratio": "16:9",
+                "model_source": "current_server_config",
+            },
+            metadata=ToolMetadata.model_validate(_success_envelope()["metadata"]),
+        )
+        client = SimpleNamespace(invoke=AsyncMock(return_value=result))
+        generate_image = next(
+            tool
+            for tool in create_business_data_tools(client)
+            if tool.name == "generate_image"
+        )
+        events: list[dict] = []
+        runtime = SimpleNamespace(
+            context=AgentContext(
+                user_id="42",
+                thread_id="thread-1",
+                agent_request_id="req-11111111111111111111111111111111",
+                tool_access_token=SecretStr("opaque-secret-token"),
+            ),
+            stream_writer=events.append,
+        )
+
+        assert generate_image.coroutine is not None
+        content, artifact = await generate_image.coroutine(
+            prompt="一只猫坐在窗边",
+            negative_prompt="低清晰度",
+            aspect_ratio="16:9",
+            runtime=runtime,
+        )
+
+        client.invoke.assert_awaited_once_with(
+            tool="generate_image",
+            arguments={
+                "prompt": "一只猫坐在窗边",
+                "negative_prompt": "低清晰度",
+                "aspect_ratio": "16:9",
+            },
+            token="opaque-secret-token",
+            agent_request_id="req-11111111111111111111111111111111",
+            thread_id="thread-1",
+        )
+        self.assertIn(
+            "![生成的图片](<https://cdn.example.com/generated/cat.png?signature=safe>)",
+            content,
+        )
+        self.assertEqual(artifact["tool"], "generate_image")
+        self.assertEqual(artifact["data"]["model_source"], "current_server_config")
+        self.assertNotIn("model", client.invoke.await_args.kwargs["arguments"])
+        self.assertNotIn("api_key", client.invoke.await_args.kwargs["arguments"])
+        self.assertNotIn(
+            "opaque-secret-token",
+            json.dumps({"events": events, "content": content, "artifact": artifact}),
+        )
+
     def test_runtime_registration_is_feature_gated(self) -> None:
         fake_client = SimpleNamespace()
         dependencies.configure_agent_runtime(
@@ -197,6 +255,7 @@ class BusinessDataToolTests(unittest.IsolatedAsyncioTestCase):
                     "query_task_statistics",
                     "query_abnormal_devices",
                     "lookup_device",
+                    "generate_image",
                 ],
             )
         finally:

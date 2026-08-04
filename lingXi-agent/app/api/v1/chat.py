@@ -8,6 +8,7 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import suppress
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -394,6 +395,72 @@ def _final_ai_response(messages: list[BaseMessage]) -> str:
     return ""
 
 
+def _safe_generated_image_url(value: Any) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 4096:
+        return None
+    if value != value.strip() or any(
+        char.isspace() or char in "<>" or ord(char) < 32 or ord(char) == 127
+        for char in value
+    ):
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            return None
+    except ValueError:
+        return None
+    return value
+
+
+def _generated_image_urls(messages: list[BaseMessage]) -> list[str]:
+    """从可信工具 artifact 中提取并去重聊天生图地址。"""
+
+    urls: list[str] = []
+    for message in messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        artifact = getattr(message, "artifact", None)
+        if not isinstance(artifact, dict):
+            continue
+        tool_name = message.name or artifact.get("tool")
+        if tool_name != "generate_image" or artifact.get("tool") not in {
+            None,
+            "generate_image",
+        }:
+            continue
+        data = artifact.get("data")
+        if not isinstance(data, dict):
+            continue
+        if data.get("model_source") != "current_server_config":
+            continue
+        image_url = _safe_generated_image_url(data.get("image_url"))
+        if image_url is not None and image_url not in urls:
+            urls.append(image_url)
+    return urls
+
+
+def _generated_image_markdown_suffix(text: str, urls: list[str]) -> str:
+    missing = [
+        url
+        for url in urls
+        if f"](<{url}>)" not in text and f"]({url})" not in text
+    ]
+    if not missing:
+        return ""
+    markdown = "\n\n".join(f"![生成的图片](<{url}>)" for url in missing)
+    return ("\n\n" if text.strip() else "") + markdown
+
+
+def _ensure_generated_image_markdown(text: str, urls: list[str]) -> str:
+    normalized = text.rstrip()
+    return normalized + _generated_image_markdown_suffix(normalized, urls)
+
+
 @router.delete(
     "/thread",
     response_model=BaseResponse,
@@ -602,7 +669,10 @@ async def chat_invoke(
             context=context,
         )
         messages = list(result.get("messages") or [])
-        final_response = _final_ai_response(messages)
+        final_response = _ensure_generated_image_markdown(
+            _final_ai_response(messages),
+            _generated_image_urls(messages),
+        )
         if not final_response:
             raise SearchError("Agent returned no displayable answer")
         memory_saved = await _capture_preferences(
@@ -927,6 +997,8 @@ async def _stream_agent_events(
     public_thread_id = _public_thread_id(request, request_id)
     emitted_text = False
     emitted_characters = 0
+    streamed_text_parts: list[str] = []
+    generated_image_urls: list[str] = []
     final_response = ""
     interrupted = False
     agent_stream: Any = None
@@ -986,6 +1058,7 @@ async def _stream_agent_events(
                     continue
                 emitted_characters = _add_stream_text(emitted_characters, text)
                 emitted_text = True
+                streamed_text_parts.append(text)
                 yield _format_sse_event(
                     StreamEvent(
                         type="token",
@@ -1049,6 +1122,9 @@ async def _stream_agent_events(
                         )
                 elif isinstance(message, ToolMessage):
                     artifact = getattr(message, "artifact", None)
+                    for image_url in _generated_image_urls([message]):
+                        if image_url not in generated_image_urls:
+                            generated_image_urls.append(image_url)
                     result_count = None
                     if isinstance(artifact, dict):
                         candidate = artifact.get("result_count")
@@ -1087,8 +1163,30 @@ async def _stream_agent_events(
 
         if interrupted:
             return
-        if not emitted_text and final_response:
-            _add_stream_text(0, final_response)
+        if emitted_text:
+            image_suffix = _generated_image_markdown_suffix(
+                "".join(streamed_text_parts), generated_image_urls
+            )
+            if image_suffix:
+                emitted_characters = _add_stream_text(
+                    emitted_characters, image_suffix
+                )
+                yield _format_sse_event(
+                    StreamEvent(
+                        type="token",
+                        content=image_suffix,
+                        content_blocks=[{"type": "text", "text": image_suffix}],
+                        data={"node": "generated_image_result"},
+                        request_id=request_id,
+                        thread_id=public_thread_id,
+                    )
+                )
+        else:
+            final_response = _ensure_generated_image_markdown(
+                final_response, generated_image_urls
+            )
+            if final_response:
+                _add_stream_text(0, final_response)
         if isinstance(request, ChatRequest):
             for item in await _capture_preferences(
                 request.user_id,

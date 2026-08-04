@@ -48,6 +48,7 @@ def test_trusted_user_context_is_json_encoded_and_applied() -> None:
         business_tools_available=True,
         general_tools_available=True,
         weather_available=True,
+        image_generation_available=True,
     )
 
     assert "当前可信用户上下文" in prompt
@@ -60,6 +61,8 @@ def test_trusted_user_context_is_json_encoded_and_applied() -> None:
     assert "实时业务数据查询：可用" in prompt
     assert "本地通用工具（时间、日期、计算、单位换算）：可用" in prompt
     assert "实时天气查询：可用" in prompt
+    assert "图片生成：可用" in prompt
+    assert "明确要求创建、绘制、渲染或生成一张新图片时" in prompt
     assert "不要把能力范围错误限制为零售业务" in prompt
 
 

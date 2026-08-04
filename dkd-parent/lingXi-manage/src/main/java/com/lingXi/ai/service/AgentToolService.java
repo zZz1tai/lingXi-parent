@@ -9,14 +9,21 @@ import com.lingXi.ai.domain.dto.tool.AgentToolGrant;
 import com.lingXi.ai.domain.dto.tool.AgentToolRequest;
 import com.lingXi.ai.domain.dto.tool.AgentToolResponse;
 import com.lingXi.ai.domain.dto.tool.DeviceLookupArguments;
+import com.lingXi.ai.domain.dto.tool.ImageGenerationArguments;
 import com.lingXi.ai.domain.dto.tool.MaintenanceTaskExecuteArguments;
 import com.lingXi.ai.domain.dto.tool.MaintenanceTaskProposalArguments;
 import com.lingXi.ai.domain.dto.tool.SalesSummaryArguments;
 import com.lingXi.ai.domain.dto.tool.TaskStatisticsArguments;
 import com.lingXi.ai.mapper.AgentToolMapper;
+import com.lingXi.ai.client.VideoClient;
+import com.lingXi.aiVedio.config.AiVideoModelConfigService;
+import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
+import com.lingXi.common.exception.ServiceException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -31,6 +38,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /** Tool Gateway 白名单、权限、区域、参数和数据最小化编排。 */
@@ -43,11 +51,19 @@ public class AgentToolService {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final int MAX_DATE_RANGE_DAYS = 90;
     private static final int MAX_ABNORMAL_ROWS = 20;
+    private static final int MAX_IMAGE_PROMPT_LENGTH = 12_000;
+    private static final int MAX_IMAGE_NEGATIVE_PROMPT_LENGTH = 4_000;
+    private static final int MAX_GENERATED_IMAGE_URL_LENGTH = 4_096;
     private static final Pattern INNER_CODE = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
+    private static final Pattern TOOL_ERROR_CODE = Pattern.compile("^[A-Z][A-Z0-9_]{0,63}$");
+    private static final Set<String> IMAGE_ASPECT_RATIOS =
+            Set.of("1:1", "16:9", "9:16");
 
     private final AgentToolTokenService tokenService;
     private final AgentToolMapper toolMapper;
     private final AgentWriteActionService writeActionService;
+    private final VideoClient videoClient;
+    private final AiVideoModelConfigService modelConfigService;
     private final ObjectMapper strictMapper;
 
     public AgentToolService(
@@ -55,9 +71,22 @@ public class AgentToolService {
             AgentToolMapper toolMapper,
             AgentWriteActionService writeActionService,
             ObjectMapper objectMapper) {
+        this(tokenService, toolMapper, writeActionService, objectMapper, null, null);
+    }
+
+    @Autowired
+    public AgentToolService(
+            AgentToolTokenService tokenService,
+            AgentToolMapper toolMapper,
+            AgentWriteActionService writeActionService,
+            ObjectMapper objectMapper,
+            VideoClient videoClient,
+            AiVideoModelConfigService modelConfigService) {
         this.tokenService = tokenService;
         this.toolMapper = toolMapper;
         this.writeActionService = writeActionService;
+        this.videoClient = videoClient;
+        this.modelConfigService = modelConfigService;
         this.strictMapper = objectMapper.rebuild()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true)
                 .configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true)
@@ -90,7 +119,7 @@ public class AgentToolService {
             }
             grant = tokenService.validateAndConsume(token, requestId, threadId, tool);
             String requiredPermission = AgentToolCatalog.requiredPermission(tool);
-            if (!grant.hasPermission(requiredPermission)) {
+            if (requiredPermission != null && !grant.hasPermission(requiredPermission)) {
                 throw new AgentToolException(
                         "TOOL_UNAUTHORIZED", "当前用户无权使用该工具", 403, false);
             }
@@ -140,6 +169,8 @@ public class AgentToolService {
                 return queryAbnormalDevices(arguments, grant);
             case AgentToolCatalog.LOOKUP_DEVICE:
                 return lookupDevice(arguments, grant);
+            case AgentToolCatalog.GENERATE_IMAGE:
+                return generateImage(arguments);
             case AgentToolCatalog.PROPOSE_MAINTENANCE_TASK:
                 return new InvocationResult(
                         writeActionService.propose(
@@ -243,6 +274,65 @@ public class AgentToolService {
         Map<String, Object> data = baseDataset(
                 "device_status", grant, regionId, null, Collections.emptyMap(),
                 Collections.emptyMap(), rows, "台", false);
+        return new InvocationResult(data, false, 1);
+    }
+
+    private InvocationResult generateImage(JsonNode arguments) {
+        if (videoClient == null || modelConfigService == null) {
+            throw new AgentToolException(
+                    "IMAGE_GENERATION_UNAVAILABLE", "图片生成服务当前不可用", 503, true);
+        }
+        ImageGenerationArguments args = convert(arguments, ImageGenerationArguments.class);
+        String prompt = requirePrompt(
+                args.getPrompt(), "prompt", MAX_IMAGE_PROMPT_LENGTH, false);
+        String negativePrompt = requirePrompt(
+                args.getNegativePrompt(), "negative_prompt",
+                MAX_IMAGE_NEGATIVE_PROMPT_LENGTH, true);
+        String aspectRatio = safeValue(args.getAspectRatio(), 8);
+        if (aspectRatio.isEmpty()) {
+            aspectRatio = "1:1";
+        }
+        if (!IMAGE_ASPECT_RATIOS.contains(aspectRatio)) {
+            throw invalid("aspect_ratio仅支持1:1、16:9或9:16");
+        }
+
+        final AiVideoModelConfig config;
+        try {
+            config = modelConfigService.getRequiredImageConfig();
+        } catch (ServiceException exception) {
+            throw new AgentToolException(
+                    "IMAGE_MODEL_CONFIG_ERROR", "当前图片模型配置不可用", 503, false);
+        }
+        VideoClient.ImageResult result = videoClient.generateImage(
+                config.getApiKey(),
+                config.getImageModel(),
+                config.getWorkspaceBaseUrl(),
+                null,
+                prompt,
+                negativePrompt,
+                aspectRatio,
+                List.of());
+        if (result == null) {
+            throw new AgentToolException(
+                    "IMAGE_GENERATION_FAILED", "图片生成失败，请稍后重试", 502, true);
+        }
+        if (!result.success()) {
+            String errorCode = safeValue(result.errorCode(), 64);
+            if (!TOOL_ERROR_CODE.matcher(errorCode).matches()) {
+                errorCode = "IMAGE_GENERATION_FAILED";
+            }
+            Integer upstreamStatus = result.statusCode();
+            int status = upstreamStatus != null && upstreamStatus >= 400 && upstreamStatus <= 599
+                    ? upstreamStatus.intValue() : 502;
+            throw new AgentToolException(
+                    errorCode, "图片生成失败，请稍后重试", status, result.retryable());
+        }
+
+        String imageUrl = requireGeneratedImageUrl(result.imageUrl());
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("image_url", imageUrl);
+        data.put("aspect_ratio", aspectRatio);
+        data.put("model_source", "current_server_config");
         return new InvocationResult(data, false, 1);
     }
 
@@ -370,6 +460,57 @@ public class AgentToolService {
             throw invalid(field + "不能为空");
         }
         return normalized;
+    }
+
+    private static String requirePrompt(
+            String value, String field, int maxLength, boolean optional) {
+        if (value == null || value.trim().isEmpty()) {
+            if (optional) {
+                return null;
+            }
+            throw invalid(field + "不能为空");
+        }
+        String normalized = value.trim();
+        if (normalized.length() > maxLength) {
+            throw invalid(field + "长度不能超过" + maxLength + "个字符");
+        }
+        for (int index = 0; index < normalized.length(); index++) {
+            char character = normalized.charAt(index);
+            if (character == '\0'
+                    || (Character.isISOControl(character)
+                    && character != '\r' && character != '\n' && character != '\t')) {
+                throw invalid(field + "包含非法控制字符");
+            }
+        }
+        return normalized;
+    }
+
+    private static String requireGeneratedImageUrl(String value) {
+        if (value == null || value.length() > MAX_GENERATED_IMAGE_URL_LENGTH
+                || !value.equals(value.trim())) {
+            throw new AgentToolException(
+                    "IMAGE_RESULT_INVALID", "图片生成服务返回了无效地址", 502, false);
+        }
+        for (int index = 0; index < value.length(); index++) {
+            if (Character.isWhitespace(value.charAt(index))
+                    || Character.isISOControl(value.charAt(index))) {
+                throw new AgentToolException(
+                        "IMAGE_RESULT_INVALID", "图片生成服务返回了无效地址", 502, false);
+            }
+        }
+        try {
+            URI uri = new URI(value);
+            String scheme = uri.getScheme();
+            if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                    || !uri.isAbsolute() || uri.getHost() == null
+                    || uri.getRawUserInfo() != null) {
+                throw new IllegalArgumentException("invalid generated image URL");
+            }
+            return value;
+        } catch (Exception exception) {
+            throw new AgentToolException(
+                    "IMAGE_RESULT_INVALID", "图片生成服务返回了无效地址", 502, false);
+        }
     }
 
     private static String safeToolName(JsonNode rawRequest) {

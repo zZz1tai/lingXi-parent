@@ -16,6 +16,7 @@ public final class AgentToolCatalog {
     public static final String QUERY_TASK_STATISTICS = "query_task_statistics";
     public static final String QUERY_ABNORMAL_DEVICES = "query_abnormal_devices";
     public static final String LOOKUP_DEVICE = "lookup_device";
+    public static final String GENERATE_IMAGE = "generate_image";
     public static final String PROPOSE_MAINTENANCE_TASK = "propose_maintenance_task";
     public static final String EXECUTE_MAINTENANCE_TASK = "execute_maintenance_task";
 
@@ -27,6 +28,8 @@ public final class AgentToolCatalog {
         permissions.put(QUERY_TASK_STATISTICS, "manage:task:list");
         permissions.put(QUERY_ABNORMAL_DEVICES, "manage:vm:list");
         permissions.put(LOOKUP_DEVICE, "manage:vm:list");
+        // 图片生成只要求已登录和持有本轮工具令牌，不绑定具体业务菜单权限。
+        permissions.put(GENERATE_IMAGE, null);
         permissions.put(PROPOSE_MAINTENANCE_TASK, "manage:task:add");
         permissions.put(EXECUTE_MAINTENANCE_TASK, "manage:task:add");
         REQUIRED_PERMISSIONS = Collections.unmodifiableMap(permissions);
@@ -36,18 +39,17 @@ public final class AgentToolCatalog {
     }
 
     public static String requiredPermission(String tool) {
-        String permission = REQUIRED_PERMISSIONS.get(tool);
-        if (permission == null) {
+        if (!REQUIRED_PERMISSIONS.containsKey(tool)) {
             throw new AgentToolException(
                     "TOOL_NOT_FOUND", "请求的工具不存在", 404, false);
         }
-        return permission;
+        return REQUIRED_PERMISSIONS.get(tool);
     }
 
     public static Set<String> allowedTools(Set<String> permissions) {
         Set<String> allowed = new LinkedHashSet<>();
         for (Map.Entry<String, String> entry : REQUIRED_PERMISSIONS.entrySet()) {
-            if (hasPermission(permissions, entry.getValue())) {
+            if (entry.getValue() == null || hasPermission(permissions, entry.getValue())) {
                 allowed.add(entry.getKey());
             }
         }
@@ -55,6 +57,9 @@ public final class AgentToolCatalog {
     }
 
     private static boolean hasPermission(Set<String> permissions, String required) {
+        if (permissions == null) {
+            return false;
+        }
         for (String permission : permissions) {
             if ("*:*:*".equals(permission)
                     || PatternMatchUtils.simpleMatch(permission, required)) {

@@ -1775,9 +1775,10 @@ onBeforeUnmount(() => {
       
       /* 图片 */
       img {
-        max-width: 100%;
+        display: block;
+        max-width: min(100%, 640px);
         height: auto;
-        border-radius: 8px;
+        border-radius: 12px;
         margin: 12px 0;
       }
       
