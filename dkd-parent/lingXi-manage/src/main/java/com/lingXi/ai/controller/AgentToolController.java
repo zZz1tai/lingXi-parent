@@ -1,6 +1,6 @@
 package com.lingXi.ai.controller;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import com.lingXi.ai.domain.dto.tool.AgentToolException;
 import com.lingXi.ai.domain.dto.tool.AgentToolResponse;
 import com.lingXi.ai.service.AgentToolService;

@@ -3,9 +3,13 @@ package com.lingXi.common.core.domain.model;
 import com.alibaba.fastjson2.annotation.JSONField;
 import com.lingXi.common.core.domain.entity.SysUser;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 登录用户身份权限
@@ -258,9 +262,14 @@ public class LoginUser implements UserDetails
         this.user = user;
     }
 
+    @JSONField(serialize = false)
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities()
     {
-        return null;
+        if (permissions == null || permissions.isEmpty())
+        {
+            return Collections.emptySet();
+        }
+        return permissions.stream().map(SimpleGrantedAuthority::new).collect(Collectors.toCollection(HashSet::new));
     }
 }

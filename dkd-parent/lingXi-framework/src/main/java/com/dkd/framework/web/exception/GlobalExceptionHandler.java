@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.BindException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.MissingPathVariableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.lingXi.common.constant.HttpStatus;
 import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.common.exception.DemoModeException;
@@ -53,8 +55,11 @@ public class GlobalExceptionHandler {
      * 业务异常
      */
     @ExceptionHandler(ServiceException.class)
-    public AjaxResult handleServiceException(ServiceException e, HttpServletRequest request) {
+    public Object handleServiceException(ServiceException e, HttpServletRequest request) {
         log.error(e.getMessage(), e);
+        if (isSseRequest(request)) {
+            return sseError(e.getMessage());
+        }
         Integer code = e.getCode();
         return StringUtils.isNotNull(code) ? AjaxResult.error(code, e.getMessage()) : AjaxResult.error(e.getMessage());
     }
@@ -113,9 +118,13 @@ public class GlobalExceptionHandler {
      * 自定义验证异常
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public Object handleMethodArgumentNotValidException(MethodArgumentNotValidException e) {
+    public Object handleMethodArgumentNotValidException(MethodArgumentNotValidException e,
+                                                       HttpServletRequest request) {
         log.error(e.getMessage(), e);
         String message = e.getBindingResult().getFieldError().getDefaultMessage();
+        if (isSseRequest(request)) {
+            return sseError(message);
+        }
         return AjaxResult.error(message);
     }
 
@@ -140,5 +149,30 @@ public class GlobalExceptionHandler {
             return AjaxResult.error("名称已存在，无法保存");
         }
         return AjaxResult.error("数据完整性异常");
+    }
+
+    /**
+     * SSE 请求以 text/event-stream 消费响应，无法接收 JSON 错误体。
+     * 此时返回一条结构化 error 事件，避免 HttpMediaTypeNotAcceptableException 二次失败。
+     */
+    private static boolean isSseRequest(HttpServletRequest request) {
+        String accept = request.getHeader("Accept");
+        return accept != null && accept.contains(MediaType.TEXT_EVENT_STREAM_VALUE);
+    }
+
+    private static SseEmitter sseError(String message) {
+        SseEmitter emitter = new SseEmitter();
+        try {
+            emitter.send(SseEmitter.event().name("error").data(sseErrorPayload(message)));
+            emitter.complete();
+        } catch (Exception e) {
+            emitter.completeWithError(e);
+        }
+        return emitter;
+    }
+
+    private static String sseErrorPayload(String message) {
+        String safe = message == null ? "" : message.replace("\\", "\\\\").replace("\"", "\\\"");
+        return "{\"type\":\"error\",\"content\":\"" + safe + "\"}";
     }
 }

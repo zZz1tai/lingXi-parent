@@ -16,6 +16,7 @@ from app.agents.state import AgentContext
 from app.config.settings import settings
 from app.security.outbound import validate_outbound_http_url
 from app.services.http_client import get_http_client
+from app.services.tavily_client import tavily_client_lifespan
 from app.utils.exceptions import ToolExecutionError
 
 _WEATHER_HOSTS = {"geocoding-api.open-meteo.com", "api.open-meteo.com"}
@@ -179,30 +180,26 @@ async def _weather_search_fallback(
             public_message="天气服务暂时不可用，请稍后再试",
         )
 
-    from tavily import AsyncTavilyClient
-
-    client = AsyncTavilyClient(api_key=settings.tavily_api_key)
     query = f"{location} 当前天气 未来{forecast_days}天天气预报"
     try:
-        async with asyncio.timeout(settings.tool_timeout):
-            payload = await client.search(
-                query=query,
-                topic="general",
-                time_range="day",
-                search_depth="basic",
-                max_results=settings.search_max_results,
-                include_answer=False,
-                include_raw_content=False,
-                timeout=float(settings.tool_timeout),
-            )
+        async with tavily_client_lifespan() as client:
+            async with asyncio.timeout(settings.tool_timeout):
+                payload = await client.search(
+                    query=query,
+                    topic="general",
+                    time_range="day",
+                    search_depth="basic",
+                    max_results=settings.search_max_results,
+                    include_answer=False,
+                    include_raw_content=False,
+                    timeout=float(settings.tool_timeout),
+                )
     except (httpx.HTTPError, TimeoutError, TypeError, ValueError) as exc:
         raise ToolExecutionError(
             "Weather fallback search failed",
             code="TOOL_WEATHER_UNAVAILABLE",
             public_message="天气服务暂时不可用，请稍后再试",
         ) from exc
-    finally:
-        await client.close()
 
     raw_results = payload.get("results") if isinstance(payload, dict) else None
     results: list[dict[str, str]] = []

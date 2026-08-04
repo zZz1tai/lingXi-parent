@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+import os
 import tempfile
 import unittest
 from contextlib import asynccontextmanager
@@ -26,10 +28,15 @@ class CheckpointSettingsTests(unittest.TestCase):
                 f"AGENT_POSTGRES_DSN={dsn}\n",
                 encoding="utf-8",
             )
-            configured = Settings(_env_file=env_file)
+            # Pydantic Settings 规定进程环境优先于 dotenv；测试必须隔离开发机
+            # 可能存在的真实 checkpoint 配置，避免失败断言打印真实 DSN。
+            with patch.dict(os.environ, {}, clear=True):
+                configured = Settings(_env_file=env_file)
 
         self.assertEqual(configured.agent_checkpointer_backend, "postgres")
-        self.assertEqual(configured.agent_postgres_dsn_value, dsn)
+        self.assertTrue(
+            hmac.compare_digest(configured.agent_postgres_dsn_value, dsn)
+        )
         self.assertNotIn(dsn, repr(configured))
 
 
@@ -70,6 +77,10 @@ class CheckpointLifespanIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 "agent_postgres_dsn",
                 SecretStr(dsn),
             ),
+            patch.object(main_module.settings, "knowledge_backend", "disabled"),
+            patch.object(main_module.settings, "agent_store_backend", "disabled"),
+            patch.object(main_module.settings, "agent_memory_enabled", False),
+            patch.object(main_module.settings, "agent_tools_enabled", False),
             patch.object(
                 main_module,
                 "checkpointer_lifespan",

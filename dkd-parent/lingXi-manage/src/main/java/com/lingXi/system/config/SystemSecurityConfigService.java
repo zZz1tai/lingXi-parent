@@ -49,6 +49,9 @@ public class SystemSecurityConfigService
     @Autowired
     private ISysConfigService sysConfigService;
 
+    @Autowired
+    private OssStoragePlatformBinder ossStoragePlatformBinder;
+
     /**
      * 获取页面展示用的安全配置，敏感字段以掩码返回。
      */
@@ -131,6 +134,9 @@ public class SystemSecurityConfigService
         {
             upsert(KEY_AGENT_SERVICE_API_KEY, "Agent服务-API Key", agentApiKey, username);
         }
+
+        // 配置持久化后热刷新存储平台（若 OSS 已配置完整则立即生效）
+        ossStoragePlatformBinder.bind();
 
         return getConfig();
     }

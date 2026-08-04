@@ -1,8 +1,8 @@
 package com.lingXi.ai.service;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.lingXi.ai.domain.dto.tool.AbnormalDevicesArguments;
 import com.lingXi.ai.domain.dto.tool.AgentToolException;
 import com.lingXi.ai.domain.dto.tool.AgentToolGrant;
@@ -58,9 +58,10 @@ public class AgentToolService {
         this.tokenService = tokenService;
         this.toolMapper = toolMapper;
         this.writeActionService = writeActionService;
-        this.strictMapper = objectMapper.copy()
+        this.strictMapper = objectMapper.rebuild()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true)
-                .configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
+                .configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true)
+                .build();
     }
 
     public AgentToolResponse invoke(

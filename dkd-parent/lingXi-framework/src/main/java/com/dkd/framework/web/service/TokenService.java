@@ -81,7 +81,9 @@ public class TokenService
             }
             catch (Exception e)
             {
-                log.error("获取用户信息异常'{}'", e.getMessage());
+                // 携带的非 JWT 请求（如内部工具 token、非法 Cookies）不需要堆 ERROR；
+                // 解析失败按未登录处理，由 JwtAuthenticationTokenFilter 统一放行匿名。
+                log.debug("token解析异常'{}'", e.getMessage());
             }
         }
         return null;

@@ -57,6 +57,16 @@ class Settings(BaseSettings):
         default="",
         description="Tavily Search API key",
     )
+    tavily_trust_env: bool = Field(
+        default=False,
+        validation_alias="TAVILY_TRUST_ENV",
+        description="Allow Tavily to inherit process and desktop proxy settings",
+    )
+    tavily_https_proxy: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias="TAVILY_HTTPS_PROXY",
+        description="Explicit HTTPS proxy used only for Tavily requests",
+    )
     search_max_results: int = Field(
         default=5,
         ge=1,
@@ -294,6 +304,11 @@ class Settings(BaseSettings):
     def service_api_key_value(self) -> str:
         """返回服务共享密钥，不会在 repr/日志中暴露。"""
         return self.service_api_key.get_secret_value().strip()
+
+    @property
+    def tavily_https_proxy_value(self) -> str:
+        """返回 Tavily 显式代理；空值表示直连。"""
+        return self.tavily_https_proxy.get_secret_value().strip()
 
     @property
     def agent_postgres_dsn_value(self) -> str:

@@ -62,7 +62,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeMount } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Document, ArrowLeft } from '@element-plus/icons-vue'
 import { getTaskDetails } from '@/api/app/task'
@@ -75,6 +75,7 @@ const router = useRouter()
 const taskDetails = ref([])
 const loading = ref(false)
 const taskInfo = ref(null)
+let requestVersion = 0
 
 // 状态映射
 const statusMap = {
@@ -96,19 +97,20 @@ const getStatusType = (status) => {
 
 // 获取工单详情
 const fetchTaskDetails = async (taskId) => {
+  const version = ++requestVersion
   loading.value = true
   try {
     const response = await getTaskDetails(taskId)
-    taskDetails.value = response
+    if (version !== requestVersion) return
+    taskDetails.value = Array.isArray(response) ? response : []
     // 从详情中提取工单基本信息（假设详情中包含工单信息）
-    if (response.length > 0) {
-      taskInfo.value = response[0].task || null
-    }
+    taskInfo.value = taskDetails.value[0]?.task || null
   } catch (error) {
+    if (version !== requestVersion) return
     console.error('获取工单详情失败:', error)
     ElMessage.error('获取工单详情失败')
   } finally {
-    loading.value = false
+    if (version === requestVersion) loading.value = false
   }
 }
 
@@ -117,20 +119,21 @@ const goBack = () => {
   router.push('/app/task')
 }
 
-// 监听路由参数变化
-onBeforeMount(() => {
-  const taskId = route.params.id
-  if (taskId) {
-    fetchTaskDetails(taskId)
-  }
-})
-
-onMounted(() => {
-  const taskId = route.params.id
-  if (taskId) {
-    fetchTaskDetails(taskId)
-  }
-})
+// 单一监听源既负责首次加载，也处理复用组件时的路由参数变化。
+watch(
+  () => route.params.id,
+  taskId => {
+    if (taskId) {
+      fetchTaskDetails(taskId)
+    } else {
+      requestVersion += 1
+      taskDetails.value = []
+      taskInfo.value = null
+      loading.value = false
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>

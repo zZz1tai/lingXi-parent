@@ -26,7 +26,7 @@ dkd-parent / lingXi-admin ─ Spring Boot 业务入口（HTTP 8080）
 | 路径 | 角色 | 主要技术 |
 | --- | --- | --- |
 | [`lingXi-vue`](lingXi-vue) | 管理端及桌面端 UI | Vue 3、Vite 6、Element Plus、Pinia、Vue Router、ECharts、Tauri 2 |
-| [`dkd-parent/lingXi-admin`](dkd-parent/lingXi-admin) | Java Web 服务启动模块 | Spring Boot 2.5.15、Swagger、Druid |
+| [`dkd-parent/lingXi-admin`](dkd-parent/lingXi-admin) | Java Web 服务启动模块 | Spring Boot 4.1、Springdoc、Druid |
 | [`dkd-parent/lingXi-manage`](dkd-parent/lingXi-manage) | 智能零售与 AI 业务模块 | MyBatis-Plus、HTTP Agent 客户端、AI 视频业务 |
 | [`dkd-parent/lingXi-system`](dkd-parent/lingXi-system) | 系统管理与权限领域 | 用户、角色、菜单、字典等 |
 | [`dkd-parent/lingXi-framework`](dkd-parent/lingXi-framework) | 认证、缓存、Web、MyBatis 等框架配置 | Spring Security、Redis |
@@ -49,9 +49,9 @@ Java 启动类是 `com.lingXi.LingXiApplication`。它由 `lingXi-admin` 模块�
 
 | 组件 | 要求 | 说明 |
 | --- | --- | --- |
-| Java | JDK 11 | 后端 POM 的 `java.version` 为 11。 |
+| Java | JDK 17 | 后端 POM 的 `java.version` 为 17。 |
 | Maven | 3.6+ | 用于构建和启动 Java 多模块项目。 |
-| Node.js | 18+（建议） | 用于 Vite 6 前端构建；使用 npm。 |
+| Node.js | 20.19+ 或 22.12+ | 用于 Vite 7 前端构建；使用 npm。 |
 | Python | 3.12+（建议） | 用于 FastAPI / LangChain Agent。 |
 | MySQL | 8.0+ | 整合初始化脚本以 MySQL 8.0 / `utf8mb4` 为目标。 |
 | Redis | 6+ | 默认连接 `localhost:6379`。 |

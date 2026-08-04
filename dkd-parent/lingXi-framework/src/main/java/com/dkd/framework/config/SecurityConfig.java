@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import jakarta.servlet.DispatcherType;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -97,12 +98,17 @@ public class SecurityConfig
                 // 过滤请求
                 .authorizeHttpRequests(auth ->
                 {
+                    // SSE 完成/出错时 Tomcat 会以 ASYNC/ERROR 分派类型重新分发请求，
+                    // 此时响应已提交且无认证上下文，放行这些分派避免二次 AccessDenied 噪音。
+                    auth.dispatcherTypeMatchers(DispatcherType.ERROR, DispatcherType.ASYNC).permitAll();
                     // 注解标记允许匿名访问的url
                     permitAllUrl.getUrls().forEach(url -> auth.requestMatchers(url).permitAll());
                     // 对于登录login 注册register 验证码captchaImage 允许匿名访问
                     auth.requestMatchers("/login", "/register", "/captchaImage").permitAll()
                             // Python Agent 使用独立短期 Bearer Token；Controller 内部强制校验
                             .requestMatchers("/internal/ai/tools/**").permitAll()
+                            // 错误页：异常发生后 Tomcat 对 /error 再次分派，需放行避免二次 403
+                            .requestMatchers("/error").permitAll()
                             // 静态资源，可匿名访问
                             .requestMatchers(HttpMethod.GET, "/", "/*.html", "/**/*.html", "/**/*.css", "/**/*.js", "/profile/**").permitAll()
                             .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/swagger-resources/**", "/webjars/**", "/*/api-docs", "/druid/**", "/doc.html", "/favicon.ico").permitAll()

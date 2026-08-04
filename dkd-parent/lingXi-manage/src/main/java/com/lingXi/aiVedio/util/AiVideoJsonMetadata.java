@@ -1,8 +1,8 @@
 package com.lingXi.aiVedio.util;
 
 import java.util.List;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** 统一生成可写入 MySQL JSON 列的 AI 视频元数据。 */
 public final class AiVideoJsonMetadata
@@ -40,7 +40,7 @@ public final class AiVideoJsonMetadata
         {
             try
             {
-                com.fasterxml.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(existingMetadataJson);
+                tools.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(existingMetadataJson);
                 if (existing != null && existing.isObject())
                 {
                     metadata.setAll((ObjectNode) existing);
@@ -68,7 +68,7 @@ public final class AiVideoJsonMetadata
         {
             try
             {
-                com.fasterxml.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(existingMetadataJson);
+                tools.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(existingMetadataJson);
                 if (existing != null && existing.isObject())
                 {
                     metadata.setAll((ObjectNode) existing);
@@ -102,7 +102,7 @@ public final class AiVideoJsonMetadata
         {
             try
             {
-                com.fasterxml.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(metadataJson);
+                tools.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(metadataJson);
                 if (existing != null && existing.isObject())
                 {
                     metadata.setAll((ObjectNode) existing);
@@ -122,7 +122,7 @@ public final class AiVideoJsonMetadata
             metadata.put("sceneReferenceAssetId", sceneReferenceAssetId.longValue());
             metadata.put("sourceAssetId", sceneReferenceAssetId.longValue());
         }
-        com.fasterxml.jackson.databind.node.ArrayNode characters =
+        tools.jackson.databind.node.ArrayNode characters =
                 metadata.putArray("characterReferenceAssetIds");
         if (characterReferenceAssetIds != null)
         {
@@ -180,7 +180,7 @@ public final class AiVideoJsonMetadata
         {
             try
             {
-                com.fasterxml.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(metadataJson);
+                tools.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(metadataJson);
                 if (existing != null && existing.isObject()) metadata.setAll((ObjectNode) existing);
             }
             catch (Exception ignored)
@@ -204,7 +204,7 @@ public final class AiVideoJsonMetadata
         if (metadataJson == null || metadataJson.trim().isEmpty()) return null;
         try
         {
-            com.fasterxml.jackson.databind.JsonNode value = OBJECT_MAPPER.readTree(metadataJson).path("analysisVersion");
+            tools.jackson.databind.JsonNode value = OBJECT_MAPPER.readTree(metadataJson).path("analysisVersion");
             return value.canConvertToInt() && value.asInt() > 0 ? Integer.valueOf(value.asInt()) : null;
         }
         catch (Exception ignored)
@@ -227,7 +227,7 @@ public final class AiVideoJsonMetadata
         {
             try
             {
-                com.fasterxml.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(metadataJson);
+                tools.jackson.databind.JsonNode existing = OBJECT_MAPPER.readTree(metadataJson);
                 if (existing != null && existing.isObject()) metadata.setAll((ObjectNode) existing);
             }
             catch (Exception ignored)
@@ -317,7 +317,7 @@ public final class AiVideoJsonMetadata
         if (aspectRatio != null) request.put("aspectRatio", sanitize(aspectRatio));
         if (referenceAssetIds != null && !referenceAssetIds.isEmpty())
         {
-            com.fasterxml.jackson.databind.node.ArrayNode references = request.putArray("referenceAssetIds");
+            tools.jackson.databind.node.ArrayNode references = request.putArray("referenceAssetIds");
             for (Long referenceAssetId : referenceAssetIds)
             {
                 if (referenceAssetId != null) references.add(referenceAssetId.longValue());

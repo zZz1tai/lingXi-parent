@@ -278,6 +278,38 @@ function Resolve-WindowsTerminalCommand {
     throw 'Windows Terminal (wt.exe) was not found.'
 }
 
+function Get-NewestFileTimeUtc {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string[]]$Include
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [datetime]::MinValue
+    }
+
+    $newest = [datetime]::MinValue
+    foreach ($item in (Get-ChildItem -LiteralPath $Path -Recurse -File -Include $Include -ErrorAction SilentlyContinue)) {
+        if ($item.LastWriteTimeUtc -gt $newest) {
+            $newest = $item.LastWriteTimeUtc
+        }
+    }
+    return $newest
+}
+
+function Test-JavaNeedsBuild {
+    param([Parameter(Mandatory = $true)][string]$JavaDir)
+
+    $adminTargetClasses = Join-Path $JavaDir 'lingXi-admin\target\classes'
+    if (-not (Test-Path -LiteralPath $adminTargetClasses)) {
+        return $true
+    }
+
+    $newestSource = Get-NewestFileTimeUtc -Path $JavaDir -Include @('*.java', '*.kt', 'pom.xml')
+    $newestBuilt = Get-NewestFileTimeUtc -Path $adminTargetClasses -Include @('*')
+    return $newestSource -gt $newestBuilt
+}
+
 function Start-LingXiTerminalTab {
     param(
         [Parameter(Mandatory = $true)][string]$Title,
@@ -345,7 +377,15 @@ try {
         Write-Host ('      Java is already listening: http://localhost:' + $JavaPort) -ForegroundColor Green
     }
     else {
-        $javaStartup = 'call "{0}" -pl lingXi-admin -am -DskipTests install && call "{0}" -f lingXi-admin\pom.xml -DskipTests -Dspring-boot.run.main-class=com.lingXi.LingXiApplication spring-boot:run' -f $MavenCommand
+        $springBootRun = '-DskipTests -Dspring-boot.run.main-class=com.lingXi.LingXiApplication spring-boot:run'
+        if (Test-JavaNeedsBuild -JavaDir $JavaDir) {
+            $javaStartup = 'call "{0}" -pl lingXi-admin -am -DskipTests install && call "{0}" -f lingXi-admin\pom.xml {1}' -f $MavenCommand, $springBootRun
+            Write-Host '      Source changes detected: rebuilding dependent modules first.' -ForegroundColor Yellow
+        }
+        else {
+            $javaStartup = 'call "{0}" -f lingXi-admin\pom.xml {1}' -f $MavenCommand, $springBootRun
+            Write-Host '      No source changes: skipping reinstall.' -ForegroundColor Green
+        }
         Start-LingXiTerminalTab -Title 'LingXi Java Backend' -WorkingDirectory $JavaDir -CommandLine $javaStartup
         Write-Host '      Java command launched.' -ForegroundColor Green
     }

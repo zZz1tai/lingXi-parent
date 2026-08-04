@@ -177,7 +177,13 @@ class BusinessDataToolTests(unittest.IsolatedAsyncioTestCase):
             agent_tool_client=fake_client,
         )
         try:
-            with patch.object(dependencies, "get_default_tools", return_value=[]):
+            with (
+                patch.object(dependencies, "get_default_tools", return_value=[]),
+                patch.object(dependencies.settings, "weather_enabled", True),
+                patch.object(
+                    dependencies.settings, "agent_write_actions_enabled", False
+                ),
+            ):
                 tools = dependencies._runtime_tools()
             self.assertEqual(
                 [tool.name for tool in tools],

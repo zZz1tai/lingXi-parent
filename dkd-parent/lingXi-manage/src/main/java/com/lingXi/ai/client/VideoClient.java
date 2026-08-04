@@ -1,8 +1,8 @@
 package com.lingXi.ai.client;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.ai.config.VideoConfig;
 import lombok.extern.slf4j.Slf4j;
@@ -288,7 +288,7 @@ public class VideoClient {
             }
             body.put("image_url", imageUrl);
             if (characterReferenceImageUrls != null && !characterReferenceImageUrls.isEmpty()) {
-                com.fasterxml.jackson.databind.node.ArrayNode characters =
+                tools.jackson.databind.node.ArrayNode characters =
                         body.putArray("character_reference_image_urls");
                 for (String referenceUrl : characterReferenceImageUrls) {
                     if (referenceUrl != null && !referenceUrl.trim().isEmpty()) {

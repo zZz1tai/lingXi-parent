@@ -469,6 +469,10 @@ import {
 } from '@/api/ai';
 import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
+import {
+  createLatestSingleFlight,
+  smartQuestionRequestKey
+} from '@/utils/latestSingleFlight';
 
 // 配置marked
 marked.setOptions({
@@ -494,6 +498,7 @@ const error = ref('');
 const enableDataAnalysis = ref(false);
 const chatContainer = ref(null);
 const smartQuestions = ref([]);
+const smartQuestionsLoader = createLatestSingleFlight();
 const validQuestions = ref([]);
 const memoryDialogVisible = ref(false);
 const memoryLoading = ref(false);
@@ -514,6 +519,35 @@ const hasValidQuestions = computed(() => {
 });
 
 const presets = [];
+
+const refreshSmartQuestions = async (
+  sessionId = currentSessionId.value,
+  chatHistory = history.value
+) => {
+  if (!sessionId || !chatHistory.length || loading.value) return;
+  const requestKey = smartQuestionRequestKey(sessionId, chatHistory);
+  try {
+    const result = await smartQuestionsLoader.run(requestKey, () => (
+      generateSmartQuestions(
+        chatHistory,
+        userStore.id,
+        userStore.name,
+        sessionId
+      )
+    ));
+    if (
+      result.status === 'applied'
+      && currentSessionId.value === sessionId
+      && smartQuestionRequestKey(sessionId, history.value) === requestKey
+    ) {
+      smartQuestions.value = result.value?.data || [];
+    }
+  } catch (err) {
+    if (currentSessionId.value === sessionId) {
+      console.error('生成智能快捷提问失败:', err);
+    }
+  }
+};
 
 // 会话管理相关状态
 const sessions = ref([]);
@@ -774,13 +808,7 @@ const sendMessage = async () => {
     }
     // 生成智能快捷提问
     if (completed && currentSessionId.value === sessionId && history.value.length > 0) {
-      generateSmartQuestions(history.value, userStore.id, userStore.name, sessionId)
-        .then(res => {
-          smartQuestions.value = res.data || [];
-        })
-        .catch(err => {
-          console.error('生成智能快捷提问失败:', err);
-        });
+      void refreshSmartQuestions(sessionId, history.value);
     }
   }
 };
@@ -855,18 +883,7 @@ const loadChatHistory = async () => {
       scrollToBottom();
       // 生成智能快捷提问
       if (!loading.value) {
-        generateSmartQuestions(
-          history.value,
-          userStore.id,
-          userStore.name,
-          currentSessionId.value
-        )
-          .then(res => {
-            smartQuestions.value = res.data || [];
-          })
-          .catch(err => {
-            console.error('生成智能快捷提问失败:', err);
-          });
+        void refreshSmartQuestions(currentSessionId.value, history.value);
       }
     } else {
       history.value = [];
@@ -897,6 +914,7 @@ const createNewSession = async () => {
 // 切换会话
 const switchSession = async (session) => {
   // 先清空快捷提问，确保切换过程中不显示残留内容
+  smartQuestionsLoader.invalidate();
   smartQuestions.value = [];
   currentSessionId.value = session.sessionId;
   localStorage.setItem('ai_chat_session_id', session.sessionId);

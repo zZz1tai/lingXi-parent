@@ -1,8 +1,9 @@
 package com.lingXi.ai.client;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -70,7 +71,7 @@ final class AgentResponseUtil {
         JsonNode response;
         try {
             response = mapper.readTree(responseBody);
-        } catch (IOException ignored) {
+        } catch (JacksonException ignored) {
             throw new IOException("Python Agent returned an invalid JSON response");
         }
         if (response == null || !response.isObject()) {
@@ -102,7 +103,7 @@ final class AgentResponseUtil {
                 if (parsed != null && parsed.isObject()) {
                     normalized = ((ObjectNode) parsed).deepCopy();
                 }
-            } catch (IOException ignored) {
+            } catch (JacksonException ignored) {
                 // 解析失败时使用稳定的传输错误并拒绝继续处理，绝不向调用方回显原始响应内容。
             }
         }

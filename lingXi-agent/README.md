@@ -144,6 +144,10 @@ HTTPS 地理编码与天气主机，提供当前天气和 1～7 天预报；响�
 `WEATHER_MAX_RESPONSE_BYTES` 限制，用户不能控制目标 URL。若当前网络无法访问
 Open-Meteo 且已配置 Tavily，则自动降级为有来源链接的当日公开天气搜索结果。
 
+Tavily 默认使用直连，避免桌面系统代理规则导致搜索连接失败。生产环境需要
+显式代理时设置 `TAVILY_HTTPS_PROXY`；只有确认进程代理可靠时才设置
+`TAVILY_TRUST_ENV=true`。
+
 ## 内部知识检索
 
 内部知识工具默认关闭。第一阶段提供权限优先的 JSONL 后端，并通过统一

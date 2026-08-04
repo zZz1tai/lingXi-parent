@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.state import AgentContext
 from app.config.settings import settings
+from app.services.tavily_client import tavily_client_lifespan
 from app.utils.exceptions import ConfigurationError
 from app.utils.logger import logger
 
@@ -86,13 +87,10 @@ def create_tavily_search_tool() -> BaseTool:
         topic: Literal["general", "news", "finance"] = "general",
         time_range: Literal["day", "week", "month", "year"] | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        from tavily import AsyncTavilyClient
-
         runtime.stream_writer(
             {"type": "tool_progress", "tool": "web_search", "status": "started"}
         )
-        client = AsyncTavilyClient(api_key=settings.tavily_api_key)
-        try:
+        async with tavily_client_lifespan() as client:
             async with asyncio.timeout(settings.tool_timeout):
                 payload = await client.search(
                     query=query,
@@ -104,8 +102,6 @@ def create_tavily_search_tool() -> BaseTool:
                     include_raw_content=False,
                     timeout=float(settings.tool_timeout),
                 )
-        finally:
-            await client.close()
 
         results = _normalized_results(payload)
         runtime.stream_writer(

@@ -2,6 +2,13 @@ import { defineConfig, loadEnv } from 'vite'
 import path from 'path'
 import createVitePlugins from './vite/plugins'
 
+const manualChunks = (id) => {
+  const normalizedId = id.replace(/\\/g, '/')
+  if (normalizedId.includes('/node_modules/element-plus/')) return 'element-plus'
+  if (normalizedId.includes('/node_modules/echarts/') || normalizedId.includes('/node_modules/zrender/')) return 'charts'
+  if (normalizedId.includes('/node_modules/@vueup/vue-quill/') || normalizedId.includes('/node_modules/quill/')) return 'editor'
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd())
@@ -41,6 +48,12 @@ export default defineConfig(({ mode, command }) => {
     },
     //fix:error:stdin>:7356:1: warning: "@charset" must be the first rule in the file
     css: {
+      preprocessorOptions: {
+        scss: {
+          // 静默 Sass 弃用警告（@import / 全局 built-in 函数，Sass 3.0 才强制移除）
+          silenceDeprecations: ['import', 'global-builtin']
+        }
+      },
       postcss: {
         plugins: [
           {
@@ -54,6 +67,13 @@ export default defineConfig(({ mode, command }) => {
             }
           }
         ]
+      }
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks
+        }
       }
     }
   }

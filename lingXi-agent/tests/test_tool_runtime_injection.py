@@ -50,9 +50,11 @@ def _tool_state(name: str, arguments: dict[str, object]) -> dict[str, object]:
 
 class _FakeTavilyClient:
     last_search_kwargs: ClassVar[dict[str, object]] = {}
+    last_http_client: ClassVar[object | None] = None
 
     def __init__(self, **_kwargs: object) -> None:
         self.closed = False
+        type(self).last_http_client = _kwargs.get("client")
 
     async def search(self, **_kwargs: object) -> dict[str, object]:
         type(self).last_search_kwargs = dict(_kwargs)
@@ -71,6 +73,23 @@ class _FakeTavilyClient:
 
 
 class ToolRuntimeInjectionTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.tavily_key_patch = patch(
+            "app.agents.tools.web_search.settings.tavily_api_key", "test-key"
+        )
+        self.tavily_trust_env_patch = patch(
+            "app.services.tavily_client.settings.tavily_trust_env", False
+        )
+        self.tavily_proxy_patch = patch(
+            "app.services.tavily_client.settings.tavily_https_proxy", SecretStr("")
+        )
+        self.tavily_key_patch.start()
+        self.tavily_trust_env_patch.start()
+        self.tavily_proxy_patch.start()
+        self.addCleanup(self.tavily_key_patch.stop)
+        self.addCleanup(self.tavily_trust_env_patch.stop)
+        self.addCleanup(self.tavily_proxy_patch.stop)
+
     async def test_web_search_runs_through_tool_node_and_streams_progress(self) -> None:
         tool = create_tavily_search_tool()
         events: list[dict[str, object]] = []
@@ -107,6 +126,10 @@ class ToolRuntimeInjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.artifact["results"][0]["title"], "示例科技新闻")
         self.assertEqual(_FakeTavilyClient.last_search_kwargs["topic"], "news")
         self.assertEqual(_FakeTavilyClient.last_search_kwargs["time_range"], "day")
+        http_client = _FakeTavilyClient.last_http_client
+        self.assertIsNotNone(http_client)
+        self.assertFalse(getattr(http_client, "_trust_env"))
+        self.assertTrue(getattr(http_client, "is_closed"))
 
     async def test_business_tool_runtime_survives_explicit_input_schema(self) -> None:
         result = ToolCallResult(

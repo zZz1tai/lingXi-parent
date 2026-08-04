@@ -1,7 +1,7 @@
 package com.lingXi.ai.domain.dto.tool;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 /** Python Agent 调用 Java Tool Gateway 的严格请求 DTO。 */
 public class AgentToolRequest {

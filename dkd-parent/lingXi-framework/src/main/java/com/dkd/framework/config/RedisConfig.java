@@ -1,12 +1,15 @@
 package com.dkd.framework.config;
 
-import org.springframework.cache.annotation.CachingConfigurerSupport;
+import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.cache.RedisCacheConfiguration;
+import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 /**
@@ -16,7 +19,7 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
  */
 @Configuration
 @EnableCaching
-public class RedisConfig extends CachingConfigurerSupport
+public class RedisConfig
 {
     @Bean
     @SuppressWarnings(value = { "unchecked", "rawtypes" })
@@ -46,6 +49,19 @@ public class RedisConfig extends CachingConfigurerSupport
         redisScript.setScriptText(limitScriptText());
         redisScript.setResultType(Long.class);
         return redisScript;
+    }
+
+    @Bean
+    public CacheManager cacheManager(RedisConnectionFactory connectionFactory)
+    {
+        FastJson2JsonRedisSerializer fastJson2JsonRedisSerializer = new FastJson2JsonRedisSerializer(Object.class);
+        RedisCacheConfiguration config = RedisCacheConfiguration.defaultCacheConfig()
+                .serializeKeysWith(RedisSerializationContext.SerializationPair.fromSerializer(new StringRedisSerializer()))
+                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(fastJson2JsonRedisSerializer))
+                .disableCachingNullValues();
+        return RedisCacheManager.builder(connectionFactory)
+                .cacheDefaults(config)
+                .build();
     }
 
     /**

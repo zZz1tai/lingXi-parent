@@ -7,7 +7,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.system.domain.SysConfig;
