@@ -1,12 +1,16 @@
 package com.lingXi.aiVedio.storage;
 
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
+import java.util.Iterator;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import org.dromara.x.file.storage.core.FileInfo;
 import org.dromara.x.file.storage.core.FileStorageService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +20,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class AiVideoLocalAssetStorage
 {
+    private static final int MAX_UPLOAD_DIMENSION = 8192;
+    private static final int MAX_NORMALIZED_IMAGE_BYTES = 32 * 1024 * 1024;
+
     @Autowired
     private FileStorageService fileStorageService;
 
@@ -43,6 +50,93 @@ public class AiVideoLocalAssetStorage
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
         return new StoredImage(fileInfo.getUrl(), fileInfo.getSize(), sha256(bytes), image == null ? null : image.getWidth(),
                 image == null ? null : image.getHeight(), fileInfo.getPlatform());
+    }
+
+    /**
+     * 校验用户上传的参考图、移除原始元数据并统一转存为 PNG。
+     *
+     * @param projectId  项目ID
+     * @param assetId    资产ID
+     * @param versionNo  版本号
+     * @param assetCode  资产编码
+     * @param sourceBytes 用户上传的原始图片字节
+     * @return 存储结果信息
+     * @throws Exception 解码、规范化或上传失败时抛出异常
+     */
+    public StoredImage storeUploadedImage(Long projectId, Long assetId, Integer versionNo,
+            String assetCode, byte[] sourceBytes) throws Exception
+    {
+        if (sourceBytes == null || sourceBytes.length == 0)
+        {
+            throw new IllegalArgumentException("参考图片不能为空");
+        }
+        BufferedImage image;
+        int width;
+        int height;
+        try (ImageInputStream input = ImageIO.createImageInputStream(
+                new ByteArrayInputStream(sourceBytes)))
+        {
+            if (input == null)
+            {
+                throw new IllegalArgumentException("参考图片格式无效，仅支持 PNG 或 JPG");
+            }
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+            if (!readers.hasNext())
+            {
+                throw new IllegalArgumentException("参考图片格式无效，仅支持 PNG 或 JPG");
+            }
+            ImageReader reader = readers.next();
+            try
+            {
+                reader.setInput(input, true, true);
+                String formatName = reader.getFormatName();
+                if (!("png".equalsIgnoreCase(formatName)
+                        || "jpg".equalsIgnoreCase(formatName)
+                        || "jpeg".equalsIgnoreCase(formatName)))
+                {
+                    throw new IllegalArgumentException("参考图片格式无效，仅支持 PNG 或 JPG");
+                }
+                width = reader.getWidth(0);
+                height = reader.getHeight(0);
+                if (width < 1 || height < 1
+                        || width > MAX_UPLOAD_DIMENSION || height > MAX_UPLOAD_DIMENSION)
+                {
+                    throw new IllegalArgumentException("参考图片尺寸需在 1 到 8192 像素之间");
+                }
+                image = reader.read(0);
+            }
+            finally
+            {
+                reader.dispose();
+            }
+        }
+        if (image == null)
+        {
+            throw new IllegalArgumentException("参考图片解码失败");
+        }
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        if (!ImageIO.write(image, "png", output))
+        {
+            throw new IllegalStateException("参考图片规范化失败");
+        }
+        byte[] normalizedBytes = output.toByteArray();
+        if (normalizedBytes.length > MAX_NORMALIZED_IMAGE_BYTES)
+        {
+            throw new IllegalArgumentException("参考图片解码后过大，请降低分辨率后重试");
+        }
+
+        String filename = versionedFilename(assetCode, assetId, versionNo, ".png");
+        FileInfo fileInfo = fileStorageService.of(normalizedBytes, filename, "image/png")
+                .setPath("aivideo/" + projectId + "/images/")
+                .setSaveFilename(filename)
+                .upload();
+        if (fileInfo == null || fileInfo.getUrl() == null)
+        {
+            throw new IllegalStateException("OSS 参考图片上传失败");
+        }
+        return new StoredImage(fileInfo.getUrl(), fileInfo.getSize(), sha256(normalizedBytes),
+                width, height, fileInfo.getPlatform());
     }
 
     /**

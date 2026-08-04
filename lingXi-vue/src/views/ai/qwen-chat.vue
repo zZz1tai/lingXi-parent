@@ -90,6 +90,18 @@
       
       <!-- 右侧聊天主区域 -->
       <div class="chat-main">
+        <!-- 会话头部 -->
+        <div class="chat-header">
+          <div class="chat-header-info">
+            <span class="chat-header-icon">
+              <el-icon><ChatDotRound /></el-icon>
+            </span>
+            <span class="chat-header-copy">
+              <span class="chat-header-title">{{ currentSessionName }}</span>
+              <span class="chat-header-meta">灵犀助手 · 对话内容自动保存</span>
+            </span>
+          </div>
+        </div>
         <!-- 聊天内容区域 -->
         <div class="chat-messages-container" ref="chatContainer">
           <!-- 空状态 -->
@@ -226,6 +238,10 @@
                     <div v-if="item.memorySaved?.length" class="memory-saved-note">
                       <el-icon><CircleCheck /></el-icon>
                       已记住：{{ item.memorySaved.map(memoryPreferenceText).join('、') }}
+                    </div>
+                    <div v-if="item.error" class="message-error">
+                      <el-icon><WarningFilled /></el-icon>
+                      <span>{{ item.error }}</span>
                     </div>
                   </div>
                 </div>
@@ -366,6 +382,18 @@
                   <span>附件</span>
                   <small v-if="pendingAttachments.length">{{ pendingAttachments.length }}/{{ maxAttachments }}</small>
                 </el-button>
+
+                <el-button
+                  v-hasPermi="['aivideo:project:edit']"
+                  type="default"
+                  class="video-btn"
+                  :class="{ 'active-mode': quickVideoDialogVisible }"
+                  title="使用画面描述和多张参考图生成视频"
+                  @click="openQuickVideoDialog"
+                >
+                  <el-icon><VideoCamera /></el-icon>
+                  <span>AI 视频</span>
+                </el-button>
                 
                 <el-dropdown @command="usePreset" trigger="click" placement="top-start" :disabled="!hasValidQuestions">
                   <el-button type="default" class="preset-btn" :disabled="!hasValidQuestions">
@@ -387,6 +415,8 @@
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>
+
+                <span class="input-shortcut">Enter 发送 · Shift + Enter 换行</span>
                 
                 <el-button 
                   type="primary" 
@@ -442,6 +472,7 @@
       <div class="memory-dialog" v-loading="memoryLoading">
         <p class="memory-intro">
           这些偏好会跨对话生效。这里只保存选项值，不保存聊天原文、权限或实时业务数据。
+          已保存的偏好如需恢复默认，可将该项选为"保持默认"；全部重置请使用"清空偏好"。
         </p>
         <el-alert
           v-if="!memoryEnabled && !memoryLoading"
@@ -453,20 +484,23 @@
         />
         <el-form v-else label-position="top" class="memory-form">
           <el-form-item label="回答篇幅">
-            <el-select v-model="memoryForm.answer_length" placeholder="保持默认">
+            <el-select v-model="memoryForm.answer_length" placeholder="保持默认" clearable>
+              <el-option label="保持默认" value="" />
               <el-option label="简短" value="short" />
               <el-option label="均衡" value="balanced" />
               <el-option label="详细" value="detailed" />
             </el-select>
           </el-form-item>
           <el-form-item label="回答结构">
-            <el-select v-model="memoryForm.answer_structure" placeholder="保持默认">
+            <el-select v-model="memoryForm.answer_structure" placeholder="保持默认" clearable>
+              <el-option label="保持默认" value="" />
               <el-option label="结论优先" value="conclusion_first" />
               <el-option label="自然组织" value="natural" />
             </el-select>
           </el-form-item>
           <el-form-item label="数字格式">
-            <el-select v-model="memoryForm.number_format" placeholder="保持默认">
+            <el-select v-model="memoryForm.number_format" placeholder="保持默认" clearable>
+              <el-option label="保持默认" value="" />
               <el-option label="保留两位小数" value="two_decimals" />
               <el-option label="按内容自适应" value="adaptive" />
             </el-select>
@@ -497,6 +531,174 @@
         </span>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="quickVideoDialogVisible"
+      width="min(680px, calc(100vw - 28px))"
+      class="quick-video-dialog"
+      :close-on-click-modal="!quickVideoSubmitting"
+      :close-on-press-escape="!quickVideoSubmitting"
+      @closed="handleQuickVideoDialogClosed"
+    >
+      <template #header>
+        <div class="quick-video-dialog-heading">
+          <span class="quick-video-dialog-icon">
+            <el-icon><VideoCamera /></el-icon>
+          </span>
+          <span>
+            <strong>AI 视频快创</strong>
+            <small>用一段描述和参考画面锁定镜头</small>
+          </span>
+        </div>
+      </template>
+
+      <div v-if="!quickVideoTask" class="quick-video-composer">
+        <section class="quick-video-section">
+          <div class="quick-video-label-row">
+            <label for="quick-video-prompt">画面描述</label>
+            <span>{{ quickVideoPrompt.length }}/2500</span>
+          </div>
+          <el-input
+            id="quick-video-prompt"
+            v-model="quickVideoPrompt"
+            type="textarea"
+            :rows="4"
+            maxlength="2500"
+            resize="none"
+            placeholder="例如：雨后的城市天台，女孩回头望向镜头，风吹动衣角，镜头缓慢推进，电影感光影"
+          />
+        </section>
+
+        <section class="quick-video-section">
+          <div class="quick-video-label-row">
+            <label>视频时长</label>
+            <span>生成模型会自动匹配最接近的可用档位</span>
+          </div>
+          <div class="duration-strip" role="radiogroup" aria-label="视频时长">
+            <button
+              v-for="duration in quickVideoDurations"
+              :key="duration.value"
+              type="button"
+              :class="{ active: quickVideoDurationMs === duration.value }"
+              :aria-pressed="quickVideoDurationMs === duration.value"
+              @click="quickVideoDurationMs = duration.value"
+            >
+              <strong>{{ duration.seconds }}</strong>
+              <small>秒</small>
+              <span>{{ duration.hint }}</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="quick-video-section">
+          <div class="quick-video-label-row">
+            <label>参考画面</label>
+            <span>第 1 张作为起始帧 · 最多 5 张</span>
+          </div>
+          <input
+            ref="quickVideoImageInput"
+            class="quick-video-file-input"
+            type="file"
+            multiple
+            accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+            @change="handleQuickVideoImages"
+          />
+          <div class="reference-filmstrip">
+            <article
+              v-for="(image, index) in quickVideoImages"
+              :key="image.id"
+              class="reference-frame"
+            >
+              <img :src="image.previewUrl" :alt="image.name" />
+              <span class="frame-index">{{ index === 0 ? '首帧' : `参考 ${index}` }}</span>
+              <button
+                type="button"
+                class="remove-reference"
+                :aria-label="`移除 ${image.name}`"
+                @click="removeQuickVideoImage(image.id)"
+              >
+                <el-icon><Close /></el-icon>
+              </button>
+              <strong :title="image.name">{{ image.name }}</strong>
+            </article>
+            <button
+              v-if="quickVideoImages.length < maxQuickVideoImages"
+              type="button"
+              class="add-reference-frame"
+              @click="openQuickVideoImagePicker"
+            >
+              <span class="add-reference-icon"><el-icon><Picture /></el-icon></span>
+              <strong>{{ quickVideoImages.length ? '继续添加' : '添加参考图' }}</strong>
+              <small>PNG / JPG · 单张 10MB</small>
+            </button>
+          </div>
+          <p class="quick-video-reference-note">
+            可分多次添加。建议首图使用清晰的主体构图，其余图片补充人物、服装、场景或美术风格。
+          </p>
+        </section>
+
+        <div class="quick-video-cost-note">
+          <el-icon><WarningFilled /></el-icon>
+          <span>点击生成后会提交模型任务并产生费用；任务提交期间请勿重复操作。</span>
+        </div>
+      </div>
+
+      <div v-else class="quick-video-task-panel" :class="`is-${quickVideoTaskTone}`">
+        <div
+          class="quick-video-progress"
+          :style="{ '--quick-video-progress': `${quickVideoProgress * 3.6}deg` }"
+          aria-hidden="true"
+        >
+          <span><strong>{{ quickVideoProgress }}</strong>%</span>
+        </div>
+        <div class="quick-video-task-copy">
+          <span class="quick-video-task-eyebrow">{{ quickVideoTaskEyebrow }}</span>
+          <h3>{{ quickVideoTaskTitle }}</h3>
+          <p>{{ quickVideoTaskDescription }}</p>
+          <small>任务 {{ quickVideoTask.taskId }} · {{ formatQuickVideoDuration(quickVideoTask.durationMs || quickVideoDurationMs) }}</small>
+        </div>
+        <video
+          v-if="quickVideoTask.videoUrl"
+          class="quick-video-result"
+          :src="quickVideoTask.videoUrl"
+          controls
+          playsinline
+          preload="metadata"
+        />
+        <a
+          v-if="quickVideoTask.videoUrl"
+          class="quick-video-open-result"
+          :href="quickVideoTask.videoUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          在新窗口查看视频
+        </a>
+      </div>
+
+      <template #footer>
+        <div class="quick-video-footer">
+          <el-button @click="quickVideoDialogVisible = false">关闭</el-button>
+          <el-button
+            v-if="quickVideoTask && quickVideoCanStartAnother"
+            @click="resetQuickVideoComposer"
+          >
+            再生成一个
+          </el-button>
+          <el-button
+            v-if="!quickVideoTask"
+            type="primary"
+            class="quick-video-submit"
+            :loading="quickVideoSubmitting"
+            :disabled="!quickVideoReady"
+            @click="submitQuickVideoTask"
+          >
+            <el-icon v-if="!quickVideoSubmitting"><VideoCamera /></el-icon>
+            生成视频
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -520,14 +722,14 @@ import {
   ElOption,
   ElSelect
 } from 'element-plus';
-import { 
-  Plus, 
-  ChatDotRound, 
-  More, 
-  EditPen, 
-  Delete, 
-  MagicStick, 
-  Lightning, 
+import {
+  Plus,
+  ChatDotRound,
+  More,
+  EditPen,
+  Delete,
+  MagicStick,
+  Lightning,
   Promotion,
   ChatDotSquare,
   DataAnalysis,
@@ -535,7 +737,10 @@ import {
   CircleCheck,
   Close,
   Document,
-  Paperclip
+  Paperclip,
+  WarningFilled,
+  VideoCamera,
+  Picture
 } from '@element-plus/icons-vue';
 import {
   clearLongTermMemories,
@@ -550,6 +755,10 @@ import {
   updateSession,
   uploadAiAttachment
 } from '@/api/ai';
+import {
+  getQuickAiVideoStatus,
+  submitQuickAiVideo
+} from '@/api/aiVedio/project';
 import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
 import {
@@ -564,14 +773,20 @@ marked.setOptions({
   headerIds: false
 });
 
-// 转换markdown为html
+// 转换markdown为html（带内存缓存，切会话/重复渲染时避免反复解析）
+const markdownCache = new Map();
+const MARKDOWN_CACHE_LIMIT = 120;
 const renderMarkdown = (content) => {
   if (!content) return '';
+  if (markdownCache.has(content)) return markdownCache.get(content);
+  if (markdownCache.size >= MARKDOWN_CACHE_LIMIT) markdownCache.clear();
   // 清理多余的空格和换行
   const cleanedContent = content
     .replace(/\n{3,}/g, '\n\n') // 将3个以上连续换行替换为2个
     .trim();
-  return marked.parse(cleanedContent);
+  const html = marked.parse(cleanedContent);
+  markdownCache.set(content, html);
+  return html;
 };
 
 // 聊天相关状态
@@ -590,6 +805,23 @@ const acceptedAttachmentTypes = [
   '.json', '.csv', '.log', '.java', '.py', '.js', '.ts', '.tsx', '.jsx',
   '.vue', '.xml', '.yml', '.yaml', '.sql', '.properties', '.sh', '.ps1'
 ].join(',');
+const quickVideoDialogVisible = ref(false);
+const quickVideoPrompt = ref('');
+const quickVideoDurationMs = ref(5000);
+const quickVideoImages = ref([]);
+const quickVideoImageInput = ref(null);
+const quickVideoSubmitting = ref(false);
+const quickVideoTask = ref(null);
+const maxQuickVideoImages = 5;
+const maxQuickVideoImageBytes = 10 * 1024 * 1024;
+const quickVideoDurations = [
+  { value: 5000, seconds: 5, hint: '片刻' },
+  { value: 10000, seconds: 10, hint: '标准' },
+  { value: 15000, seconds: 15, hint: '完整' }
+];
+const quickVideoTerminalStatuses = new Set(['SUCCEEDED', 'FAILED', 'CANCELED', 'NEEDS_REVIEW']);
+let quickVideoPollTimer = null;
+let quickVideoPollGeneration = 0;
 const smartQuestions = ref([]);
 const smartQuestionsLoader = createLatestSingleFlight();
 const validQuestions = ref([]);
@@ -645,6 +877,10 @@ const refreshSmartQuestions = async (
 // 会话管理相关状态
 const sessions = ref([]);
 const currentSessionId = ref('');
+const currentSessionName = computed(() => {
+  const session = sessions.value.find(item => item.sessionId === currentSessionId.value);
+  return session?.sessionName || '新的对话';
+});
 const renameDialogVisible = ref(false);
 const newSessionName = ref('');
 const currentEditingSession = ref(null);
@@ -684,11 +920,99 @@ const actionDecisionText = action => ({
   failed: '已失效'
 }[action.decision] || '处理中');
 
+const quickVideoReady = computed(() => (
+  !quickVideoSubmitting.value
+  && quickVideoPrompt.value.trim().length > 0
+  && quickVideoImages.value.length > 0
+));
+
+const quickVideoProgress = computed(() => {
+  const value = Number(quickVideoTask.value?.progress);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+});
+
+const quickVideoTaskMeta = computed(() => ({
+  QUEUED: {
+    tone: 'working',
+    eyebrow: '任务已排队',
+    title: '正在等待生成资源',
+    description: '参考画面已安全转存，后台即将开始生成。'
+  },
+  WAITING_CALLBACK: {
+    tone: 'working',
+    eyebrow: '模型已受理',
+    title: '视频正在生成',
+    description: '可以关闭窗口继续对话，重新打开后仍可查看本次进度。'
+  },
+  RUNNING: {
+    tone: 'working',
+    eyebrow: '生成进行中',
+    title: '正在合成画面与运动',
+    description: '后台正在检查供应商结果并转存视频文件。'
+  },
+  SUCCEEDED: {
+    tone: 'success',
+    eyebrow: '生成完成',
+    title: '你的视频已经准备好',
+    description: '结果已转存，可直接播放或在新窗口查看。'
+  },
+  FAILED: {
+    tone: 'danger',
+    eyebrow: '生成未完成',
+    title: '这次视频生成失败',
+    description: cleanQuickVideoError(quickVideoTask.value?.errorMessage) || '请检查参考图和画面描述后再试一次。'
+  },
+  CANCELED: {
+    tone: 'muted',
+    eyebrow: '任务已取消',
+    title: '未生成视频',
+    description: '可以返回编辑画面描述并重新提交。'
+  },
+  NEEDS_REVIEW: {
+    tone: 'warning',
+    eyebrow: '等待人工核对',
+    title: '供应商提交结果暂不确定',
+    description: '请勿重复提交本次任务，管理员核对供应商任务后会更新状态。'
+  }
+}[quickVideoTask.value?.status] || {
+  tone: 'working',
+  eyebrow: '任务处理中',
+  title: '正在准备视频',
+  description: '参考画面和生成参数正在交给后台处理。'
+}));
+
+const quickVideoTaskTone = computed(() => quickVideoTaskMeta.value.tone);
+const quickVideoTaskEyebrow = computed(() => quickVideoTaskMeta.value.eyebrow);
+const quickVideoTaskTitle = computed(() => quickVideoTaskMeta.value.title);
+const quickVideoTaskDescription = computed(() => quickVideoTaskMeta.value.description);
+const quickVideoCanStartAnother = computed(() => (
+  ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(quickVideoTask.value?.status)
+));
+
+// 判断是否贴近底部（用于流式输出时避免打断用户上翻）
+const SCROLL_NEAR_BOTTOM_OFFSET = 80;
+const isNearBottom = () => {
+  const el = chatContainer.value;
+  if (!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_NEAR_BOTTOM_OFFSET;
+};
+
 // 自动滚动到底部
 const scrollToBottom = () => {
   nextTick(() => {
     if (chatContainer.value) {
       chatContainer.value.scrollTop = chatContainer.value.scrollHeight;
+    }
+  });
+};
+
+// 仅在贴近底部时才跟随滚动（流式输出期间若用户上翻则不去打扰）
+const smartScrollToBottom = () => {
+  nextTick(() => {
+    const el = chatContainer.value;
+    if (el && isNearBottom()) {
+      el.scrollTop = el.scrollHeight;
     }
   });
 };
@@ -706,6 +1030,7 @@ const appendMessage = (isUser, content, id, attachments = []) => {
     memorySaved: [],
     clarification: '',
     pendingAction: null,
+    error: '',
     attachments
   };
   history.value.push(newMessage);
@@ -736,6 +1061,7 @@ const syncStreamDraft = () => {
   assistantMessage.memorySaved = draft.memorySaved;
   assistantMessage.clarification = draft.clarification;
   assistantMessage.pendingAction = draft.pendingAction;
+  assistantMessage.error = draft.error;
 };
 
 const formatFileSize = size => {
@@ -819,6 +1145,180 @@ const toggleDataAnalysis = () => {
   enableDataAnalysis.value = !enableDataAnalysis.value;
 };
 
+function openQuickVideoDialog() {
+  if (!quickVideoTask.value && !quickVideoPrompt.value.trim() && message.value.trim()) {
+    quickVideoPrompt.value = message.value.trim();
+  }
+  quickVideoDialogVisible.value = true;
+  if (quickVideoTask.value && !quickVideoTerminalStatuses.has(quickVideoTask.value.status)) {
+    startQuickVideoPolling();
+  }
+}
+
+function openQuickVideoImagePicker() {
+  quickVideoImageInput.value?.click();
+}
+
+function handleQuickVideoImages(event) {
+  const selected = Array.from(event.target?.files || []);
+  if (quickVideoImageInput.value) quickVideoImageInput.value.value = '';
+  if (!selected.length) return;
+  const available = maxQuickVideoImages - quickVideoImages.value.length;
+  if (selected.length > available) {
+    ElMessage.warning(`最多添加${maxQuickVideoImages}张参考图片`);
+  }
+
+  const existingSignatures = new Set(quickVideoImages.value.map(item => item.signature));
+  const additions = [];
+  selected.slice(0, available).forEach(file => {
+    const supported = ['image/png', 'image/jpeg'].includes(file.type)
+      || /\.(png|jpe?g)$/i.test(file.name || '');
+    if (!supported) {
+      ElMessage.error(`${file.name || '图片'}：仅支持 PNG 或 JPG`);
+      return;
+    }
+    if (file.size <= 0 || file.size > maxQuickVideoImageBytes) {
+      ElMessage.error(`${file.name || '图片'}：单张图片需小于10MB`);
+      return;
+    }
+    const signature = `${file.name}:${file.size}:${file.lastModified}`;
+    if (existingSignatures.has(signature)) {
+      ElMessage.info(`${file.name} 已添加`);
+      return;
+    }
+    existingSignatures.add(signature);
+    additions.push({
+      id: `quick-video-image-${Date.now()}-${Math.random()}`,
+      file,
+      name: file.name,
+      size: file.size,
+      signature,
+      previewUrl: URL.createObjectURL(file)
+    });
+  });
+  quickVideoImages.value = [...quickVideoImages.value, ...additions];
+}
+
+function removeQuickVideoImage(imageId) {
+  const target = quickVideoImages.value.find(item => item.id === imageId);
+  if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+  quickVideoImages.value = quickVideoImages.value.filter(item => item.id !== imageId);
+}
+
+function clearQuickVideoImages() {
+  quickVideoImages.value.forEach(item => {
+    if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+  });
+  quickVideoImages.value = [];
+  if (quickVideoImageInput.value) quickVideoImageInput.value.value = '';
+}
+
+function resetQuickVideoComposer() {
+  stopQuickVideoPolling();
+  quickVideoTask.value = null;
+  quickVideoSubmitting.value = false;
+  clearQuickVideoImages();
+}
+
+function handleQuickVideoDialogClosed() {
+  stopQuickVideoPolling();
+}
+
+async function submitQuickVideoTask() {
+  if (!quickVideoReady.value) return;
+  quickVideoSubmitting.value = true;
+  try {
+    const response = await submitQuickAiVideo({
+      prompt: quickVideoPrompt.value.trim(),
+      durationMs: quickVideoDurationMs.value,
+      images: quickVideoImages.value.map(item => item.file)
+    });
+    const data = response.data || {};
+    if (!data.projectId || !data.videoAssetId || !data.taskId) {
+      throw new Error('后端未返回完整的视频任务信息');
+    }
+    quickVideoTask.value = {
+      ...data,
+      status: data.status || 'WAITING_CALLBACK',
+      progress: Number.isFinite(Number(data.progress)) ? Number(data.progress) : 20,
+      durationMs: quickVideoDurationMs.value,
+      videoUrl: ''
+    };
+    if (quickVideoTask.value.status === 'NEEDS_REVIEW') {
+      ElMessage.warning('供应商提交结果待核对，请勿重复生成');
+    } else {
+      ElMessage.success('视频任务已提交，可以继续对话');
+    }
+    startQuickVideoPolling();
+  } catch (err) {
+    ElMessage.error('视频任务提交失败：' + (err?.msg || err?.message || '请稍后重试'));
+  } finally {
+    quickVideoSubmitting.value = false;
+  }
+}
+
+function startQuickVideoPolling() {
+  stopQuickVideoPolling();
+  const generation = quickVideoPollGeneration;
+  void pollQuickVideoTask(generation);
+}
+
+function stopQuickVideoPolling() {
+  quickVideoPollGeneration += 1;
+  if (quickVideoPollTimer) {
+    clearTimeout(quickVideoPollTimer);
+    quickVideoPollTimer = null;
+  }
+}
+
+async function pollQuickVideoTask(generation) {
+  if (
+    generation !== quickVideoPollGeneration
+    || !quickVideoDialogVisible.value
+    || !quickVideoTask.value?.projectId
+    || !quickVideoTask.value?.taskId
+  ) return;
+
+  let shouldContinue = true;
+  try {
+    const previousStatus = quickVideoTask.value.status;
+    const response = await getQuickAiVideoStatus(
+      quickVideoTask.value.projectId,
+      quickVideoTask.value.taskId
+    );
+    if (generation !== quickVideoPollGeneration) return;
+    const status = response.data || {};
+    quickVideoTask.value = { ...quickVideoTask.value, ...status };
+    shouldContinue = !quickVideoTerminalStatuses.has(status.status);
+    if (status.status === 'SUCCEEDED' && previousStatus !== 'SUCCEEDED') {
+      ElMessage.success('AI 视频生成完成');
+    } else if (status.status === 'FAILED' && previousStatus !== 'FAILED') {
+      ElMessage.error(cleanQuickVideoError(status.errorMessage) || 'AI 视频生成失败');
+    } else if (status.status === 'NEEDS_REVIEW' && previousStatus !== 'NEEDS_REVIEW') {
+      ElMessage.warning('供应商提交结果待核对，请勿重复生成');
+    }
+  } catch (err) {
+    console.warn('查询快速视频任务失败:', err);
+  }
+
+  if (
+    shouldContinue
+    && generation === quickVideoPollGeneration
+    && quickVideoDialogVisible.value
+  ) {
+    quickVideoPollTimer = setTimeout(() => pollQuickVideoTask(generation), 4000);
+  }
+}
+
+function cleanQuickVideoError(errorMessage) {
+  return String(errorMessage || '').replace(/^retryable=(true|false)\s*\|\s*/i, '').trim();
+}
+
+function formatQuickVideoDuration(durationMs) {
+  const seconds = Math.max(1, Math.round((Number(durationMs) || 0) / 1000));
+  return `${seconds} 秒`;
+}
+
 const handleActionDecision = async (item, decision) => {
   const action = item.pendingAction;
   const sessionId = currentSessionId.value;
@@ -838,6 +1338,10 @@ const handleActionDecision = async (item, decision) => {
     await nextTick();
     ElMessage.success(decision === 'approve' ? '维修工单已创建' : '已拒绝创建维修工单');
     aiChatStore.clearDraft(sessionId);
+    // 审批续流完成后刷新快捷提问
+    if (currentSessionId.value === sessionId && history.value.length > 0) {
+      void refreshSmartQuestions(sessionId, history.value);
+    }
   } catch (err) {
     syncStreamDraft();
     if (aiChatStore.draftFor(sessionId)?.status === 'completed') {
@@ -980,8 +1484,12 @@ const sendMessage = async () => {
     error.value = err?.msg || err?.message || '发送失败，请稍后重试';
     ElMessage.error('发送失败：' + error.value);
     const assistantIndex = history.value.findIndex(item => item.id === assistantMessageId);
-    if (assistantIndex !== -1 && !history.value[assistantIndex].content) {
+    if (assistantIndex === -1) return;
+    if (!history.value[assistantIndex].content) {
       history.value.splice(assistantIndex, 1);
+    } else {
+      // 保留半截内容，但在气泡内标注失败原因
+      history.value[assistantIndex].error = error.value;
     }
   } finally {
     // 先让订阅草稿的页面实例完成最后一次渲染，再释放全局流状态。
@@ -998,6 +1506,8 @@ const sendMessage = async () => {
 
 // 处理回车键
 const handleEnter = (event) => {
+  // 中文输入法组词确认的回车不应触发发送
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     sendMessage();
@@ -1036,7 +1546,7 @@ const loadSessions = async () => {
     const res = await getSessions(userStore.id);
     sessions.value = res.data || [];
     if (sessions.value.length === 0) {
-      await createNewSession();
+      await createNewSession(true);
     } else {
       const selectedSession = sessions.value.find(
         session => session.sessionId === currentSessionId.value
@@ -1049,12 +1559,19 @@ const loadSessions = async () => {
   }
 };
 
+// 历史请求序号：快速切换会话时丢弃过期响应，避免乱序覆盖
+let historyRequestSeq = 0;
+
 // 加载对话历史记录
 const loadChatHistory = async () => {
   if (!currentSessionId.value) return;
-  
+  const sessionId = currentSessionId.value;
+  const seq = ++historyRequestSeq;
+
   try {
-    const res = await getChatHistory(currentSessionId.value);
+    const res = await getChatHistory(sessionId, userStore.id);
+    // 已切换到其它会话，丢弃过期结果
+    if (seq !== historyRequestSeq || currentSessionId.value !== sessionId) return;
     const data = res.data || [];
     if (data && data.length > 0) {
       const formattedHistory = data.map(item => ({
@@ -1066,7 +1583,7 @@ const loadChatHistory = async () => {
       scrollToBottom();
       // 生成智能快捷提问
       if (!loading.value) {
-        void refreshSmartQuestions(currentSessionId.value, history.value);
+        void refreshSmartQuestions(sessionId, history.value);
       }
     } else {
       history.value = [];
@@ -1074,20 +1591,21 @@ const loadChatHistory = async () => {
       syncStreamDraft();
     }
   } catch (err) {
+    if (seq !== historyRequestSeq || currentSessionId.value !== sessionId) return;
     console.error('加载对话历史失败:', err);
     ElMessage.error('加载对话历史失败: ' + (err?.msg || err?.message || '未知错误'));
   }
 };
 
 // 创建新会话
-const createNewSession = async () => {
+const createNewSession = async (silent = false) => {
   try {
     const res = await createSession(userStore.id);
     const newSession = res.data;
     sessions.value.unshift(newSession);
     smartQuestions.value = [];
     await switchSession(newSession);
-    ElMessage.success('新会话已创建');
+    if (!silent) ElMessage.success('新会话已创建');
   } catch (err) {
     console.error('创建会话失败:', err);
     ElMessage.error('创建会话失败: ' + (err?.msg || err?.message || '未知错误'));
@@ -1127,7 +1645,7 @@ const confirmRename = async () => {
   
   try {
     await updateSession({
-      id: currentEditingSession.value.id,
+      sessionId: currentEditingSession.value.sessionId,
       sessionName: newSessionName.value.trim()
     });
     const index = sessions.value.findIndex(s => s.id === currentEditingSession.value.id);
@@ -1198,14 +1716,14 @@ const handleSessionAction = (command, session) => {
   }
 };
 
-// 监听消息变化，自动滚动
+// 监听消息变化，仅在贴近底部时自动滚动
 watch(history, () => {
-  scrollToBottom();
+  smartScrollToBottom();
 }, { deep: true });
 
 watch(currentDraft, () => {
   syncStreamDraft();
-  scrollToBottom();
+  smartScrollToBottom();
 }, { deep: true });
 
 // 组件挂载
@@ -1218,6 +1736,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  stopQuickVideoPolling();
+  clearQuickVideoImages();
   if (pendingAttachments.value.length) {
     void discardPendingAttachments();
   }
@@ -1227,8 +1747,11 @@ onBeforeUnmount(() => {
 <style scoped lang="scss">
 @import '@/assets/styles/dialog-styles.scss';
 .ai-chat-page {
-  height: 100vh;
-  background: linear-gradient(135deg, #0f766e 0%, #164e63 100%);
+  height: 100dvh;
+  background:
+    radial-gradient(900px 480px at 88% -12%, rgba(15, 118, 110, 0.12), transparent 62%),
+    radial-gradient(760px 420px at -8% 112%, rgba(13, 148, 136, 0.09), transparent 60%),
+    var(--lx-canvas);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1236,8 +1759,8 @@ onBeforeUnmount(() => {
 
 .chat-container {
   width: 100%;
-  height: 100vh;
-  background: white;
+  height: 100%;
+  background: var(--lx-canvas);
   display: flex;
   overflow: hidden;
   position: relative;
@@ -1245,73 +1768,75 @@ onBeforeUnmount(() => {
 
 /* 左侧会话栏 */
 .session-sidebar {
-  width: 280px;
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-  border-right: 1px solid #e2e8f0;
+  width: clamp(236px, 15vw, 260px);
+  flex: 0 0 clamp(236px, 15vw, 260px);
+  background: var(--lx-surface);
+  border-right: 1px solid var(--lx-border-soft);
   display: flex;
   flex-direction: column;
-  padding: 20px;
+  padding: 18px 12px 14px;
   position: relative;
   z-index: 1;
 
   .sidebar-header {
-    margin-bottom: 24px;
+    margin-bottom: 18px;
+    padding: 0 6px;
 
     .logo-area {
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 12px;
-      border-radius: 12px;
-      background: white;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 
       .logo-icon {
-        width: 40px;
-        height: 40px;
-        border-radius: 10px;
+        width: 38px;
+        height: 38px;
+        padding: 7px;
+        border-radius: 12px;
         object-fit: contain;
+        background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+        box-shadow: 0 6px 14px rgba(15, 118, 110, 0.22);
       }
 
       .logo-text {
-        font-size: 18px;
-        font-weight: 600;
-        color: #1e293b;
+        font-size: 17px;
+        font-weight: 700;
+        color: var(--lx-navy);
         margin: 0;
+        letter-spacing: 0.01em;
       }
 
       .memory-btn {
         margin-left: auto;
-        color: #0f766e;
-        background: #ecfdf5;
-        border: 1px solid #ccfbf1;
+        color: var(--lx-muted);
+        transition: color 0.2s ease, background-color 0.2s ease;
 
         &:hover,
         &:focus-visible {
-          color: #164e63;
-          background: #dff7f1;
+          color: var(--lx-primary);
+          background: var(--lx-primary-soft);
         }
       }
     }
   }
 
   .new-chat-btn {
-    height: 48px;
+    height: 44px;
+    margin: 0 6px 20px;
     border-radius: 12px;
-    background: linear-gradient(135deg, #0f766e 0%, #164e63 100%);
+    background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
     border: none;
     color: white;
-    font-weight: 500;
-    margin-bottom: 24px;
+    font-weight: 600;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    transition: all 0.3s ease;
+    box-shadow: 0 6px 16px rgba(15, 118, 110, 0.28);
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
 
     &:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+      transform: translateY(-1px);
+      box-shadow: 0 10px 22px rgba(15, 118, 110, 0.34);
     }
 
     .el-icon {
@@ -1329,43 +1854,44 @@ onBeforeUnmount(() => {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 16px;
-      padding: 0 8px;
+      margin-bottom: 12px;
+      padding: 0 10px;
 
       .list-title {
-        font-size: 14px;
-        font-weight: 600;
-        color: #64748b;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--lx-muted);
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.08em;
       }
 
       .list-count {
-        background: #e2e8f0;
-        color: #475569;
-        font-size: 12px;
-        font-weight: 600;
+        background: var(--lx-canvas);
+        color: var(--lx-muted);
+        font-size: 11px;
+        font-weight: 700;
         padding: 2px 8px;
-        border-radius: 10px;
+        border-radius: 999px;
+        font-variant-numeric: tabular-nums;
       }
     }
 
     .session-scroll-area {
       flex: 1;
       overflow-y: auto;
-      padding-right: 8px;
+      padding: 2px 6px 6px;
 
       &::-webkit-scrollbar {
         width: 4px;
       }
 
       &::-webkit-scrollbar-track {
-        background: #f1f5f9;
+        background: transparent;
         border-radius: 4px;
       }
 
       &::-webkit-scrollbar-thumb {
-        background: #cbd5e1;
+        background: var(--lx-border);
         border-radius: 4px;
       }
     }
@@ -1374,19 +1900,18 @@ onBeforeUnmount(() => {
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 12px;
-      margin-bottom: 8px;
+      padding: 11px 12px;
+      margin-bottom: 6px;
       border-radius: 12px;
-      background: white;
+      background: transparent;
       cursor: pointer;
-      transition: all 0.3s ease;
-      border: 1px solid #e2e8f0;
+      transition: background-color 0.2s ease, border-color 0.2s ease;
+      border: 1px solid transparent;
       position: relative;
 
       &:hover {
-        background: #f8fafc;
-        transform: translateX(4px);
-        border-color: #cbd5e1;
+        background: var(--lx-canvas);
+        border-color: var(--lx-border-soft);
 
         .session-actions {
           opacity: 1;
@@ -1394,34 +1919,36 @@ onBeforeUnmount(() => {
       }
 
       &.active {
-        background: linear-gradient(135deg, #0f766e 0%, #164e63 100%);
-        border-color: transparent;
-        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        background: linear-gradient(135deg, rgba(15, 118, 110, 0.10), rgba(13, 148, 136, 0.06));
+        border-color: color-mix(in srgb, var(--seed-primary) 22%, var(--seed-surface));
 
         .session-icon {
-          background: rgba(255, 255, 255, 0.2);
+          background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
           color: white;
+          box-shadow: 0 4px 10px rgba(15, 118, 110, 0.25);
         }
 
         .session-name {
-          color: white;
+          color: var(--lx-navy);
+          font-weight: 700;
         }
 
         .session-time {
-          color: rgba(255, 255, 255, 0.8);
+          color: var(--lx-muted);
         }
       }
 
       .session-icon {
-        width: 36px;
-        height: 36px;
-        border-radius: 8px;
-        background: #f1f5f9;
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        background: var(--lx-canvas);
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #64748b;
+        color: var(--lx-muted);
         flex-shrink: 0;
+        transition: all 0.2s ease;
       }
 
       .session-content {
@@ -1429,9 +1956,9 @@ onBeforeUnmount(() => {
         min-width: 0;
 
         .session-name {
-          font-size: 14px;
-          font-weight: 500;
-          color: #1e293b;
+          font-size: 13.5px;
+          font-weight: 600;
+          color: var(--lx-text);
           margin-bottom: 2px;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -1439,23 +1966,31 @@ onBeforeUnmount(() => {
         }
 
         .session-time {
-          font-size: 12px;
-          color: #94a3b8;
+          font-size: 11.5px;
+          color: var(--lx-muted);
         }
       }
 
       .session-actions {
         opacity: 0;
-        transition: opacity 0.3s ease;
+        transition: opacity 0.2s ease;
 
         .more-btn {
-          color: #94a3b8;
+          color: var(--lx-muted);
           padding: 4px;
+          border-radius: 8px;
 
           &:hover {
-            background: rgba(0, 0, 0, 0.05);
+            background: var(--lx-primary-soft);
+            color: var(--lx-primary);
           }
         }
+      }
+    }
+
+    @media (hover: none) {
+      .session-actions {
+        opacity: 1;
       }
     }
   }
@@ -1463,30 +1998,92 @@ onBeforeUnmount(() => {
 
 /* 右侧聊天主区域 */
 .chat-main {
+  --chat-column-width: 880px;
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: white;
+  background:
+    radial-gradient(680px 360px at 50% 0%, rgba(15, 118, 110, 0.045), transparent 72%),
+    var(--lx-canvas);
   position: relative;
+  min-width: 0;
+}
+
+.chat-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-height: 64px;
+  padding: 0 clamp(24px, 3.2vw, 48px);
+  border-bottom: 1px solid var(--lx-border-soft);
+  background: color-mix(in srgb, var(--lx-surface) 88%, transparent);
+  backdrop-filter: blur(12px);
+
+  .chat-header-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: min(100%, var(--chat-column-width));
+    margin: 0 auto;
+    min-width: 0;
+  }
+
+  .chat-header-icon {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    color: var(--lx-primary);
+    background: var(--lx-primary-soft);
+    border-radius: 9px;
+    font-size: 15px;
+  }
+
+  .chat-header-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .chat-header-title {
+    overflow: hidden;
+    font-size: 14.5px;
+    font-weight: 700;
+    color: var(--lx-navy);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chat-header-meta {
+    overflow: hidden;
+    color: var(--lx-muted);
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .chat-messages-container {
   flex: 1;
-  padding: 24px;
+  min-height: 0;
+  padding: 32px clamp(24px, 3.2vw, 48px) 18px;
   overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
+  scroll-padding-bottom: 32px;
 
   &::-webkit-scrollbar {
     width: 6px;
   }
 
   &::-webkit-scrollbar-track {
-    background: #f8fafc;
+    background: transparent;
     border-radius: 4px;
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: var(--lx-border);
     border-radius: 4px;
   }
 }
@@ -1504,33 +2101,44 @@ onBeforeUnmount(() => {
     padding: 40px;
 
     .welcome-icon {
-      margin-bottom: 24px;
-      animation: float 3s ease-in-out infinite;
+      position: relative;
+      display: grid;
+      width: 108px;
+      height: 108px;
+      margin: 0 auto 28px;
+      place-items: center;
+      border-radius: 32px;
+      background: linear-gradient(135deg, var(--lx-primary-soft), rgba(13, 148, 136, 0.18));
+      animation: float 3.2s ease-in-out infinite;
+
+      &::after {
+        content: '';
+        position: absolute;
+        inset: -16px;
+        border-radius: 40px;
+        background: radial-gradient(closest-side, rgba(15, 118, 110, 0.14), transparent 70%);
+        z-index: -1;
+      }
 
       .welcome-logo {
-        width: 80px;
-        height: 80px;
-        border-radius: 16px;
+        width: 64px;
+        height: 64px;
         object-fit: contain;
-        box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
       }
     }
 
     .welcome-title {
-      font-size: 42px;
-      font-weight: 600;
-      color: #1e293b;
-      margin-bottom: 12px;
-      background: linear-gradient(135deg, #0f766e 0%, #164e63 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      font-size: 34px;
+      font-weight: 800;
+      color: var(--lx-navy);
+      margin: 0 0 12px;
+      letter-spacing: -0.01em;
     }
 
     .welcome-subtitle {
-      font-size: 18px;
-      color: #64748b;
-      margin-bottom: 40px;
+      font-size: 15px;
+      color: var(--lx-muted);
+      margin: 0;
     }
 
     .quick-actions {
@@ -1574,11 +2182,12 @@ onBeforeUnmount(() => {
 
 /* 消息列表 */
 .messages-list {
-  max-width: 800px;
+  width: min(100%, var(--chat-column-width));
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 30px;
+  padding-bottom: 24px;
 }
 
 /* 消息通用样式 */
@@ -1587,30 +2196,30 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
     font-size: 13px;
 
     .message-sender {
-      font-weight: 600;
-      color: #475569;
+      font-weight: 700;
+      color: var(--lx-text);
     }
 
     .message-time {
-      color: #94a3b8;
+      color: var(--lx-muted);
+      font-size: 12px;
     }
   }
 
   .message-bubble {
-    padding: 1px 16px;
+    padding: 10px 14px;
     border-radius: 16px;
-    max-width: 600px;
+    max-width: min(680px, 100%);
     line-height: 1.5;
     font-size: 15px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-    
+
     .message-text {
       word-break: break-word;
-      line-height: 1.5;
+      line-height: 1.6;
       font-size: 15px;
     }
     
@@ -1688,28 +2297,33 @@ onBeforeUnmount(() => {
       
       /* 代码块样式 */
       pre {
-        background: rgba(0, 0, 0, 0.05);
-        padding: 16px;
-        border-radius: 8px;
+        background: #102a43;
+        color: #e6edf3;
+        padding: 16px 18px;
+        border-radius: 12px;
         overflow-x: auto;
-        margin: 12px 0;
-        font-size: 14px;
-        
+        margin: 14px 0;
+        font-size: 13.5px;
+        line-height: 1.55;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
         code {
           background: transparent;
+          color: inherit;
           padding: 0;
-          font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-          line-height: 1.4;
+          font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+          line-height: 1.55;
         }
       }
       
       /* 内联代码 */
       code:not(pre code) {
-        background: rgba(0, 0, 0, 0.08);
+        background: rgba(15, 118, 110, 0.10);
+        color: #0f5f5a;
         padding: 2px 6px;
-        border-radius: 4px;
-        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-        font-size: 14px;
+        border-radius: 6px;
+        font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-size: 13px;
       }
       
       /* 引用块 */
@@ -1740,8 +2354,9 @@ onBeforeUnmount(() => {
         }
         
         th {
-          background: rgba(0, 0, 0, 0.05);
-          font-weight: 600;
+          background: var(--lx-canvas);
+          color: var(--lx-text);
+          font-weight: 700;
         }
       }
       
@@ -1788,6 +2403,19 @@ onBeforeUnmount(() => {
         vertical-align: middle;
       }
     }
+
+    :deep(.markdown-content img) {
+      display: block;
+      width: auto;
+      max-width: min(100%, 520px);
+      max-height: min(52vh, 520px);
+      margin: 12px 0 2px;
+      border: 1px solid var(--lx-border-soft);
+      border-radius: 14px;
+      background: var(--lx-canvas);
+      box-shadow: 0 10px 28px rgba(18, 52, 59, 0.10);
+      object-fit: contain;
+    }
   }
 }
 
@@ -1796,24 +2424,29 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 12px;
 
+  > .message-content-wrapper {
+    min-width: 0;
+    max-width: calc(100% - 48px);
+  }
+
   .message-avatar {
     .assistant-avatar {
       width: 36px;
       height: 36px;
-      border-radius: 10px;
-      background: linear-gradient(135deg, #0f766e 0%, #164e63 100%);
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
       border: none;
-      box-shadow: none;
+      box-shadow: 0 4px 12px rgba(15, 118, 110, 0.25);
 
       .avatar-img {
-        width: 120%;
-        height: 120%;
+        width: 100%;
+        height: 100%;
         object-fit: contain;
-        padding: 2px;
+        padding: 5px;
         border: none;
         box-shadow: none;
         background: transparent;
@@ -1822,10 +2455,11 @@ onBeforeUnmount(() => {
   }
 
   .assistant-bubble {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 16px 16px 16px 4px;
-    color: #1e293b;
+    background: var(--lx-surface);
+    border: 1px solid var(--lx-border-soft);
+    border-radius: 4px 16px 16px 16px;
+    color: var(--lx-text);
+    box-shadow: var(--lx-shadow-sm);
 
     .agent-work-trace {
       margin: 12px 0 14px;
@@ -2047,9 +2681,28 @@ onBeforeUnmount(() => {
       align-items: center;
       gap: 6px;
       margin: 10px 0 12px;
-      color: #0f766e;
+      color: var(--lx-primary);
       font-size: 12px;
       font-weight: 600;
+    }
+
+    .message-error {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      margin: 12px 0;
+      padding: 9px 12px;
+      color: #b91c1c;
+      background: var(--lx-status-danger-bg);
+      border: 1px solid rgba(193, 65, 79, 0.22);
+      border-radius: 8px;
+      font-size: 12.5px;
+      line-height: 1.5;
+
+      .el-icon {
+        flex: none;
+        margin-top: 1px;
+      }
     }
   }
 }
@@ -2061,6 +2714,8 @@ onBeforeUnmount(() => {
   gap: 12px;
 
   .user-wrapper {
+    min-width: 0;
+    max-width: min(72%, 620px);
     text-align: right;
   }
 
@@ -2068,28 +2723,33 @@ onBeforeUnmount(() => {
     justify-content: flex-end;
 
     .message-sender {
-      color: #0f766e;
+      color: var(--lx-primary);
     }
   }
 
   .message-avatar {
+    align-self: flex-start;
+    padding-top: 26px;
+
     .user-avatar-icon {
       width: 36px;
       height: 36px;
-      border-radius: 10px;
-      background: #e2e8f0;
-      color: #64748b;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+      color: white;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
+      font-size: 16px;
+      box-shadow: 0 4px 12px rgba(15, 118, 110, 0.25);
     }
   }
 
   .user-bubble {
-    background: linear-gradient(135deg, #0f766e 0%, #164e63 100%);
+    background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
     color: white;
     border-radius: 16px 16px 4px 16px;
+    box-shadow: 0 4px 14px rgba(15, 118, 110, 0.18);
 
     .message-attachments {
       display: grid;
@@ -2185,11 +2845,14 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px;
-  background: #f8fafc;
-  border-radius: 16px;
+  padding: 14px 16px;
+  background: var(--lx-surface);
+  border: 1px solid var(--lx-border-soft);
+  border-radius: 4px 16px 16px 16px;
   max-width: 320px;
-  margin: 0 auto;
+  margin-right: auto;
+  margin-left: 48px;
+  box-shadow: var(--lx-shadow-sm);
 
   .typing-indicator {
     display: flex;
@@ -2198,7 +2861,7 @@ onBeforeUnmount(() => {
     .typing-dot {
       width: 8px;
       height: 8px;
-      background: #0f766e;
+      background: var(--seed-primary);
       border-radius: 50%;
       animation: typing 1.4s infinite ease-in-out;
 
@@ -2210,24 +2873,37 @@ onBeforeUnmount(() => {
 
   .typing-text {
     font-size: 14px;
-    color: #64748b;
+    color: var(--lx-muted);
     font-weight: 500;
   }
 }
 
 /* 输入区域 */
 .chat-input-container {
-  border-top: 1px solid #e2e8f0;
-  background: white;
-  padding: 16px 24px;
+  flex: none;
+  border-top: 0;
+  background: linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--lx-canvas) 92%, var(--lx-surface)) 26%);
+  padding: 12px clamp(24px, 3.2vw, 48px) 30px;
   position: relative;
 
   .input-wrapper {
-    max-width: 800px;
+    width: min(100%, var(--chat-column-width));
     margin: 0 auto;
   }
 
   .input-main {
+    padding: 4px;
+    background: var(--lx-surface);
+    border: 1px solid var(--lx-border);
+    border-radius: 18px;
+    box-shadow: 0 14px 34px rgba(18, 52, 59, 0.12), 0 2px 8px rgba(18, 52, 59, 0.05);
+    transition: border-color 0.25s ease, box-shadow 0.25s ease;
+
+    &:focus-within {
+      border-color: var(--seed-primary);
+      box-shadow: 0 0 0 4px var(--lx-primary-glow), var(--lx-shadow-md);
+    }
+
     .attachment-input {
       display: none;
     }
@@ -2236,7 +2912,7 @@ onBeforeUnmount(() => {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
-      margin-bottom: 10px;
+      padding: 10px 10px 0;
     }
 
     .pending-attachment {
@@ -2244,15 +2920,15 @@ onBeforeUnmount(() => {
       align-items: center;
       gap: 9px;
       min-width: 0;
-      padding: 8px 9px;
-      background: #f0fdfa;
-      border: 1px solid #ccfbf1;
+      padding: 7px 8px;
+      background: var(--lx-primary-soft);
+      border: 1px solid color-mix(in srgb, var(--seed-primary) 16%, var(--seed-surface));
       border-radius: 10px;
 
       img,
       .pending-file-icon {
-        width: 38px;
-        height: 38px;
+        width: 34px;
+        height: 34px;
         flex: none;
         border-radius: 8px;
       }
@@ -2263,10 +2939,10 @@ onBeforeUnmount(() => {
 
       .pending-file-icon {
         display: grid;
-        color: #0f766e;
-        background: #ccfbf1;
+        color: var(--lx-primary);
+        background: var(--lx-surface);
         place-items: center;
-        font-size: 19px;
+        font-size: 17px;
       }
 
       .pending-file-meta {
@@ -2277,7 +2953,7 @@ onBeforeUnmount(() => {
 
         strong {
           overflow: hidden;
-          color: #134e4a;
+          color: var(--lx-text);
           font-size: 12px;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -2285,7 +2961,7 @@ onBeforeUnmount(() => {
 
         small {
           margin-top: 2px;
-          color: #64748b;
+          color: var(--lx-muted);
           font-size: 10px;
         }
       }
@@ -2294,24 +2970,24 @@ onBeforeUnmount(() => {
     .message-input {
       :deep(.el-textarea__inner) {
         min-height: 56px;
-        max-height: 120px;
-        border: 2px solid #e2e8f0;
-        border-radius: 16px;
-        padding: 16px 20px;
+        max-height: 160px;
+        border: none !important;
+        border-radius: 14px;
+        padding: 14px 16px 6px;
         font-size: 15px;
-        line-height: 1.5;
+        line-height: 1.6;
         resize: none;
-        background: #f8fafc;
-        transition: all 0.3s ease;
+        background: transparent;
+        box-shadow: none !important;
 
         &:focus {
-          border-color: #0f766e;
-          background: white;
-          box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
+          border: none;
+          box-shadow: none;
+          background: transparent;
         }
 
         &::placeholder {
-          color: #94a3b8;
+          color: var(--lx-muted);
         }
       }
     }
@@ -2319,114 +2995,87 @@ onBeforeUnmount(() => {
     .input-actions {
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-top: 12px;
+      gap: 6px;
+      padding: 6px 10px 8px;
 
-      .mode-btn {
-        border-radius: 12px;
-        border: 1px solid #e2e8f0;
-        background: white;
-        color: #475569;
-        padding: 10px 16px;
-        transition: all 0.3s ease;
-        display: flex;
-        align-items: center;
+      .mode-btn,
+      .preset-btn,
+      .attachment-btn,
+      .video-btn {
+        height: 34px;
+        padding: 0 12px;
+        border: none;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--lx-muted);
+        font-size: 13px;
+        font-weight: 600;
         gap: 6px;
-        font-size: 14px;
-        font-weight: 500;
+        transition: background-color 0.2s ease, color 0.2s ease;
 
-        &:hover {
-          border-color: #cbd5e1;
-          background: #f8fafc;
+        &:hover:not(:disabled) {
+          background: var(--lx-canvas);
+          color: var(--lx-text);
+          transform: none;
+        }
+
+        .el-icon {
+          font-size: 15px;
         }
 
         &.active-mode {
-          background: linear-gradient(135deg, #0f766e 0%, #164e63 100%);
-          color: white;
-          border-color: transparent;
+          background: var(--lx-primary-soft);
+          color: var(--lx-primary);
 
           &:hover {
-            background: linear-gradient(135deg, #0b5e58 0%, #123f50 100%);
+            background: color-mix(in srgb, var(--seed-primary) 14%, var(--seed-surface));
           }
-        }
-
-        .el-icon {
-          font-size: 16px;
-        }
-      }
-
-      .preset-btn {
-        border-radius: 12px;
-        border: 1px solid #e2e8f0;
-        background: white;
-        color: #475569;
-        padding: 10px 16px;
-        transition: all 0.3s ease;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 14px;
-        font-weight: 500;
-
-        &:hover {
-          border-color: #cbd5e1;
-          background: #f8fafc;
-        }
-
-        .el-icon {
-          font-size: 16px;
         }
       }
 
       .attachment-btn {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 10px 14px;
-        color: #475569;
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-
-        &:hover:not(:disabled) {
-          color: #0f766e;
-          background: #f0fdfa;
-          border-color: #99f6e4;
-        }
-
         small {
-          color: #0f766e;
+          color: var(--lx-primary);
           font-size: 10px;
           font-weight: 700;
+          font-variant-numeric: tabular-nums;
         }
       }
 
-      .send-btn {
-        border-radius: 12px;
-        background: linear-gradient(135deg, #0f766e 0%, #164e63 100%);
-        border: none;
-        color: white;
-        padding: 10px 24px;
-        font-weight: 500;
+      .input-shortcut {
         margin-left: auto;
-        transition: all 0.3s ease;
-        display: flex;
-        align-items: center;
+        color: var(--lx-muted);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .send-btn {
+        height: 34px;
+        margin-left: 4px;
+        padding: 0 18px;
+        border: none;
+        border-radius: 10px;
+        background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+        color: white;
+        font-size: 13.5px;
+        font-weight: 600;
         gap: 6px;
-        font-size: 14px;
+        box-shadow: 0 4px 12px rgba(15, 118, 110, 0.28);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
 
         &:hover:not(:disabled) {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+          transform: translateY(-1px);
+          box-shadow: 0 8px 18px rgba(15, 118, 110, 0.34);
         }
 
         &:disabled {
-          opacity: 0.6;
+          opacity: 0.55;
           cursor: not-allowed;
+          box-shadow: none;
         }
 
         .el-icon {
-          font-size: 16px;
+          font-size: 15px;
         }
       }
     }
@@ -2507,10 +3156,418 @@ onBeforeUnmount(() => {
 }
 
 /* 响应式设计 */
-@media (max-width: 1024px) {
+@media (max-width: 1180px) {
   .session-sidebar {
-    width: 240px;
+    width: 228px;
+    flex-basis: 228px;
   }
+
+  .chat-main {
+    --chat-column-width: 800px;
+  }
+
+  .input-shortcut {
+    display: none;
+  }
+}
+
+.quick-video-dialog-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  > span:last-child {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  strong {
+    color: var(--lx-navy);
+    font-size: 17px;
+  }
+
+  small {
+    color: var(--lx-muted);
+    font-size: 12px;
+  }
+}
+
+.quick-video-dialog-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  place-items: center;
+  color: white;
+  background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+  border-radius: 13px;
+  box-shadow: 0 7px 18px rgba(15, 118, 110, 0.24);
+  font-size: 20px;
+}
+
+.quick-video-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.quick-video-section {
+  min-width: 0;
+}
+
+.quick-video-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+
+  label {
+    color: var(--lx-text);
+    font-size: 13.5px;
+    font-weight: 700;
+  }
+
+  span {
+    color: var(--lx-muted);
+    font-size: 11px;
+    text-align: right;
+  }
+}
+
+.duration-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+
+  button {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: baseline;
+    gap: 3px;
+    min-height: 58px;
+    padding: 10px 13px;
+    color: var(--lx-muted);
+    background: var(--lx-canvas);
+    border: 1px solid var(--lx-border-soft);
+    border-radius: 12px;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+
+    &:hover {
+      color: var(--lx-text);
+      border-color: color-mix(in srgb, var(--seed-primary) 38%, var(--seed-surface));
+      transform: translateY(-1px);
+    }
+
+    &:focus-visible {
+      outline: 3px solid var(--lx-primary-glow);
+      outline-offset: 2px;
+    }
+
+    &.active {
+      color: var(--lx-primary);
+      background: var(--lx-primary-soft);
+      border-color: color-mix(in srgb, var(--seed-primary) 48%, var(--seed-surface));
+      box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.08);
+    }
+
+    strong {
+      font-size: 22px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    small {
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    span {
+      justify-self: end;
+      font-size: 11px;
+    }
+  }
+}
+
+.quick-video-file-input {
+  display: none;
+}
+
+.reference-filmstrip {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 22px 12px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 15%, rgba(45, 212, 191, 0.13), transparent 28%),
+    linear-gradient(135deg, #153b46, #102a43);
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+
+  &::before,
+  &::after {
+    position: absolute;
+    right: 8px;
+    left: 8px;
+    height: 6px;
+    content: '';
+    background: repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.62) 0 10px,
+      transparent 10px 18px
+    );
+    border-radius: 3px;
+    opacity: 0.34;
+  }
+
+  &::before { top: 7px; }
+  &::after { bottom: 7px; }
+}
+
+.reference-frame,
+.add-reference-frame {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  min-height: 118px;
+  margin: 0;
+  padding: 6px;
+  border-radius: 10px;
+}
+
+.reference-frame {
+  color: var(--lx-text);
+  background: var(--lx-surface);
+  box-shadow: 0 7px 18px rgba(3, 19, 29, 0.24);
+
+  img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 6px;
+    object-fit: cover;
+  }
+
+  > strong {
+    display: block;
+    overflow: hidden;
+    padding: 7px 3px 2px;
+    font-size: 11px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.frame-index {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 3px 6px;
+  color: white;
+  background: rgba(8, 31, 42, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.remove-reference {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: white;
+  background: rgba(8, 31, 42, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  cursor: pointer;
+  place-items: center;
+
+  &:hover,
+  &:focus-visible {
+    background: #b42338;
+    outline: none;
+  }
+}
+
+.add-reference-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px dashed rgba(255, 255, 255, 0.34);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    color: white;
+    background: rgba(45, 212, 191, 0.10);
+    border-color: rgba(94, 234, 212, 0.72);
+    outline: none;
+  }
+
+  strong { font-size: 12px; }
+  small { color: rgba(255, 255, 255, 0.56); font-size: 9.5px; }
+}
+
+.add-reference-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 2px;
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 10px;
+  place-items: center;
+  font-size: 17px;
+}
+
+.quick-video-reference-note {
+  margin: 8px 2px 0;
+  color: var(--lx-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.quick-video-cost-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  color: #8a5a16;
+  background: #fff8e6;
+  border: 1px solid #f5ddac;
+  border-radius: 10px;
+  font-size: 11.5px;
+  line-height: 1.55;
+
+  .el-icon {
+    flex: none;
+    margin-top: 2px;
+  }
+}
+
+.quick-video-task-panel {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  min-height: 260px;
+  padding: 28px;
+  background: var(--lx-canvas);
+  border: 1px solid var(--lx-border-soft);
+  border-radius: 18px;
+
+  &.is-success { background: linear-gradient(145deg, #f2fbf7, var(--lx-surface)); }
+  &.is-danger { background: linear-gradient(145deg, #fff5f5, var(--lx-surface)); }
+  &.is-warning { background: linear-gradient(145deg, #fff9ec, var(--lx-surface)); }
+}
+
+.quick-video-progress {
+  display: grid;
+  width: 88px;
+  height: 88px;
+  place-items: center;
+  background: conic-gradient(
+    var(--seed-primary) var(--quick-video-progress),
+    var(--lx-border-soft) 0
+  );
+  border-radius: 50%;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.16);
+
+  &::before {
+    grid-area: 1 / 1;
+    width: 68px;
+    height: 68px;
+    background: var(--lx-surface);
+    border-radius: 50%;
+    content: '';
+  }
+
+  span {
+    z-index: 1;
+    color: var(--lx-primary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+
+    strong { font-size: 22px; }
+  }
+}
+
+.quick-video-task-copy {
+  min-width: 0;
+
+  h3 {
+    margin: 4px 0 7px;
+    color: var(--lx-navy);
+    font-size: 19px;
+  }
+
+  p {
+    margin: 0 0 10px;
+    color: var(--lx-muted);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  small {
+    color: var(--lx-muted);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.quick-video-task-eyebrow {
+  color: var(--lx-primary);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.quick-video-result {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-height: 360px;
+  margin-top: 8px;
+  background: #081f2a;
+  border-radius: 14px;
+  object-fit: contain;
+  box-shadow: 0 14px 32px rgba(3, 19, 29, 0.20);
+}
+
+.quick-video-open-result {
+  grid-column: 1 / -1;
+  justify-self: end;
+  color: var(--lx-primary);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+
+  &:hover { text-decoration: underline; }
+}
+
+.quick-video-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.quick-video-submit {
+  min-width: 112px;
+  background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+  border: none;
 }
 
 @media (max-width: 768px) {
@@ -2519,16 +3576,73 @@ onBeforeUnmount(() => {
   }
 
   .chat-container {
-    height: 100vh;
+    height: 100dvh;
     border-radius: 0;
     flex-direction: column;
   }
 
   .session-sidebar {
     width: 100%;
-    height: 200px;
+    height: auto;
+    max-height: 184px;
+    flex-basis: auto;
     border-right: none;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--lx-border-soft);
+    padding: 10px 12px 8px;
+
+    .sidebar-header {
+      display: none;
+    }
+
+    .new-chat-btn {
+      height: 38px;
+      margin: 0 4px 8px;
+    }
+
+    .session-list-container {
+      flex: none;
+
+      .list-header {
+        margin-bottom: 6px;
+      }
+
+      .session-scroll-area {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 0 4px 4px;
+      }
+
+      .session-item {
+        min-width: 190px;
+        margin-bottom: 0;
+      }
+    }
+  }
+
+  .chat-header {
+    padding: 12px 16px;
+  }
+
+  .chat-messages-container {
+    padding: 20px 14px 10px;
+  }
+
+  .chat-input-container {
+    padding: 10px 12px 20px;
+  }
+
+  .message-item .message-bubble {
+    max-width: 100%;
+  }
+
+  .user-message-wrapper .user-wrapper {
+    max-width: calc(100% - 48px);
+  }
+
+  .message-bubble :deep(.markdown-content img) {
+    max-height: 46vh;
   }
 
   .welcome-content {
@@ -2540,16 +3654,27 @@ onBeforeUnmount(() => {
   }
 
   .input-actions {
-    flex-wrap: wrap;
-    justify-content: space-between;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
 
     .mode-btn,
     .preset-btn,
     .attachment-btn,
+    .video-btn,
     .send-btn {
-      flex: 1;
-      min-width: 120px;
+      flex: none;
+      min-width: auto;
       justify-content: center;
+    }
+
+    .send-btn {
+      position: sticky;
+      right: 0;
     }
   }
 
@@ -2563,6 +3688,35 @@ onBeforeUnmount(() => {
     :deep(.el-form-item:last-child) {
       grid-column: auto;
     }
+  }
+
+  .duration-strip,
+  .reference-filmstrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quick-video-label-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+
+    span { text-align: left; }
+  }
+
+  .quick-video-task-panel {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding: 22px 16px;
+    text-align: center;
+  }
+
+  .quick-video-result,
+  .quick-video-open-result {
+    grid-column: 1;
+  }
+
+  .quick-video-open-result {
+    justify-self: center;
   }
 }
 </style>

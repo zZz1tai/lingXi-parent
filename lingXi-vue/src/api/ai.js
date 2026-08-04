@@ -284,15 +284,16 @@ export function clearLongTermMemories() {
 /**
  * 获取用户的对话历史记录
  * @param {string} sessionId 会话ID
+ * @param {string} userId 用户ID（沿用后端契约，缺省时退回固定用户ID）
  * @returns {Promise<Array>}
  */
-export function getChatHistory(sessionId) {
+export function getChatHistory(sessionId, userId) {
   return request({
     url: '/api/ai/history',
     method: 'get',
     params: {
       sessionId: sessionId,
-      userId: '1', // 临时使用固定用户ID，后续应从登录状态获取
+      userId: userId || '1',
       queryScope: 'current'
     }
   });
@@ -343,7 +344,7 @@ export function createSession(userId) {
 
 /**
  * 更新会话名称
- * @param {Object} sessionData 会话数据，包含id和sessionName
+ * @param {Object} sessionData 会话数据，包含sessionId和sessionName
  * @returns {Promise<boolean>}
  */
 export function updateSession(sessionData) {

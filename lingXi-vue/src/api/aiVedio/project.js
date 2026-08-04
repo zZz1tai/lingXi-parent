@@ -221,3 +221,25 @@ export function listAiVideoTask(projectId) {
     params: { projectId }
   })
 }
+
+/** 从 AI 对话页提交描述、时长和多张参考图。 */
+export function submitQuickAiVideo({ prompt, durationMs, images }) {
+  const data = new FormData()
+  data.append('prompt', prompt)
+  data.append('durationMs', String(durationMs))
+  images.forEach(image => data.append('images', image))
+  return request({
+    url: '/aivideo/asset/quick-video',
+    method: 'post',
+    data,
+    timeout: 120_000
+  })
+}
+
+/** 查询 AI 对话页快速视频任务的最小状态。 */
+export function getQuickAiVideoStatus(projectId, taskId) {
+  return request({
+    url: `/aivideo/asset/quick-video/${projectId}/${taskId}`,
+    method: 'get'
+  })
+}

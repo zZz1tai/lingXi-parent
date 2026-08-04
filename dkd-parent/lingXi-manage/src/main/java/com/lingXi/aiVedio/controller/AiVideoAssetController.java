@@ -5,12 +5,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.MediaType;
+import org.springframework.validation.annotation.Validated;
 import com.lingXi.common.annotation.Log;
 import com.lingXi.common.annotation.RepeatSubmit;
 import com.lingXi.common.core.controller.BaseController;
@@ -21,10 +24,12 @@ import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.dto.AiVideoAssetRegenerationDraftRequest;
 import com.lingXi.aiVedio.domain.dto.AiVideoAssetPromptRequest;
 import com.lingXi.aiVedio.domain.dto.AiVideoKeyframeReferenceBindingRequest;
+import com.lingXi.aiVedio.domain.dto.AiVideoQuickGenerationRequest;
 import com.lingXi.aiVedio.domain.dto.AiVideoVideoPromptRequest;
 import com.lingXi.aiVedio.domain.dto.AiVideoVideoSourceBindingRequest;
 import com.lingXi.aiVedio.domain.dto.AiVideoSubmissionResolutionRequest;
 import com.lingXi.aiVedio.service.IAiVideoAssetService;
+import com.lingXi.aiVedio.service.AiVideoQuickGenerationService;
 
 /**
  * AI视频资产控制器
@@ -42,6 +47,9 @@ public class AiVideoAssetController extends BaseController
 {
     @Autowired
     private IAiVideoAssetService assetService;
+
+    @Autowired
+    private AiVideoQuickGenerationService quickGenerationService;
 
     /**
      * 获取AI视频资产列表
@@ -386,6 +394,31 @@ public class AiVideoAssetController extends BaseController
     public AjaxResult generateVideo(@PathVariable Long videoAssetId)
     {
         return success().put("taskId", assetService.startVideoGeneration(videoAssetId));
+    }
+
+    /**
+     * 从 AI 对话页提交一组用户参考图，快速创建并生成视频。
+     * 第一张图作为起始关键帧，其余图片作为有序参考图。
+     *
+     * @param request 视频描述、时长和参考图片
+     * @return 快速项目、视频资产和任务ID
+     */
+    @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
+    @Log(title = "AI对话快速视频生成", businessType = BusinessType.OTHER)
+    @RepeatSubmit(interval = 30000, message = "视频任务正在提交，请勿重复操作")
+    @PostMapping(value = "/quick-video", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public AjaxResult generateQuickVideo(
+            @Validated @ModelAttribute AiVideoQuickGenerationRequest request)
+    {
+        return success(quickGenerationService.submit(request));
+    }
+
+    /** 查询当前用户的快速视频任务状态。 */
+    @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
+    @GetMapping("/quick-video/{projectId}/{taskId}")
+    public AjaxResult getQuickVideoStatus(@PathVariable Long projectId, @PathVariable Long taskId)
+    {
+        return success(quickGenerationService.status(projectId, taskId));
     }
 
     /**
