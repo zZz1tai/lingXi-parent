@@ -23,7 +23,12 @@ class AiRequestValidationTest {
         assertTrue(validator.validate(valid).isEmpty());
 
         valid.setMessage("   ");
-        assertViolation(validator.validate(valid), "message");
+        assertViolation(validator.validate(valid), "payloadPresent");
+
+        valid.setAttachmentIds(java.util.List.of(
+                "123e4567-e89b-42d3-a456-426614174000"));
+        assertTrue(validator.validate(valid).isEmpty());
+        valid.setAttachmentIds(java.util.List.of());
 
         valid.setMessage(repeat('x', ChatBaseVO.MAX_CHAT_TEXT_LENGTH + 1));
         assertViolation(validator.validate(valid), "message");
@@ -55,6 +60,17 @@ class AiRequestValidationTest {
 
         request.setSessionId("session-questions");
         assertTrue(validator.validate(request).isEmpty());
+    }
+
+    @Test
+    void attachmentRequestViewsValidateSessionAndMultipartFile() {
+        AiChatAttachmentSessionVO session = new AiChatAttachmentSessionVO();
+        session.setSessionId("   ");
+        assertViolation(validator.validate(session), "sessionId");
+
+        AiChatAttachmentUploadVO upload = new AiChatAttachmentUploadVO();
+        upload.setSessionId("session-upload");
+        assertViolation(validator.validate(upload), "file");
     }
 
     private static void assertViolation(

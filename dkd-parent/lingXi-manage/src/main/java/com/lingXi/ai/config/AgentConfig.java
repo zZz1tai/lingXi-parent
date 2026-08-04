@@ -35,6 +35,8 @@ public class AgentConfig implements EnvironmentAware {
     private String chatResumeUrl = "/api/v1/chat/resume";
     /** 智能问题生成接口路径 */
     private String smartQuestionsUrl;
+    /** 私有会话图片 OCR 接口路径。 */
+    private String imageOcrUrl = "/api/v1/chat/ocr";
     /** 删除 Python checkpoint 会话记忆接口路径 */
     private String threadDeleteUrl = "/api/v1/chat/thread";
     /** 查看当前用户长期回答偏好接口路径。 */

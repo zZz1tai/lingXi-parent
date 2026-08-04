@@ -21,6 +21,9 @@ MAX_CHAT_MESSAGE_CHARS = 32_000
 MAX_CONTEXT_JSON_BYTES = 256 * 1024
 MAX_EXTRACT_TEXT_CHARS = 32_000
 MAX_USER_PERMISSIONS = 256
+MAX_CHAT_ATTACHMENTS = 5
+MAX_ATTACHMENT_TEXT_CHARS = 60_000
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 
 MemoryPreferenceName = Annotated[
@@ -102,10 +105,78 @@ class UserContext(StrictRequestModel):
         return values
 
 
+class ChatAttachment(StrictRequestModel):
+    """由可信 Java 服务解析后的会话附件，不接受浏览器直传地址。"""
+
+    attachment_id: str = Field(
+        ...,
+        pattern=(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        ),
+    )
+    name: str = Field(..., min_length=1, max_length=255)
+    mime_type: str = Field(
+        ...,
+        min_length=3,
+        max_length=128,
+        pattern=r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$",
+    )
+    size: int = Field(..., ge=1, le=MAX_ATTACHMENT_BYTES)
+    kind: Literal["image", "document"]
+    image_url: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=4096,
+        pattern=r"^https?://[^\s]+$",
+    )
+    extracted_text: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_ATTACHMENT_TEXT_CHARS,
+    )
+    truncated: bool = False
+
+    @model_validator(mode="after")
+    def validate_content(self) -> "ChatAttachment":
+        if self.kind == "image":
+            if not self.mime_type.startswith("image/") or not self.image_url:
+                raise ValueError("image attachment requires image mime type and image_url")
+        else:
+            if self.image_url is not None or not self.extracted_text:
+                raise ValueError(
+                    "document attachment requires extracted_text and no image_url"
+                )
+        return self
+
+
+class ImageOcrRequest(StrictRequestModel):
+    """由可信 Java 服务提交的私有 OSS 图片 OCR 请求。"""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    mime_type: str = Field(
+        ...,
+        min_length=3,
+        max_length=128,
+        pattern=r"^image/[a-z0-9][a-z0-9.+-]*$",
+    )
+    image_url: str = Field(
+        ...,
+        min_length=8,
+        max_length=4096,
+        pattern=r"^https?://[^\s]+$",
+    )
+    llm_config: LLMConfig | None = None
+
+
 class ChatRequest(StrictRequestModel):
     """同步和流式聊天的请求体。"""
 
-    message: str = Field(..., min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
+    message: str = Field(default="", max_length=MAX_CHAT_MESSAGE_CHARS)
+    attachments: list[ChatAttachment] = Field(
+        default_factory=list,
+        max_length=MAX_CHAT_ATTACHMENTS,
+    )
     mode: ChatMode = ChatMode.CHAT
     context_data: Any | None = None
     style: str = Field(default="professional", pattern=r"^(professional|casual)$")
@@ -139,12 +210,9 @@ class ChatRequest(StrictRequestModel):
 
     @field_validator("message")
     @classmethod
-    def reject_blank_message(cls, value: str) -> str:
-        """拒绝空白消息。"""
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("message must not be blank")
-        return normalized
+    def normalize_message(cls, value: str) -> str:
+        """标准化消息；只有存在附件时才允许空文本。"""
+        return value.strip()
 
     @field_validator("business_tag")
     @classmethod
@@ -159,6 +227,13 @@ class ChatRequest(StrictRequestModel):
     @model_validator(mode="after")
     def validate_mode_payload(self) -> "ChatRequest":
         """验证模式负载，确保上下文分析模式有上下文数据。"""
+        if not self.message and not self.attachments:
+            raise ValueError("message or attachments must be provided")
+        if self.mode == ChatMode.CONTEXT_ANALYSIS and self.attachments:
+            raise ValueError("attachments are only supported in chat mode")
+        attachment_ids = [item.attachment_id for item in self.attachments]
+        if len(set(attachment_ids)) != len(attachment_ids):
+            raise ValueError("attachment ids must be unique")
         if self.user_context is not None and self.user_id is None:
             raise ValueError("user_id is required when user_context is provided")
         if (self.agent_request_id is None) != (self.tool_access_token is None):

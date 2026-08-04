@@ -2,8 +2,10 @@ package com.lingXi.ai.domain.dto.tool;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Data;
 
 /** Tool Gateway 的稳定响应信封。 */
+@Data
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public final class AgentToolResponse {
     private final boolean success;

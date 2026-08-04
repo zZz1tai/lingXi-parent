@@ -2,13 +2,16 @@ package com.lingXi.ai.service.impl;
 
 import com.lingXi.ai.client.AgentClient;
 import com.lingXi.ai.domain.dto.AgentUserContext;
+import com.lingXi.ai.domain.dto.AiChatAttachmentAgentDTO;
 import com.lingXi.ai.domain.vo.ChatBaseVO;
+import com.lingXi.ai.service.AiChatAttachmentService;
 import com.lingXi.ai.service.IQwenService;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.manage.domain.ModelHistory;
 import com.lingXi.manage.service.IDashBoardService;
 import com.lingXi.manage.service.IModelHistoryService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -17,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
@@ -38,6 +42,8 @@ public class QwenServiceImpl implements IQwenService {
     private final IModelHistoryService modelHistoryService;
     /** 提供 Agent 分析所需的结构化看板数据。 */
     private final IDashBoardService dashBoardService;
+    /** 负责解析、占用并绑定当前用户的会话附件。 */
+    private final AiChatAttachmentService attachmentService;
 
     /**
      * 构造千问业务服务。
@@ -46,12 +52,23 @@ public class QwenServiceImpl implements IQwenService {
      * @param modelHistoryService 对话历史服务
      * @param dashBoardService 数据看板服务
      */
-    public QwenServiceImpl(AgentClient agentClient,
-                           IModelHistoryService modelHistoryService,
-                           IDashBoardService dashBoardService) {
+    @Autowired
+    public QwenServiceImpl(
+            AgentClient agentClient,
+            IModelHistoryService modelHistoryService,
+            IDashBoardService dashBoardService,
+            AiChatAttachmentService attachmentService) {
         this.agentClient = agentClient;
         this.modelHistoryService = modelHistoryService;
         this.dashBoardService = dashBoardService;
+        this.attachmentService = attachmentService;
+    }
+
+    /** 保留既有测试使用的纯文本构造入口。 */
+    public QwenServiceImpl(AgentClient agentClient,
+                           IModelHistoryService modelHistoryService,
+                           IDashBoardService dashBoardService) {
+        this(agentClient, modelHistoryService, dashBoardService, null);
     }
 
     @Override
@@ -62,17 +79,33 @@ public class QwenServiceImpl implements IQwenService {
     @Override
     public String chat(
             String sessionId, AgentUserContext userContext, String userMessage) {
+        return chat(sessionId, userContext, userMessage, List.of());
+    }
+
+    @Override
+    public String chat(
+            String sessionId,
+            AgentUserContext userContext,
+            String userMessage,
+            List<String> attachmentIds) {
         AgentUserContext trustedContext = requireUserContext(userContext);
         String normalizedSessionId = requireValidSessionId(sessionId);
-        String normalizedMessage = requireValidText(userMessage, "消息");
+        List<AiChatAttachmentAgentDTO> attachments = prepareAttachments(
+                attachmentIds, normalizedSessionId, trustedContext.getUserId());
+        String normalizedMessage = normalizeMessage(userMessage, !attachments.isEmpty());
         // 先保存用户消息；持久化失败时不调用模型，避免数据库历史与真实对话脱节。
-        saveUserMessage(
+        ModelHistory userHistory = saveUserMessage(
                 normalizedSessionId,
                 trustedContext.getUserId(),
                 trustedContext.getUserName(),
                 normalizedMessage);
-        String reply = agentClient.chat(
-                normalizedMessage, normalizedSessionId, trustedContext);
+        bindAttachments(
+                attachmentIds, normalizedSessionId,
+                trustedContext.getUserId(), userHistory.getId());
+        String reply = attachments.isEmpty()
+                ? agentClient.chat(normalizedMessage, normalizedSessionId, trustedContext)
+                : agentClient.chat(
+                        normalizedMessage, normalizedSessionId, trustedContext, attachments);
         // 仅在 Agent 成功返回完整回答后保存助手消息。
         saveAssistantReply(
                 normalizedSessionId,
@@ -126,26 +159,43 @@ public class QwenServiceImpl implements IQwenService {
     @Override
     public SseEmitter streamChat(
             String sessionId, AgentUserContext userContext, String userMessage) {
+        return streamChat(sessionId, userContext, userMessage, List.of());
+    }
+
+    @Override
+    public SseEmitter streamChat(
+            String sessionId,
+            AgentUserContext userContext,
+            String userMessage,
+            List<String> attachmentIds) {
         AgentUserContext trustedContext = requireUserContext(userContext);
         String normalizedSessionId = requireValidSessionId(sessionId);
-        String normalizedMessage = requireValidText(userMessage, "消息");
-        saveUserMessage(
+        List<AiChatAttachmentAgentDTO> attachments = prepareAttachments(
+                attachmentIds, normalizedSessionId, trustedContext.getUserId());
+        String normalizedMessage = normalizeMessage(userMessage, !attachments.isEmpty());
+        ModelHistory userHistory = saveUserMessage(
                 normalizedSessionId,
                 trustedContext.getUserId(),
                 trustedContext.getUserName(),
                 normalizedMessage);
+        bindAttachments(
+                attachmentIds, normalizedSessionId,
+                trustedContext.getUserId(), userHistory.getId());
         // 完成回调和异常边界可能竞争触发，使用原子标记保证助手回答最多落库一次。
         AtomicBoolean assistantSaved = new AtomicBoolean(false);
-        SseEmitter emitter = agentClient.streamChat(
-                normalizedMessage,
-                normalizedSessionId,
-                trustedContext,
-                reply -> saveStreamReplyOnce(
+        Consumer<String> completedReply = reply -> saveStreamReplyOnce(
                         assistantSaved,
                         normalizedSessionId,
                         trustedContext.getUserId(),
                         trustedContext.getUserName(),
-                        reply));
+                        reply);
+        SseEmitter emitter = attachments.isEmpty()
+                ? agentClient.streamChat(
+                        normalizedMessage, normalizedSessionId,
+                        trustedContext, completedReply)
+                : agentClient.streamChat(
+                        normalizedMessage, normalizedSessionId,
+                        trustedContext, attachments, completedReply);
         emitter.onCompletion(() -> log.info(
                 "流式聊天完成，sessionIdLength={}", safeLength(normalizedSessionId)));
         return emitter;
@@ -154,25 +204,42 @@ public class QwenServiceImpl implements IQwenService {
     @Override
     public SseEmitter streamChatV2(
             String sessionId, AgentUserContext userContext, String userMessage) {
+        return streamChatV2(sessionId, userContext, userMessage, List.of());
+    }
+
+    @Override
+    public SseEmitter streamChatV2(
+            String sessionId,
+            AgentUserContext userContext,
+            String userMessage,
+            List<String> attachmentIds) {
         AgentUserContext trustedContext = requireUserContext(userContext);
         String normalizedSessionId = requireValidSessionId(sessionId);
-        String normalizedMessage = requireValidText(userMessage, "消息");
-        saveUserMessage(
+        List<AiChatAttachmentAgentDTO> attachments = prepareAttachments(
+                attachmentIds, normalizedSessionId, trustedContext.getUserId());
+        String normalizedMessage = normalizeMessage(userMessage, !attachments.isEmpty());
+        ModelHistory userHistory = saveUserMessage(
                 normalizedSessionId,
                 trustedContext.getUserId(),
                 trustedContext.getUserName(),
                 normalizedMessage);
+        bindAttachments(
+                attachmentIds, normalizedSessionId,
+                trustedContext.getUserId(), userHistory.getId());
         AtomicBoolean assistantSaved = new AtomicBoolean(false);
-        SseEmitter emitter = agentClient.streamChatV2(
-                normalizedMessage,
-                normalizedSessionId,
-                trustedContext,
-                reply -> saveStreamReplyOnce(
+        Consumer<String> completedReply = reply -> saveStreamReplyOnce(
                         assistantSaved,
                         normalizedSessionId,
                         trustedContext.getUserId(),
                         trustedContext.getUserName(),
-                        reply));
+                        reply);
+        SseEmitter emitter = attachments.isEmpty()
+                ? agentClient.streamChatV2(
+                        normalizedMessage, normalizedSessionId,
+                        trustedContext, completedReply)
+                : agentClient.streamChatV2(
+                        normalizedMessage, normalizedSessionId,
+                        trustedContext, attachments, completedReply);
         emitter.onCompletion(() -> log.info(
                 "V2 流式聊天完成，sessionIdLength={}", safeLength(normalizedSessionId)));
         return emitter;
@@ -375,6 +442,39 @@ public class QwenServiceImpl implements IQwenService {
         return value.trim();
     }
 
+    /** 附件消息允许省略文字；此时保存并发送一个稳定的默认问题。 */
+    private static String normalizeMessage(String value, boolean hasAttachments) {
+        if ((value == null || value.trim().isEmpty()) && hasAttachments) {
+            return "请分析我上传的附件。";
+        }
+        return requireValidText(value, "消息");
+    }
+
+    private List<AiChatAttachmentAgentDTO> prepareAttachments(
+            List<String> attachmentIds, String sessionId, String userId) {
+        if (attachmentIds == null || attachmentIds.isEmpty()) {
+            return List.of();
+        }
+        if (attachmentService == null) {
+            throw new ServiceException("聊天附件服务不可用");
+        }
+        return attachmentService.prepareForModel(attachmentIds, sessionId, userId);
+    }
+
+    private void bindAttachments(
+            List<String> attachmentIds,
+            String sessionId,
+            String userId,
+            Long historyId) {
+        if (attachmentIds == null || attachmentIds.isEmpty()) {
+            return;
+        }
+        if (attachmentService == null) {
+            throw new ServiceException("聊天附件服务不可用");
+        }
+        attachmentService.bindToHistory(attachmentIds, sessionId, userId, historyId);
+    }
+
     /**
      * 保存用户消息到对话历史
      *
@@ -383,7 +483,8 @@ public class QwenServiceImpl implements IQwenService {
      * @param userName  用户名称
      * @param content   消息内容
      */
-    private void saveUserMessage(String sessionId, String userId, String userName, String content) {
+    private ModelHistory saveUserMessage(
+            String sessionId, String userId, String userName, String content) {
         ModelHistory history = new ModelHistory();
         history.setSessionId(sessionId);
         history.setUserId(userId);
@@ -394,6 +495,7 @@ public class QwenServiceImpl implements IQwenService {
         if (modelHistoryService.insertModelHistory(history) != 1) {
             throw new IllegalStateException("用户消息持久化失败");
         }
+        return history;
     }
 
     /**

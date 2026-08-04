@@ -239,6 +239,30 @@
                     <span class="message-sender">{{ userStore.name }}</span>
                   </div>
                   <div class="message-bubble user-bubble">
+                    <div v-if="item.attachments?.length" class="message-attachments">
+                      <a
+                        v-for="attachment in item.attachments"
+                        :key="attachment.attachmentId"
+                        class="message-attachment"
+                        :class="{ 'is-image': attachment.kind === 'image' }"
+                        :href="attachment.previewUrl || undefined"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <img
+                          v-if="attachment.kind === 'image' && attachment.previewUrl"
+                          :src="attachment.previewUrl"
+                          :alt="attachment.name"
+                        />
+                        <span v-else class="attachment-file-icon">
+                          <el-icon><Document /></el-icon>
+                        </span>
+                        <span class="attachment-meta">
+                          <strong>{{ attachment.name }}</strong>
+                          <small>{{ formatFileSize(attachment.size) }}</small>
+                        </span>
+                      </a>
+                    </div>
                     <div class="message-text markdown-content" v-html="renderMarkdown(item.content)"></div>
                   </div>
                 </div>
@@ -267,6 +291,39 @@
           <div class="input-wrapper">
             <!-- 主输入框 -->
             <div class="input-main">
+              <div v-if="pendingAttachments.length" class="pending-attachments">
+                <div
+                  v-for="attachment in pendingAttachments"
+                  :key="attachment.attachmentId"
+                  class="pending-attachment"
+                >
+                  <img
+                    v-if="attachment.kind === 'image' && attachment.previewUrl"
+                    :src="attachment.previewUrl"
+                    :alt="attachment.name"
+                  />
+                  <span v-else class="pending-file-icon">
+                    <el-icon><Document /></el-icon>
+                  </span>
+                  <span class="pending-file-meta">
+                    <strong :title="attachment.name">{{ attachment.name }}</strong>
+                    <small>
+                      {{ formatFileSize(attachment.size) }}
+                      <template v-if="attachment.truncated"> · 内容已截断</template>
+                    </small>
+                  </span>
+                  <el-button
+                    text
+                    circle
+                    size="small"
+                    :loading="attachment.removing"
+                    aria-label="移除附件"
+                    @click="removePendingAttachment(attachment)"
+                  >
+                    <el-icon><Close /></el-icon>
+                  </el-button>
+                </div>
+              </div>
               <el-input
                 v-model="message"
                 type="textarea"
@@ -276,17 +333,38 @@
                 class="message-input"
                 resize="none"
               />
+              <input
+                ref="attachmentInput"
+                class="attachment-input"
+                type="file"
+                multiple
+                :accept="acceptedAttachmentTypes"
+                @change="handleAttachmentFiles"
+              />
               <div class="input-actions">
                 <!-- 模式切换按钮 -->
                 <el-button 
                   type="default" 
                   class="mode-btn"
-                  @click="enableDataAnalysis = !enableDataAnalysis"
+                  @click="toggleDataAnalysis"
                   :class="{ 'active-mode': enableDataAnalysis }"
                 >
                   <el-icon v-if="!enableDataAnalysis"><ChatDotSquare /></el-icon>
                   <el-icon v-else><DataAnalysis /></el-icon>
                   <span>{{ enableDataAnalysis ? '数据分析' : '普通对话' }}</span>
+                </el-button>
+
+                <el-button
+                  type="default"
+                  class="attachment-btn"
+                  :loading="attachmentUploading"
+                  :disabled="loading || enableDataAnalysis || pendingAttachments.length >= maxAttachments"
+                  :title="enableDataAnalysis ? '附件仅支持普通对话模式' : '上传图片或文档'"
+                  @click="openAttachmentPicker"
+                >
+                  <el-icon><Paperclip /></el-icon>
+                  <span>附件</span>
+                  <small v-if="pendingAttachments.length">{{ pendingAttachments.length }}/{{ maxAttachments }}</small>
                 </el-button>
                 
                 <el-dropdown @command="usePreset" trigger="click" placement="top-start" :disabled="!hasValidQuestions">
@@ -313,7 +391,7 @@
                 <el-button 
                   type="primary" 
                   :loading="loading" 
-                  :disabled="loading || !message.trim()" 
+                  :disabled="loading || attachmentUploading || (!message.trim() && !pendingAttachments.length)"
                   @click="sendMessage" 
                   class="send-btn"
                 >
@@ -423,7 +501,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, watch } from 'vue';
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue';
 import dayjs from 'dayjs';
 import { marked } from 'marked';
 import {
@@ -454,18 +532,23 @@ import {
   ChatDotSquare,
   DataAnalysis,
   Collection,
-  CircleCheck
+  CircleCheck,
+  Close,
+  Document,
+  Paperclip
 } from '@element-plus/icons-vue';
 import {
   clearLongTermMemories,
   createSession,
+  deleteAiAttachment,
   deleteSessionById,
   generateSmartQuestions,
   getChatHistory,
   getLongTermMemories,
   getSessions,
   updateLongTermPreference,
-  updateSession
+  updateSession,
+  uploadAiAttachment
 } from '@/api/ai';
 import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
@@ -497,6 +580,16 @@ const history = ref([]);
 const error = ref('');
 const enableDataAnalysis = ref(false);
 const chatContainer = ref(null);
+const attachmentInput = ref(null);
+const pendingAttachments = ref([]);
+const attachmentUploading = ref(false);
+const maxAttachments = 5;
+const maxAttachmentBytes = 10 * 1024 * 1024;
+const acceptedAttachmentTypes = [
+  '.png', '.jpg', '.jpeg', '.webp', '.gif', '.pdf', '.docx', '.txt', '.md',
+  '.json', '.csv', '.log', '.java', '.py', '.js', '.ts', '.tsx', '.jsx',
+  '.vue', '.xml', '.yml', '.yaml', '.sql', '.properties', '.sh', '.ps1'
+].join(',');
 const smartQuestions = ref([]);
 const smartQuestionsLoader = createLatestSingleFlight();
 const validQuestions = ref([]);
@@ -601,7 +694,7 @@ const scrollToBottom = () => {
 };
 
 // 添加消息
-const appendMessage = (isUser, content, id) => {
+const appendMessage = (isUser, content, id, attachments = []) => {
   const newMessage = {
     id: id || `${isUser ? 'user' : 'assistant'}-${Date.now()}-${Math.random()}`,
     isUser,
@@ -612,7 +705,8 @@ const appendMessage = (isUser, content, id) => {
     citations: [],
     memorySaved: [],
     clarification: '',
-    pendingAction: null
+    pendingAction: null,
+    attachments
   };
   history.value.push(newMessage);
   scrollToBottom();
@@ -628,7 +722,7 @@ const syncStreamDraft = () => {
     item.isUser && item.content === draft.userContent
   ));
   if (!hasEquivalentUserMessage) {
-    appendMessage(true, draft.userContent, draft.userMessageId);
+    appendMessage(true, draft.userContent, draft.userMessageId, draft.attachments || []);
   }
 
   let assistantMessage = history.value.find(item => item.id === draft.assistantMessageId);
@@ -642,6 +736,87 @@ const syncStreamDraft = () => {
   assistantMessage.memorySaved = draft.memorySaved;
   assistantMessage.clarification = draft.clarification;
   assistantMessage.pendingAction = draft.pendingAction;
+};
+
+const formatFileSize = size => {
+  const bytes = Number(size) || 0;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const openAttachmentPicker = () => {
+  if (enableDataAnalysis.value) {
+    ElMessage.warning('附件仅支持普通对话模式');
+    return;
+  }
+  attachmentInput.value?.click();
+};
+
+const handleAttachmentFiles = async event => {
+  const selected = Array.from(event.target?.files || []);
+  if (attachmentInput.value) attachmentInput.value.value = '';
+  if (!selected.length) return;
+  if (!currentSessionId.value) {
+    ElMessage.warning('请先创建或选择一个会话');
+    return;
+  }
+  if (enableDataAnalysis.value) {
+    ElMessage.warning('附件仅支持普通对话模式');
+    return;
+  }
+  const available = maxAttachments - pendingAttachments.value.length;
+  if (selected.length > available) {
+    ElMessage.warning(`每条消息最多上传${maxAttachments}个附件`);
+  }
+  attachmentUploading.value = true;
+  try {
+    for (const file of selected.slice(0, available)) {
+      if (file.size <= 0 || file.size > maxAttachmentBytes) {
+        ElMessage.error(`${file.name}：文件需小于10MB`);
+        continue;
+      }
+      try {
+        const response = await uploadAiAttachment(file, currentSessionId.value);
+        pendingAttachments.value.push({ ...response.data, removing: false });
+      } catch (err) {
+        ElMessage.error(`${file.name}：${err?.msg || err?.message || '上传失败'}`);
+      }
+    }
+  } finally {
+    attachmentUploading.value = false;
+  }
+};
+
+const removePendingAttachment = async attachment => {
+  if (!attachment || attachment.removing) return;
+  attachment.removing = true;
+  try {
+    await deleteAiAttachment(attachment.attachmentId, currentSessionId.value);
+    pendingAttachments.value = pendingAttachments.value.filter(
+      item => item.attachmentId !== attachment.attachmentId
+    );
+  } catch (err) {
+    attachment.removing = false;
+    ElMessage.error('移除附件失败：' + (err?.msg || err?.message || '未知错误'));
+  }
+};
+
+const discardPendingAttachments = async () => {
+  const sessionId = currentSessionId.value;
+  const attachments = [...pendingAttachments.value];
+  pendingAttachments.value = [];
+  await Promise.allSettled(
+    attachments.map(item => deleteAiAttachment(item.attachmentId, sessionId))
+  );
+};
+
+const toggleDataAnalysis = () => {
+  if (!enableDataAnalysis.value && pendingAttachments.value.length) {
+    ElMessage.warning('请先发送或移除附件，再切换数据分析模式');
+    return;
+  }
+  enableDataAnalysis.value = !enableDataAnalysis.value;
 };
 
 const handleActionDecision = async (item, decision) => {
@@ -753,8 +928,13 @@ const clearMemories = async () => {
 // 发送消息
 const sendMessage = async () => {
   const content = message.value.trim();
-  if (!content) {
-    ElMessage.warning('请输入内容');
+  const attachments = pendingAttachments.value.map(item => ({ ...item, removing: false }));
+  if (!content && !attachments.length) {
+    ElMessage.warning('请输入内容或上传附件');
+    return;
+  }
+  if (enableDataAnalysis.value && attachments.length) {
+    ElMessage.warning('附件仅支持普通对话模式');
     return;
   }
   if (loading.value) {
@@ -775,20 +955,23 @@ const sendMessage = async () => {
   const messageKey = `${Date.now()}-${Math.random()}`;
   const userMessageId = `user-stream-${messageKey}`;
   const assistantMessageId = `assistant-stream-${messageKey}`;
+  const submittedContent = content || '请分析我上传的附件。';
 
   error.value = '';
-  appendMessage(true, content, userMessageId);
+  appendMessage(true, submittedContent, userMessageId, attachments);
   appendMessage(false, '', assistantMessageId);
   message.value = '';
+  pendingAttachments.value = [];
 
   let completed = false;
   try {
     await aiChatStore.streamMessage({
       sessionId,
-      message: content,
+      message: submittedContent,
       userId: userStore.id,
       userName: userStore.name,
       dataAnalysis: enableDataAnalysis.value,
+      attachments,
       userMessageId,
       assistantMessageId
     });
@@ -913,6 +1096,13 @@ const createNewSession = async () => {
 
 // 切换会话
 const switchSession = async (session) => {
+  if (
+    pendingAttachments.value.length
+    && currentSessionId.value
+    && currentSessionId.value !== session.sessionId
+  ) {
+    await discardPendingAttachments();
+  }
   // 先清空快捷提问，确保切换过程中不显示残留内容
   smartQuestionsLoader.invalidate();
   smartQuestions.value = [];
@@ -1025,6 +1215,12 @@ onMounted(async () => {
     currentSessionId.value = savedSessionId;
   }
   await loadSessions();
+});
+
+onBeforeUnmount(() => {
+  if (pendingAttachments.value.length) {
+    void discardPendingAttachments();
+  }
 });
 </script>
 
@@ -1893,6 +2089,72 @@ onMounted(async () => {
     background: linear-gradient(135deg, #0f766e 0%, #164e63 100%);
     color: white;
     border-radius: 16px 16px 4px 16px;
+
+    .message-attachments {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .message-attachment {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 220px;
+      max-width: 360px;
+      padding: 8px;
+      color: #f8fafc;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 10px;
+      text-align: left;
+      text-decoration: none;
+
+      &:hover {
+        color: white;
+        background: rgba(255, 255, 255, 0.18);
+        text-decoration: none;
+      }
+
+      img {
+        width: 52px;
+        height: 52px;
+        margin: 0;
+        border-radius: 8px;
+        object-fit: cover;
+      }
+
+      .attachment-file-icon {
+        display: grid;
+        flex: none;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        background: rgba(255, 255, 255, 0.14);
+        border-radius: 9px;
+        font-size: 20px;
+      }
+
+      .attachment-meta {
+        display: flex;
+        min-width: 0;
+        flex: 1;
+        flex-direction: column;
+
+        strong {
+          overflow: hidden;
+          font-size: 12px;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        small {
+          margin-top: 2px;
+          color: rgba(255, 255, 255, 0.7);
+          font-size: 10px;
+        }
+      }
+    }
     
     /* 用户消息中的Markdown特殊处理 */
     .markdown-content {
@@ -1965,6 +2227,69 @@ onMounted(async () => {
   }
 
   .input-main {
+    .attachment-input {
+      display: none;
+    }
+
+    .pending-attachments {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .pending-attachment {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+      padding: 8px 9px;
+      background: #f0fdfa;
+      border: 1px solid #ccfbf1;
+      border-radius: 10px;
+
+      img,
+      .pending-file-icon {
+        width: 38px;
+        height: 38px;
+        flex: none;
+        border-radius: 8px;
+      }
+
+      img {
+        object-fit: cover;
+      }
+
+      .pending-file-icon {
+        display: grid;
+        color: #0f766e;
+        background: #ccfbf1;
+        place-items: center;
+        font-size: 19px;
+      }
+
+      .pending-file-meta {
+        display: flex;
+        min-width: 0;
+        flex: 1;
+        flex-direction: column;
+
+        strong {
+          overflow: hidden;
+          color: #134e4a;
+          font-size: 12px;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        small {
+          margin-top: 2px;
+          color: #64748b;
+          font-size: 10px;
+        }
+      }
+    }
+
     .message-input {
       :deep(.el-textarea__inner) {
         min-height: 56px;
@@ -2049,6 +2374,29 @@ onMounted(async () => {
 
         .el-icon {
           font-size: 16px;
+        }
+      }
+
+      .attachment-btn {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 14px;
+        color: #475569;
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+
+        &:hover:not(:disabled) {
+          color: #0f766e;
+          background: #f0fdfa;
+          border-color: #99f6e4;
+        }
+
+        small {
+          color: #0f766e;
+          font-size: 10px;
+          font-weight: 700;
         }
       }
 
@@ -2196,11 +2544,16 @@ onMounted(async () => {
 
     .mode-btn,
     .preset-btn,
+    .attachment-btn,
     .send-btn {
       flex: 1;
       min-width: 120px;
       justify-content: center;
     }
+  }
+
+  .pending-attachments {
+    grid-template-columns: 1fr !important;
   }
 
   .memory-dialog .memory-form {

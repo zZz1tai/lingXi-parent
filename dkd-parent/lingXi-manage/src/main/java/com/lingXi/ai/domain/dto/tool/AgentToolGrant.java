@@ -1,5 +1,6 @@
 package com.lingXi.ai.domain.dto.tool;
 
+import lombok.Data;
 import org.springframework.util.PatternMatchUtils;
 
 import java.time.Instant;
@@ -9,6 +10,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** 由短期工具令牌解析出的不可变授权快照。 */
+@Data
 public final class AgentToolGrant {
 
     private final String userId;
@@ -66,43 +68,4 @@ public final class AgentToolGrant {
         return false;
     }
 
-    public String getUserId() {
-        return userId;
-    }
-
-    public String getThreadId() {
-        return threadId;
-    }
-
-    public String getAgentRequestId() {
-        return agentRequestId;
-    }
-
-    public String getRoleCode() {
-        return roleCode;
-    }
-
-    public Long getRegionId() {
-        return regionId;
-    }
-
-    public String getRegionName() {
-        return regionName;
-    }
-
-    public Set<String> getPermissions() {
-        return permissions;
-    }
-
-    public Set<String> getAllowedTools() {
-        return allowedTools;
-    }
-
-    public Instant getExpiresAt() {
-        return expiresAt;
-    }
-
-    public int getRemainingCalls() {
-        return remainingCalls.get();
-    }
 }

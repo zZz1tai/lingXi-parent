@@ -1,0 +1,26 @@
+-- AI 聊天会话附件元数据。文件本体保存在配置的 x-file-storage 平台（生产为阿里云 OSS）。
+CREATE TABLE IF NOT EXISTS `tb_ai_chat_attachment` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `attachment_id` varchar(36) NOT NULL COMMENT '对外附件ID',
+  `session_id` varchar(128) NOT NULL COMMENT '所属会话',
+  `user_id` varchar(128) NOT NULL COMMENT '所属用户',
+  `history_id` bigint DEFAULT NULL COMMENT '绑定的用户消息ID',
+  `original_name` varchar(255) NOT NULL COMMENT '原始文件名',
+  `storage_platform` varchar(64) NOT NULL COMMENT 'x-file-storage平台',
+  `storage_path` varchar(512) NOT NULL COMMENT '对象路径',
+  `storage_filename` varchar(255) NOT NULL COMMENT '对象文件名',
+  `object_url` varchar(2048) DEFAULT NULL COMMENT '存储平台对象URL，仅用于对象删除元数据',
+  `mime_type` varchar(128) NOT NULL COMMENT '服务端识别的MIME类型',
+  `file_size` bigint NOT NULL COMMENT '文件字节数',
+  `attachment_kind` varchar(16) NOT NULL COMMENT 'IMAGE或DOCUMENT',
+  `extracted_text` mediumtext COMMENT '文档提取后的有界文本',
+  `extract_truncated` tinyint(1) NOT NULL DEFAULT 0 COMMENT '提取文本是否被截断',
+  `status` varchar(16) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING或USED',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_ai_chat_attachment_id` (`attachment_id`),
+  KEY `idx_ai_chat_attachment_owner` (`user_id`,`session_id`,`status`),
+  KEY `idx_ai_chat_attachment_history` (`history_id`),
+  KEY `idx_ai_chat_attachment_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI聊天会话附件';

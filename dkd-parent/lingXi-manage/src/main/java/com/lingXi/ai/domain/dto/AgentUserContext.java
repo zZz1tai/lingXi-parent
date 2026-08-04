@@ -4,6 +4,7 @@ import com.lingXi.common.core.domain.entity.SysRole;
 import com.lingXi.common.core.domain.entity.SysUser;
 import com.lingXi.common.core.domain.model.LoginUser;
 import com.lingXi.manage.domain.Emp;
+import lombok.Data;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -15,6 +16,7 @@ import java.util.TreeSet;
  * 由 Java 登录态生成并发送给 Python Agent 的可信用户上下文。
  * <p>该对象只包含允许进入模型运行时的白名单字段，不接受浏览器直接构造。</p>
  */
+@Data
 public final class AgentUserContext {
 
     private final String userId;
@@ -132,33 +134,5 @@ public final class AgentUserContext {
 
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
-    }
-
-    public String getUserId() {
-        return userId;
-    }
-
-    public String getUserName() {
-        return userName;
-    }
-
-    public String getRoleCode() {
-        return roleCode;
-    }
-
-    public String getRoleName() {
-        return roleName;
-    }
-
-    public Long getRegionId() {
-        return regionId;
-    }
-
-    public String getRegionName() {
-        return regionName;
-    }
-
-    public List<String> getPermissions() {
-        return permissions;
     }
 }

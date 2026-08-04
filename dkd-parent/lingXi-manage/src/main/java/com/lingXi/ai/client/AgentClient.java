@@ -6,6 +6,9 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.ai.domain.dto.AgentUserContext;
+import com.lingXi.ai.domain.dto.AiChatAttachmentAgentDTO;
+import com.lingXi.ai.domain.dto.AiImageOcrRequestDTO;
+import com.lingXi.ai.domain.dto.AiImageOcrResultDTO;
 import com.lingXi.ai.domain.dto.tool.AgentToolAccess;
 import com.lingXi.ai.service.AgentToolTokenService;
 import com.lingXi.aiVedio.config.AiVideoModelConfigService;
@@ -152,13 +155,52 @@ public class AgentClient {
     /** 使用可信 Java 登录上下文同步调用 Agent。 */
     public String chat(
             String message, String sessionId, AgentUserContext userContext) {
+        return chat(message, sessionId, userContext, List.of());
+    }
+
+    /** 使用可信 Java 登录上下文和服务端解析的附件同步调用 Agent。 */
+    public String chat(
+            String message,
+            String sessionId,
+            AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments) {
         return chat(
                 message,
                 sessionId,
                 userContext.getUserId(),
                 "chat",
                 null,
-                userContext);
+                userContext,
+                attachments);
+    }
+
+    /** 调用隔离的视觉模型端点提取私有 OSS 图片文字。 */
+    public AiImageOcrResultDTO recognizeImageText(AiImageOcrRequestDTO request) {
+        if (request == null || request.getImageUrl() == null
+                || request.getImageUrl().isBlank()) {
+            throw new IllegalArgumentException("image OCR request is required");
+        }
+        try {
+            ObjectNode root = objectMapper.createObjectNode();
+            root.put("name", request.getName());
+            root.put("mime_type", request.getMimeType());
+            root.put("image_url", request.getImageUrl());
+            putLlmConfig(root);
+            JsonNode response = requestJson(
+                    "POST", config.getImageOcrUrl(), objectMapper.writeValueAsString(root));
+            requireSuccess(response, "IMAGE_OCR_FAILED", "图片文字识别失败");
+            JsonNode data = response.path("data");
+            AiImageOcrResultDTO result = new AiImageOcrResultDTO();
+            if (data.path("text").isTextual()) {
+                result.setText(data.path("text").asText());
+            }
+            result.setTruncated(data.path("truncated").asBoolean(false));
+            return result;
+        } catch (Exception exception) {
+            log.warn("调用图片 OCR 失败，errorType={}",
+                    exception.getClass().getSimpleName());
+            throw new RuntimeException("图片文字识别失败", exception);
+        }
     }
 
     /**
@@ -200,10 +242,22 @@ public class AgentClient {
             String mode,
             Object contextData,
             AgentUserContext userContext) {
+        return chat(message, sessionId, userId, mode, contextData, userContext, List.of());
+    }
+
+    private String chat(
+            String message,
+            String sessionId,
+            String userId,
+            String mode,
+            Object contextData,
+            AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments) {
         AgentToolAccess toolAccess = createToolAccess(userContext, sessionId);
         try {
             String requestBody = buildRequest(
-                    message, sessionId, userId, mode, contextData, userContext, toolAccess);
+                    message, sessionId, userId, mode, contextData,
+                    userContext, toolAccess, attachments);
             JsonNode root = requestJson("POST", config.getChatInvokeUrl(), requestBody);
             requireSuccess(root, "AGENT_CHAT_FAILED", "Agent 对话请求失败");
             return extractResponse(root);
@@ -241,12 +295,24 @@ public class AgentClient {
             AgentUserContext userContext,
             Consumer<String> completedReplyConsumer) {
         return streamChat(
+                message, sessionId, userContext, List.of(), completedReplyConsumer);
+    }
+
+    /** 使用可信 Java 登录上下文和附件进行普通流式聊天。 */
+    public SseEmitter streamChat(
+            String message,
+            String sessionId,
+            AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments,
+            Consumer<String> completedReplyConsumer) {
+        return streamChat(
                 message,
                 sessionId,
                 userContext.getUserId(),
                 "chat",
                 null,
                 userContext,
+                attachments,
                 completedReplyConsumer);
     }
 
@@ -256,6 +322,17 @@ public class AgentClient {
             String sessionId,
             AgentUserContext userContext,
             Consumer<String> completedReplyConsumer) {
+        return streamChatV2(
+                message, sessionId, userContext, List.of(), completedReplyConsumer);
+    }
+
+    /** 使用可信 Java 登录上下文和附件返回结构化 V2 流。 */
+    public SseEmitter streamChatV2(
+            String message,
+            String sessionId,
+            AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments,
+            Consumer<String> completedReplyConsumer) {
         return streamChat(
                 message,
                 sessionId,
@@ -263,6 +340,7 @@ public class AgentClient {
                 "chat",
                 null,
                 userContext,
+                attachments,
                 completedReplyConsumer,
                 true);
     }
@@ -281,6 +359,7 @@ public class AgentClient {
                 "chat",
                 null,
                 userContext,
+                List.of(),
                 completedReplyConsumer,
                 true,
                 actionId,
@@ -343,8 +422,23 @@ public class AgentClient {
                 mode,
                 contextData,
                 userContext,
+                List.of(),
                 completedReplyConsumer,
                 false);
+    }
+
+    private SseEmitter streamChat(
+            String message,
+            String sessionId,
+            String userId,
+            String mode,
+            Object contextData,
+            AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments,
+            Consumer<String> completedReplyConsumer) {
+        return streamChat(
+                message, sessionId, userId, mode, contextData, userContext,
+                attachments, completedReplyConsumer, false);
     }
 
     /** V1 聚合文本与 V2 结构事件共用同一条受控上游读取链路。 */
@@ -355,6 +449,7 @@ public class AgentClient {
             String mode,
             Object contextData,
             AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments,
             Consumer<String> completedReplyConsumer,
             boolean structuredEvents) {
         return streamAgent(
@@ -364,6 +459,7 @@ public class AgentClient {
                 mode,
                 contextData,
                 userContext,
+                attachments,
                 completedReplyConsumer,
                 structuredEvents,
                 null,
@@ -378,6 +474,7 @@ public class AgentClient {
             String mode,
             Object contextData,
             AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments,
             Consumer<String> completedReplyConsumer,
             boolean structuredEvents,
             String actionId,
@@ -412,7 +509,7 @@ public class AgentClient {
                 String requestBody = actionId == null
                         ? buildRequest(
                                 message, sessionId, userId, mode, contextData,
-                                userContext, toolAccess)
+                                userContext, toolAccess, attachments)
                         : buildResumeRequest(
                                 sessionId, userId, userContext, toolAccess,
                                 actionId, decision);
@@ -1017,6 +1114,21 @@ public class AgentClient {
             Object contextData,
             AgentUserContext userContext,
             AgentToolAccess toolAccess) {
+        return buildRequest(
+                message, sessionId, userId, mode, contextData,
+                userContext, toolAccess, List.of());
+    }
+
+    /** 构造包含服务端解析附件的统一对话请求体。 */
+    String buildRequest(
+            String message,
+            String sessionId,
+            String userId,
+            String mode,
+            Object contextData,
+            AgentUserContext userContext,
+            AgentToolAccess toolAccess,
+            List<AiChatAttachmentAgentDTO> attachments) {
         try {
             ObjectNode root = objectMapper.createObjectNode();
             root.put("message", message);
@@ -1030,6 +1142,24 @@ public class AgentClient {
             }
             if (userId != null && !userId.trim().isEmpty()) {
                 root.put("user_id", userId.trim());
+            }
+            if (attachments != null && !attachments.isEmpty()) {
+                ArrayNode attachmentNodes = root.putArray("attachments");
+                for (AiChatAttachmentAgentDTO attachment : attachments) {
+                    ObjectNode node = attachmentNodes.addObject();
+                    node.put("attachment_id", attachment.getAttachmentId());
+                    node.put("name", attachment.getName());
+                    node.put("mime_type", attachment.getMimeType());
+                    node.put("size", attachment.getSize());
+                    node.put("kind", attachment.getKind());
+                    if (attachment.getImageUrl() != null) {
+                        node.put("image_url", attachment.getImageUrl());
+                    }
+                    if (attachment.getExtractedText() != null) {
+                        node.put("extracted_text", attachment.getExtractedText());
+                    }
+                    node.put("truncated", Boolean.TRUE.equals(attachment.getTruncated()));
+                }
             }
             putUserContext(root, userContext);
             putToolAccess(root, toolAccess);

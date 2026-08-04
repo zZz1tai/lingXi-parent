@@ -6,6 +6,7 @@ import { tansParams, blobValidate } from '@/utils/ruoyi'
 import cache from '@/plugins/cache'
 import { saveAs } from 'file-saver'
 import useUserStore from '@/store/modules/user'
+import { normalizeMultipartRequest } from '@/utils/request-data'
 
 let downloadLoadingInstance;
 // 是否显示重新登录
@@ -36,6 +37,7 @@ service.interceptors.request.use(config => {
   if (getToken() && !isToken) {
     config.headers['Authorization'] = 'Bearer ' + getToken() // 让每个请求携带自定义token 请根据实际情况自行修改
   }
+  const isMultipart = normalizeMultipartRequest(config)
   // get请求映射params参数
   if (config.method === 'get' && config.params) {
     let url = config.url + '?' + tansParams(config.params);
@@ -43,7 +45,7 @@ service.interceptors.request.use(config => {
     config.params = {};
     config.url = url;
   }
-  if (!isRepeatSubmit && (config.method === 'post' || config.method === 'put')) {
+  if (!isRepeatSubmit && !isMultipart && (config.method === 'post' || config.method === 'put')) {
     const requestObj = {
       url: config.url,
       data: typeof config.data === 'object' ? JSON.stringify(config.data) : config.data,

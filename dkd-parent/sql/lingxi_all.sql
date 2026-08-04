@@ -2310,6 +2310,43 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 -- Initialization summary
 SELECT 'dkd database initialized successfully' AS message;
+
+-- ============================================================
+-- AI controlled write actions (from ai_agent_action_migration.sql)
+-- ============================================================
+
+-- 阶段 5：AI 受控写操作持久化与工单幂等迁移
+-- 本迁移默认不会启用写操作，仍需显式设置
+-- AGENT_WRITE_ACTIONS_ENABLED=true 才会开放提案与执行链路。
+
+CREATE TABLE IF NOT EXISTS `ai_agent_action` (
+  `action_id` varchar(64) NOT NULL COMMENT '受控动作ID',
+  `idempotency_key` varchar(128) NOT NULL COMMENT 'Agent 单次工具调用幂等键',
+  `action_type` varchar(64) NOT NULL COMMENT '动作类型',
+  `user_id` varchar(64) NOT NULL COMMENT '提案所属登录用户',
+  `thread_id` varchar(128) NOT NULL COMMENT '提案所属聊天会话',
+  `region_id` bigint DEFAULT NULL COMMENT '动作目标区域',
+  `inner_code` varchar(64) NOT NULL COMMENT '目标设备编号',
+  `action_desc` varchar(500) NOT NULL COMMENT '拟创建工单描述',
+  `status` varchar(20) NOT NULL COMMENT 'PENDING/APPROVED/REJECTED/SUCCEEDED/FAILED/EXPIRED',
+  `created_at` datetime NOT NULL,
+  `expires_at` datetime NOT NULL,
+  `decided_at` datetime DEFAULT NULL,
+  `decided_by` bigint DEFAULT NULL COMMENT '批准或拒绝的登录用户ID',
+  `executed_at` datetime DEFAULT NULL,
+  `task_id` bigint DEFAULT NULL,
+  `task_code` varchar(64) DEFAULT NULL,
+  `last_error_code` varchar(64) DEFAULT NULL,
+  PRIMARY KEY (`action_id`),
+  UNIQUE KEY `uk_ai_agent_action_idempotency` (`user_id`, `thread_id`, `idempotency_key`),
+  KEY `idx_ai_agent_action_status_expiry` (`status`, `expires_at`),
+  KEY `idx_ai_agent_action_task` (`task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 人工确认受控动作';
+
+ALTER TABLE `tb_task`
+  ADD COLUMN `agent_action_id` varchar(64) DEFAULT NULL COMMENT 'AI 受控动作ID' AFTER `addr`,
+  ADD UNIQUE KEY `uk_tb_task_agent_action_id` (`agent_action_id`);
+
 -- ============================================================
 -- AI video workflow schema (from ai_video_workflow.sql)
 -- ============================================================
@@ -2771,7 +2808,32 @@ WHERE menu_id = @ai_vedio_parent_id
    OR parent_id = @ai_vedio_project_menu_id
 ON DUPLICATE KEY UPDATE menu_id = VALUES(menu_id);
 
-
+-- AI 聊天会话附件元数据。文件本体保存在配置的 x-file-storage 平台（生产为阿里云 OSS）。
+CREATE TABLE IF NOT EXISTS `tb_ai_chat_attachment` (
+                                                       `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                                                       `attachment_id` varchar(36) NOT NULL COMMENT '对外附件ID',
+    `session_id` varchar(128) NOT NULL COMMENT '所属会话',
+    `user_id` varchar(128) NOT NULL COMMENT '所属用户',
+    `history_id` bigint DEFAULT NULL COMMENT '绑定的用户消息ID',
+    `original_name` varchar(255) NOT NULL COMMENT '原始文件名',
+    `storage_platform` varchar(64) NOT NULL COMMENT 'x-file-storage平台',
+    `storage_path` varchar(512) NOT NULL COMMENT '对象路径',
+    `storage_filename` varchar(255) NOT NULL COMMENT '对象文件名',
+    `object_url` varchar(2048) DEFAULT NULL COMMENT '存储平台对象URL，仅用于对象删除元数据',
+    `mime_type` varchar(128) NOT NULL COMMENT '服务端识别的MIME类型',
+    `file_size` bigint NOT NULL COMMENT '文件字节数',
+    `attachment_kind` varchar(16) NOT NULL COMMENT 'IMAGE或DOCUMENT',
+    `extracted_text` mediumtext COMMENT '文档提取后的有界文本',
+    `extract_truncated` tinyint(1) NOT NULL DEFAULT 0 COMMENT '提取文本是否被截断',
+    `status` varchar(16) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING或USED',
+    `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ai_chat_attachment_id` (`attachment_id`),
+    KEY `idx_ai_chat_attachment_owner` (`user_id`,`session_id`,`status`),
+    KEY `idx_ai_chat_attachment_history` (`history_id`),
+    KEY `idx_ai_chat_attachment_created` (`created_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI聊天会话附件';
 -- ----------------------------
 -- 系统安全配置
 -- 将 application.yml 中的敏感配置项迁移到 sys_config 表，通过管理界面维护。

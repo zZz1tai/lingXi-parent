@@ -84,6 +84,20 @@ class ChatResponse(BaseResponse):
     data: Optional[ChatData] = None
 
 
+class ImageOcrData(BaseModel):
+    """图片 OCR 的有界纯文本结果。"""
+
+    text: str | None = None
+    truncated: bool = False
+    request_id: str = ""
+
+
+class ImageOcrResponse(BaseResponse):
+    """``POST /api/v1/chat/ocr``端点的响应。"""
+
+    data: ImageOcrData
+
+
 class MemoryListData(BaseModel):
     """长期记忆功能状态与当前用户偏好。"""
 

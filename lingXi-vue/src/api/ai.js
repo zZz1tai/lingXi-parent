@@ -154,13 +154,35 @@ export function streamChatWithQwen(
   sessionId,
   userId,
   userName,
-  { signal, onChunk, onEvent } = {}
+  { signal, onChunk, onEvent, attachmentIds = [] } = {}
 ) {
   return streamSse('/api/ai/chat/stream/v2', {
-    body: { sessionId, userId, userName, message },
+    body: { sessionId, userId, userName, message, attachmentIds },
     signal,
     onChunk,
     onEvent
+  });
+}
+
+/** 上传一个绑定到当前会话的私有 AI 附件。 */
+export function uploadAiAttachment(file, sessionId) {
+  const data = new FormData();
+  data.append('file', file);
+  data.append('sessionId', sessionId);
+  return request({
+    url: '/api/ai/attachments',
+    method: 'post',
+    data,
+    timeout: 60_000
+  });
+}
+
+/** 删除一个尚未发送的 AI 附件。 */
+export function deleteAiAttachment(attachmentId, sessionId) {
+  return request({
+    url: `/api/ai/attachments/${encodeURIComponent(attachmentId)}`,
+    method: 'delete',
+    params: { sessionId }
   });
 }
 

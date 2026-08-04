@@ -1,9 +1,12 @@
 package com.lingXi.ai.domain.dto.tool;
 
+import lombok.Data;
+
 /**
  * Java 传递给 Python Agent 的单轮工具访问凭据。
  * <p>令牌不实现 {@code toString}，避免被日志或调试输出意外展开。</p>
  */
+@Data
 public final class AgentToolAccess {
 
     private final String token;
@@ -16,15 +19,4 @@ public final class AgentToolAccess {
         this.threadId = threadId;
     }
 
-    public String getToken() {
-        return token;
-    }
-
-    public String getAgentRequestId() {
-        return agentRequestId;
-    }
-
-    public String getThreadId() {
-        return threadId;
-    }
 }

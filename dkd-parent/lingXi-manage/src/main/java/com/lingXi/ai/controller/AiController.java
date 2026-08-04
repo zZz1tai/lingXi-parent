@@ -14,6 +14,7 @@ import com.lingXi.manage.domain.ChatSession;
 import com.lingXi.manage.domain.Emp;
 import com.lingXi.manage.domain.ModelHistory;
 import com.lingXi.ai.service.IChatSessionService;
+import com.lingXi.ai.service.AiChatAttachmentService;
 import com.lingXi.manage.service.IModelHistoryService;
 import com.lingXi.manage.service.IEmpService;
 import com.lingXi.ai.service.IQwenService;
@@ -46,6 +47,8 @@ public class AiController {
     private final IChatSessionService chatSessionService;
     /** 根据当前系统用户补充业务角色和区域；不可用时仍保留登录权限上下文。 */
     private final IEmpService empService;
+    /** 会话附件的归属校验、历史展示与对象清理。 */
+    private final AiChatAttachmentService attachmentService;
 
     /**
      * 构造 AI 接口控制器。
@@ -59,11 +62,22 @@ public class AiController {
             IQwenService qwenService,
             IModelHistoryService modelHistoryService,
             IChatSessionService chatSessionService,
-            IEmpService empService) {
+            IEmpService empService,
+            AiChatAttachmentService attachmentService) {
         this.qwenService = qwenService;
         this.modelHistoryService = modelHistoryService;
         this.chatSessionService = chatSessionService;
         this.empService = empService;
+        this.attachmentService = attachmentService;
+    }
+
+    /** 保留既有四参数构造入口。 */
+    public AiController(
+            IQwenService qwenService,
+            IModelHistoryService modelHistoryService,
+            IChatSessionService chatSessionService,
+            IEmpService empService) {
+        this(qwenService, modelHistoryService, chatSessionService, empService, null);
     }
 
     /** 保留给既有单元测试和内部构造代码的兼容入口。 */
@@ -71,7 +85,7 @@ public class AiController {
             IQwenService qwenService,
             IModelHistoryService modelHistoryService,
             IChatSessionService chatSessionService) {
-        this(qwenService, modelHistoryService, chatSessionService, null);
+        this(qwenService, modelHistoryService, chatSessionService, null, null);
     }
 
     /**
@@ -86,8 +100,12 @@ public class AiController {
         AgentUserContext userContext = currentAgentUserContext();
         String userId = userContext.getUserId();
         requireOwnedSession(chatVO.getSessionId(), userId);
+        if (chatVO.getAttachmentIds() == null || chatVO.getAttachmentIds().isEmpty()) {
+            return qwenService.chat(
+                    chatVO.getSessionId(), userContext, chatVO.getMessage());
+        }
         return qwenService.chat(
-                chatVO.getSessionId(), userContext, chatVO.getMessage());
+                chatVO.getSessionId(), userContext, chatVO.getMessage(), chatVO.getAttachmentIds());
     }
 
     /**
@@ -126,8 +144,12 @@ public class AiController {
         AgentUserContext userContext = currentAgentUserContext();
         String userId = userContext.getUserId();
         requireOwnedSession(chatVO.getSessionId(), userId);
+        if (chatVO.getAttachmentIds() == null || chatVO.getAttachmentIds().isEmpty()) {
+            return qwenService.streamChat(
+                    chatVO.getSessionId(), userContext, chatVO.getMessage());
+        }
         return qwenService.streamChat(
-                chatVO.getSessionId(), userContext, chatVO.getMessage());
+                chatVO.getSessionId(), userContext, chatVO.getMessage(), chatVO.getAttachmentIds());
     }
 
     /** 返回 token、工具进度、引用和记忆提示等结构化白名单事件。 */
@@ -137,8 +159,12 @@ public class AiController {
         AgentUserContext userContext = currentAgentUserContext();
         String userId = userContext.getUserId();
         requireOwnedSession(chatVO.getSessionId(), userId);
+        if (chatVO.getAttachmentIds() == null || chatVO.getAttachmentIds().isEmpty()) {
+            return qwenService.streamChatV2(
+                    chatVO.getSessionId(), userContext, chatVO.getMessage());
+        }
         return qwenService.streamChatV2(
-                chatVO.getSessionId(), userContext, chatVO.getMessage());
+                chatVO.getSessionId(), userContext, chatVO.getMessage(), chatVO.getAttachmentIds());
     }
 
     /**
@@ -211,7 +237,9 @@ public class AiController {
                 requireOwnedSession(historyQueryVO.getSessionId(), userId);
                 history = modelHistoryService.selectModelHistoryBySessionId(historyQueryVO.getSessionId());
             }
-            return AjaxResult.success(history);
+            return AjaxResult.success(attachmentService == null
+                    ? history
+                    : attachmentService.toHistoryViews(history, userId));
         } catch (Exception e) {
             return safeError("获取对话历史失败", e);
         }
@@ -282,6 +310,9 @@ public class AiController {
             requireOwnedSession(sessionId, userId);
             String normalizedSessionId = sessionId.trim();
             qwenService.clearConversationMemory(normalizedSessionId, userId);
+            if (attachmentService != null) {
+                attachmentService.deleteSessionAttachments(normalizedSessionId, userId);
+            }
             int result = modelHistoryService.deleteModelHistoryBySessionId(
                     normalizedSessionId);
             return AjaxResult.success(result);
@@ -360,6 +391,9 @@ public class AiController {
             requireOwnedSession(sessionId, userId);
             String normalizedSessionId = sessionId.trim();
             qwenService.clearConversationMemory(normalizedSessionId, userId);
+            if (attachmentService != null) {
+                attachmentService.deleteSessionAttachments(normalizedSessionId, userId);
+            }
             int result = chatSessionService.deleteChatSessionAndHistoryBySessionId(
                     normalizedSessionId);
             return AjaxResult.success(result > 0);

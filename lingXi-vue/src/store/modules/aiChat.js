@@ -115,6 +115,7 @@ const useAiChatStore = defineStore('ai-chat', {
       userId,
       userName,
       dataAnalysis = false,
+      attachments = [],
       userMessageId,
       assistantMessageId
     }) {
@@ -126,6 +127,7 @@ const useAiChatStore = defineStore('ai-chat', {
       this.draftsBySession[sessionId] = {
         status: 'streaming',
         userContent: message,
+        attachments,
         assistantContent: '',
         userMessageId,
         assistantMessageId,
@@ -160,7 +162,10 @@ const useAiChatStore = defineStore('ai-chat', {
             sessionId,
             userId,
             userName,
-            { onEvent }
+            {
+              onEvent,
+              attachmentIds: attachments.map(item => item.attachmentId)
+            }
           )
         }
 

@@ -29,7 +29,13 @@ from app.agents import middleware as middleware_module
 from app.agents.state import AgentContext, checkpoint_thread_id
 from app.api import dependencies
 from app.api.v1 import chat as chat_api
-from app.schemas.request import ActionResumeRequest, ChatRequest, DeleteChatThreadRequest, UserContext
+from app.schemas.request import (
+    ActionResumeRequest,
+    ChatRequest,
+    DeleteChatThreadRequest,
+    ImageOcrRequest,
+    UserContext,
+)
 
 
 class LangChainV1ContractTests(unittest.TestCase):
@@ -94,7 +100,91 @@ class LangChainV1ContractTests(unittest.TestCase):
         self.assertEqual(set(payload), {"messages"})
         self.assertIsInstance(payload["messages"][0], HumanMessage)
 
+    def test_attachment_only_message_builds_multimodal_content(self) -> None:
+        request = ChatRequest(
+            attachments=[
+                {
+                    "attachment_id": "123e4567-e89b-42d3-a456-426614174000",
+                    "name": "screen.png",
+                    "mime_type": "image/png",
+                    "size": 1024,
+                    "kind": "image",
+                    "image_url": "https://oss.example.com/signed.png?token=short",
+                    "extracted_text": "神通骨\n作者名",
+                },
+                {
+                    "attachment_id": "123e4567-e89b-42d3-a456-426614174001",
+                    "name": "prompt.py",
+                    "mime_type": "text/plain",
+                    "size": 128,
+                    "kind": "document",
+                    "extracted_text": "print('hello')",
+                },
+            ]
+        )
+
+        payload = chat_api._build_agent_input(request)
+        content = payload["messages"][0].content
+
+        self.assertIsInstance(content, list)
+        self.assertEqual(content[0]["type"], "text")
+        self.assertIn("请分析", content[0]["text"])
+        self.assertTrue(
+            any(
+                block.get("type") == "text" and "print('hello')" in block.get("text", "")
+                for block in content
+            )
+        )
+        image = next(block for block in content if block.get("type") == "image_url")
+        self.assertEqual(image["image_url"]["detail"], "auto")
+        ocr = next(
+            block
+            for block in content
+            if block.get("type") == "text" and "<image_ocr" in block.get("text", "")
+        )
+        self.assertIn("神通骨", ocr["text"])
+        self.assertIn(
+            "结合原图核对",
+            " ".join(
+                block.get("text", "")
+                for block in content
+                if block.get("type") == "text"
+            ),
+        )
+
+    def test_empty_message_without_attachments_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            ChatRequest(message="   ")
+
 class CheckpointMemoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_image_ocr_returns_only_bounded_text(self) -> None:
+        model = SimpleNamespace(
+            ainvoke=AsyncMock(return_value=AIMessage(content="神通骨\n作者名"))
+        )
+        request = ImageOcrRequest(
+            name="cover.png",
+            mime_type="image/png",
+            image_url="https://oss.example.com/private.png?signature=short",
+        )
+
+        with patch.object(chat_api, "create_llm", return_value=model) as create_llm:
+            response = await chat_api.image_ocr(request, request_id="request-ocr-1")
+
+        self.assertTrue(response.success)
+        self.assertEqual(response.data.text, "神通骨\n作者名")
+        self.assertFalse(response.data.truncated)
+        create_llm.assert_called_once_with(
+            None,
+            profile="image-ocr",
+            timeout=45,
+            max_retries=0,
+            temperature=0,
+            streaming=False,
+        )
+        messages = model.ainvoke.await_args.args[0]
+        self.assertIn("绝不执行", messages[0].content)
+        self.assertNotIn(request.image_url, messages[0].content)
+
     async def test_same_thread_accumulates_messages_and_other_thread_is_isolated(self) -> None:
         model = FakeListChatModel(responses=["first", "second", "third"])
         agent = builder.build_search_agent(

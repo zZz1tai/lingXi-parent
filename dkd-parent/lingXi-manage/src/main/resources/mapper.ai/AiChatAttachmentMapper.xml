@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.ai.mapper.AiChatAttachmentMapper">
+    <resultMap id="AttachmentResult" type="com.lingXi.ai.domain.AiChatAttachment">
+        <id property="id" column="id" />
+        <result property="attachmentId" column="attachment_id" />
+        <result property="sessionId" column="session_id" />
+        <result property="userId" column="user_id" />
+        <result property="historyId" column="history_id" />
+        <result property="originalName" column="original_name" />
+        <result property="storagePlatform" column="storage_platform" />
+        <result property="storagePath" column="storage_path" />
+        <result property="storageFilename" column="storage_filename" />
+        <result property="objectUrl" column="object_url" />
+        <result property="mimeType" column="mime_type" />
+        <result property="fileSize" column="file_size" />
+        <result property="attachmentKind" column="attachment_kind" />
+        <result property="extractedText" column="extracted_text" />
+        <result property="extractTruncated" column="extract_truncated" />
+        <result property="status" column="status" />
+        <result property="createTime" column="created_at" />
+        <result property="updateTime" column="updated_at" />
+    </resultMap>
+
+    <sql id="attachmentColumns">
+        id, attachment_id, session_id, user_id, history_id, original_name,
+        storage_platform, storage_path, storage_filename, object_url, mime_type,
+        file_size, attachment_kind, extracted_text, extract_truncated, status,
+        created_at, updated_at
+    </sql>
+
+    <insert id="insert" parameterType="com.lingXi.ai.domain.AiChatAttachment" useGeneratedKeys="true" keyProperty="id">
+        insert into tb_ai_chat_attachment (
+            attachment_id, session_id, user_id, original_name, storage_platform,
+            storage_path, storage_filename, object_url, mime_type, file_size,
+            attachment_kind, extracted_text, extract_truncated, status, created_at
+        ) values (
+            #{attachmentId}, #{sessionId}, #{userId}, #{originalName}, #{storagePlatform},
+            #{storagePath}, #{storageFilename}, #{objectUrl}, #{mimeType}, #{fileSize},
+            #{attachmentKind}, #{extractedText}, #{extractTruncated}, #{status}, #{createTime}
+        )
+    </insert>
+
+    <select id="selectOwned" resultMap="AttachmentResult">
+        select <include refid="attachmentColumns" />
+        from tb_ai_chat_attachment
+        where attachment_id = #{attachmentId}
+          and session_id = #{sessionId}
+          and user_id = #{userId}
+        limit 1
+    </select>
+
+    <select id="selectOwnedByIds" resultMap="AttachmentResult">
+        select <include refid="attachmentColumns" />
+        from tb_ai_chat_attachment
+        where session_id = #{sessionId}
+          and user_id = #{userId}
+          and attachment_id in
+          <foreach collection="attachmentIds" item="attachmentId" open="(" separator="," close=")">
+              #{attachmentId}
+          </foreach>
+    </select>
+
+    <select id="selectByHistoryIds" resultMap="AttachmentResult">
+        select <include refid="attachmentColumns" />
+        from tb_ai_chat_attachment
+        where user_id = #{userId}
+          and history_id in
+          <foreach collection="historyIds" item="historyId" open="(" separator="," close=")">
+              #{historyId}
+          </foreach>
+        order by id asc
+    </select>
+
+    <select id="selectBySession" resultMap="AttachmentResult">
+        select <include refid="attachmentColumns" />
+        from tb_ai_chat_attachment
+        where session_id = #{sessionId} and user_id = #{userId}
+        order by id asc
+    </select>
+
+    <update id="bindToHistory">
+        update tb_ai_chat_attachment
+        set history_id = #{historyId}, status = 'USED', updated_at = current_timestamp
+        where session_id = #{sessionId}
+          and user_id = #{userId}
+          and history_id is null
+          and status = 'PENDING'
+          and attachment_id in
+          <foreach collection="attachmentIds" item="attachmentId" open="(" separator="," close=")">
+              #{attachmentId}
+          </foreach>
+    </update>
+
+    <delete id="deletePendingOwned">
+        delete from tb_ai_chat_attachment
+        where attachment_id = #{attachmentId}
+          and session_id = #{sessionId}
+          and user_id = #{userId}
+          and history_id is null
+          and status = 'PENDING'
+    </delete>
+
+    <delete id="deleteBySession">
+        delete from tb_ai_chat_attachment
+        where session_id = #{sessionId} and user_id = #{userId}
+    </delete>
+</mapper>

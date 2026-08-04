@@ -1,6 +1,9 @@
 package com.lingXi.ai.domain.dto.tool;
 
+import lombok.Data;
+
 /** 只携带稳定错误码和安全消息的 Tool Gateway 异常。 */
+@Data
 public class AgentToolException extends RuntimeException {
     private final String code;
     private final int httpStatus;
@@ -13,7 +16,4 @@ public class AgentToolException extends RuntimeException {
         this.retryable = retryable;
     }
 
-    public String getCode() { return code; }
-    public int getHttpStatus() { return httpStatus; }
-    public boolean isRetryable() { return retryable; }
 }

@@ -1,8 +1,10 @@
 package com.lingXi.ai.domain.dto.tool;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Data;
 
 /** 工单统计工具参数。 */
+@Data
 public class TaskStatisticsArguments {
     private String start;
     private String end;
@@ -10,13 +12,4 @@ public class TaskStatisticsArguments {
     private Integer taskType;
     @JsonProperty("region_id")
     private Long regionId;
-
-    public String getStart() { return start; }
-    public void setStart(String start) { this.start = start; }
-    public String getEnd() { return end; }
-    public void setEnd(String end) { this.end = end; }
-    public Integer getTaskType() { return taskType; }
-    public void setTaskType(Integer taskType) { this.taskType = taskType; }
-    public Long getRegionId() { return regionId; }
-    public void setRegionId(Long regionId) { this.regionId = regionId; }
 }

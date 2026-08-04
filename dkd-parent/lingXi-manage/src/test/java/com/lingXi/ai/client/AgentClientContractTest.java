@@ -7,6 +7,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.ai.domain.dto.AgentUserContext;
+import com.lingXi.ai.domain.dto.AiImageOcrRequestDTO;
+import com.lingXi.ai.domain.dto.AiImageOcrResultDTO;
 import com.lingXi.ai.domain.dto.tool.AgentToolException;
 import com.lingXi.ai.service.AgentToolTokenService;
 import com.lingXi.common.core.domain.entity.SysRole;
@@ -60,6 +62,7 @@ class AgentClientContractTest {
     private final AtomicReference<String> deleteMethod = new AtomicReference<>();
     private final AtomicReference<String> deleteServiceKey = new AtomicReference<>();
     private final AtomicReference<String> questionsRequest = new AtomicReference<>();
+    private final AtomicReference<String> ocrRequest = new AtomicReference<>();
     private final AtomicReference<String> memoryRequest = new AtomicReference<>();
     private final AtomicReference<String> memoryMethod = new AtomicReference<>();
     private HttpServer server;
@@ -102,6 +105,12 @@ class AgentClientContractTest {
                     "{\"success\":true,\"data\":{\"questions\":[\"问题1\","
                             + "\"问题2\",\"问题3\"]}}");
         });
+        server.createContext("/ocr", exchange -> {
+            ocrRequest.set(readRequest(exchange));
+            send(exchange, 200,
+                    "{\"success\":true,\"data\":{\"text\":\"神通骨\","
+                            + "\"truncated\":false}}");
+        });
         server.createContext("/memory/list", exchange -> {
             memoryMethod.set(exchange.getRequestMethod());
             memoryRequest.set(readRequest(exchange));
@@ -131,6 +140,7 @@ class AgentClientContractTest {
         config.setChatStreamV2Url("/stream");
         config.setThreadDeleteUrl("/thread");
         config.setSmartQuestionsUrl("/questions");
+        config.setImageOcrUrl("/ocr");
         config.setMemoryListUrl("/memory/list");
         config.setMemoryPreferenceUrl("/memory/preference");
         config.setMemoryClearUrl("/memory/clear");
@@ -209,6 +219,55 @@ class AgentClientContractTest {
                         agentRequestId,
                         "session-trusted",
                         "lookup_device"));
+    }
+
+    @Test
+    void trustedAttachmentsAreSerializedForPythonAgent() throws Exception {
+        com.lingXi.ai.domain.dto.AiChatAttachmentAgentDTO image =
+                new com.lingXi.ai.domain.dto.AiChatAttachmentAgentDTO();
+        image.setAttachmentId("123e4567-e89b-42d3-a456-426614174000");
+        image.setName("screen.png");
+        image.setMimeType("image/png");
+        image.setSize(1024L);
+        image.setKind("image");
+        image.setImageUrl("https://oss.example.com/signed.png?token=short");
+        image.setExtractedText("封面标题：神通骨");
+        image.setTruncated(false);
+
+        client.chat(
+                "请看图",
+                "session-attachment",
+                AgentUserContext.minimal("42", "张三"),
+                java.util.List.of(image));
+
+        JsonNode request = objectMapper.readTree(invokeRequest.get());
+        JsonNode attachments = request.path("attachments");
+        assertTrue(attachments.isArray());
+        assertEquals(1, attachments.size());
+        assertEquals(image.getAttachmentId(), attachments.get(0).path("attachment_id").asText());
+        assertEquals(image.getImageUrl(), attachments.get(0).path("image_url").asText());
+        assertEquals("封面标题：神通骨",
+                attachments.get(0).path("extracted_text").asText());
+        assertEquals("image/png", attachments.get(0).path("mime_type").asText());
+        assertFalse(attachments.get(0).has("attachmentId"));
+    }
+
+    @Test
+    void imageOcrUsesPrivateSignedUrlAndReturnsBoundedText() throws Exception {
+        AiImageOcrRequestDTO request = new AiImageOcrRequestDTO();
+        request.setName("cover.png");
+        request.setMimeType("image/png");
+        request.setImageUrl("https://oss.example.com/private.png?signature=short");
+
+        AiImageOcrResultDTO result = client.recognizeImageText(request);
+
+        assertEquals("神通骨", result.getText());
+        assertFalse(Boolean.TRUE.equals(result.getTruncated()));
+        JsonNode payload = objectMapper.readTree(ocrRequest.get());
+        assertEquals("cover.png", payload.path("name").asText());
+        assertEquals("image/png", payload.path("mime_type").asText());
+        assertEquals(request.getImageUrl(), payload.path("image_url").asText());
+        assertEquals(3, payload.size());
     }
 
     @Test
