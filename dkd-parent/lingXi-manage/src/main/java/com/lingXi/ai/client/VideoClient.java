@@ -286,7 +286,9 @@ public class VideoClient {
             if (negativePrompt != null && !negativePrompt.isEmpty()) {
                 body.put("negative_prompt", negativePrompt);
             }
-            body.put("image_url", imageUrl);
+            if (imageUrl != null && !imageUrl.trim().isEmpty()) {
+                body.put("image_url", imageUrl.trim());
+            }
             if (characterReferenceImageUrls != null && !characterReferenceImageUrls.isEmpty()) {
                 tools.jackson.databind.node.ArrayNode characters =
                         body.putArray("character_reference_image_urls");

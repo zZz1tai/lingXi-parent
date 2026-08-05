@@ -194,6 +194,31 @@ class MediaContractTests(unittest.IsolatedAsyncioTestCase):
                 duration_ms=4000,
             )
 
+    async def test_happyhorse_allows_text_only_video_submission(self) -> None:
+        request = SubmitVideoRequest(
+            api_key="offline-key",
+            provider="happyhorse",
+            model="happyhorse-1.1-r2v",
+            base_url="https://workspace.cn-beijing.maas.aliyuncs.com",
+            prompt="云海上方的日出延时摄影，镜头缓慢前移",
+            resolution="720P",
+            ratio="16:9",
+            watermark=False,
+            duration_ms=5000,
+        )
+        client = _FakeAsyncClient(
+            _FakeResponse(payload={"output": {"task_id": "happyhorse-text-task-1"}})
+        )
+
+        result = await video.submit_video(request, response=Response(), client=client)
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            "云海上方的日出延时摄影，镜头缓慢前移",
+            client.json_body["input"]["prompt"],
+        )
+        self.assertNotIn("media", client.json_body["input"])
+
     async def test_happyhorse_sends_keyframe_characters_and_scene_as_ordered_media(self) -> None:
         request = SubmitVideoRequest(
             api_key="offline-key",

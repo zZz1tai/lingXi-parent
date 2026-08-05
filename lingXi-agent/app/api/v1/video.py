@@ -389,38 +389,40 @@ async def submit_video(
     input_data: dict[str, Any]
     parameters: dict[str, Any]
     if is_happyhorse:
-        media_urls = [request.image_url, *request.character_reference_image_urls]
+        media_urls: list[str] = []
+        reference_instructions: list[str] = []
+        if request.image_url:
+            media_urls.append(request.image_url)
+            reference_instructions.append(
+                "[Image 1]是当前分镜关键帧，用于约束主要构图、人物站位和镜头起始状态。"
+            )
+        for character_url in request.character_reference_image_urls:
+            media_urls.append(character_url)
+            reference_instructions.append(
+                f"[Image {len(media_urls)}]是当前分镜人物三视图，用于保持人物身份、服装和体态一致。"
+            )
         if request.scene_reference_image_url:
             media_urls.append(request.scene_reference_image_url)
-        if not 1 <= len(media_urls) <= 9:
+            reference_instructions.append(
+                f"[Image {len(media_urls)}]是场景参考图，用于保持环境、光线和美术风格一致。"
+            )
+        if len(media_urls) > 9:
             response.status_code = 400
             return SubmitVideoResponse(
                 success=False,
                 normalized_duration_ms=duration_ms,
-                error="HappyHorse requires between 1 and 9 reference images",
+                error="HappyHorse accepts at most 9 reference images",
                 status_code=400,
                 error_code="VIDEO_REFERENCE_COUNT_INVALID",
-            )
-        reference_instructions = [
-            "[Image 1]是当前分镜关键帧，用于约束主要构图、人物站位和镜头起始状态。"
-        ]
-        for index in range(len(request.character_reference_image_urls)):
-            reference_instructions.append(
-                f"[Image {index + 2}]是当前分镜人物三视图，用于保持人物身份、服装和体态一致。"
-            )
-        if request.scene_reference_image_url:
-            reference_instructions.append(
-                f"[Image {len(media_urls)}]是场景参考图，用于保持环境、光线和美术风格一致。"
             )
         prompt = "\n".join(reference_instructions + [request.prompt])
         if negative_prompt:
             prompt += f"\n生成时避免出现：{negative_prompt}"
-        input_data = {
-            "prompt": prompt,
-            "media": [
+        input_data = {"prompt": prompt}
+        if media_urls:
+            input_data["media"] = [
                 {"type": "reference_image", "url": url} for url in media_urls
-            ],
-        }
+            ]
         parameters = {
             "resolution": request.resolution,
             "ratio": request.ratio,
@@ -428,7 +430,9 @@ async def submit_video(
             "watermark": request.watermark,
         }
     else:
-        input_data = {"prompt": prompt, "img_url": request.image_url}
+        input_data = {"prompt": prompt}
+        if request.image_url:
+            input_data["img_url"] = request.image_url
         if negative_prompt:
             input_data["negative_prompt"] = negative_prompt
         parameters = {

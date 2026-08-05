@@ -222,12 +222,12 @@ export function listAiVideoTask(projectId) {
   })
 }
 
-/** 从 AI 对话页提交描述、时长和多张参考图。 */
+/** 从 AI 对话页提交描述、时长和可选参考图。 */
 export function submitQuickAiVideo({ prompt, durationMs, images }) {
   const data = new FormData()
   data.append('prompt', prompt)
   data.append('durationMs', String(durationMs))
-  images.forEach(image => data.append('images', image))
+  ;(images || []).forEach(image => data.append('images', image))
   return request({
     url: '/aivideo/asset/quick-video',
     method: 'post',

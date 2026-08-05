@@ -167,9 +167,9 @@ class SubmitVideoRequest(BaseModel):
             "limit immediately before submission."
         ),
     )
-    image_url: HttpUrlText = Field(
-        ...,
-        description="Public URL of the keyframe image",
+    image_url: Optional[HttpUrlText] = Field(
+        default=None,
+        description="Optional public URL of the keyframe image",
     )
     character_reference_image_urls: list[HttpUrlText] = Field(
         default_factory=list,

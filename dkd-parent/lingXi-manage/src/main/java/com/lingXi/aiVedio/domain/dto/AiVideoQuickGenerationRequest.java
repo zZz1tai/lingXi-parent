@@ -5,7 +5,6 @@ import org.springframework.web.multipart.MultipartFile;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -23,7 +22,6 @@ public class AiVideoQuickGenerationRequest
     @Max(value = 15000, message = "视频时长不能超过15秒")
     private Integer durationMs;
 
-    @NotEmpty(message = "请至少添加1张参考图片")
     @Size(max = 5, message = "最多添加5张参考图片")
     private List<MultipartFile> images;
 }

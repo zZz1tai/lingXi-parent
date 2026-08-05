@@ -26,7 +26,7 @@ public interface AiVideoGenerationService
      * 提交视频生成任务。
      *
      * @param video 视频资产
-     * @param keyframe 关键帧资产
+     * @param keyframe 可选关键帧资产；文生视频时为空
      * @param boundReferenceAssets 绑定的参考图资产列表
      * @param username 操作用户
      * @return 生成任务ID

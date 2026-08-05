@@ -20,6 +20,7 @@ import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.storage.AiVideoPublicAssetUrlResolver;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
+import com.lingXi.aiVedio.util.AiVideoReferenceImagePolicy;
 import com.lingXi.common.exception.ServiceException;
 
 /**
@@ -67,7 +68,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
      * 这样并发确认不会重复提交，外部请求失败时任务和草稿也能落为可重试状态。
      *
      * @param video 视频资产
-     * @param keyframe 关键帧资产
+     * @param keyframe 可选关键帧资产；文生视频时为空
      * @param boundReferenceAssets 绑定的参考图资产列表
      * @param username 操作用户
      * @return 生成任务ID
@@ -81,7 +82,9 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         {
             throw new ServiceException("视频时长必须大于 0 毫秒");
         }
-        final String referenceUrl = publicAssetUrlResolver.resolve(keyframe.getObjectKey());
+        validateReferenceImages(keyframe, boundReferenceAssets);
+        final String referenceUrl = keyframe == null
+                ? null : publicAssetUrlResolver.resolve(keyframe.getObjectKey());
         final VideoReferenceUrls referenceUrls = resolveReferenceUrls(boundReferenceAssets);
         final String taskRequestJson = buildTaskRequestJson(video, keyframe, username,
                 referenceUrl, referenceUrls, runtimeConfig.getVideoModel());
@@ -159,6 +162,30 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         }
         video.setDurationMs(normalizedDurationMs);
         return task.getTaskId();
+    }
+
+    /** 在产生外部任务费用前校验 HappyHorse 所有参考图的最低分辨率。 */
+    void validateReferenceImages(final AiVideoAsset keyframe,
+            final List<AiVideoAsset> boundReferenceAssets)
+    {
+        if (keyframe != null)
+        {
+            AiVideoReferenceImagePolicy.validateDimensions(
+                    keyframe.getWidth(), keyframe.getHeight(), "起始关键帧");
+        }
+        if (boundReferenceAssets == null)
+        {
+            return;
+        }
+        for (int index = 0; index < boundReferenceAssets.size(); index++)
+        {
+            AiVideoAsset reference = boundReferenceAssets.get(index);
+            if (reference != null)
+            {
+                AiVideoReferenceImagePolicy.validateDimensions(reference.getWidth(),
+                        reference.getHeight(), "第" + (index + 1) + "张参考图片");
+            }
+        }
     }
     
     /**
@@ -292,7 +319,10 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         request.put("provider", providerCode());
         request.put("model", videoModel);
         putLong(request, "videoAssetId", video.getAssetId());
-        putLong(request, "sourceAssetId", keyframe.getAssetId());
+        if (keyframe != null)
+        {
+            putLong(request, "sourceAssetId", keyframe.getAssetId());
+        }
         putLong(request, "projectId", video.getProjectId());
         putLong(request, "chapterId", video.getChapterId());
         putLong(request, "sceneId", video.getSceneId());
@@ -306,8 +336,12 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         {
             request.put("durationMs", video.getDurationMs().intValue());
         }
-        request.put("keyframeImageUrl", keyframeUrl);
-        request.put("referenceImageUrl", keyframeUrl);
+        request.put("generationMode", keyframe == null ? "TEXT_TO_VIDEO" : "IMAGE_TO_VIDEO");
+        if (keyframeUrl != null && !keyframeUrl.trim().isEmpty())
+        {
+            request.put("keyframeImageUrl", keyframeUrl);
+            request.put("referenceImageUrl", keyframeUrl);
+        }
         ArrayNode characters = request.putArray("characterReferenceImageUrls");
         for (String characterUrl : referenceUrls.getCharacterUrls()) characters.add(characterUrl);
         ArrayNode characterAssetIds = request.putArray("characterReferenceAssetIds");

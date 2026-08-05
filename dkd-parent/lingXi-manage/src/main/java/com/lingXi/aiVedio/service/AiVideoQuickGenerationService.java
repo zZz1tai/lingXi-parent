@@ -1,8 +1,11 @@
 package com.lingXi.aiVedio.service;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import javax.imageio.ImageIO;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.ObjectMapper;
@@ -18,13 +21,14 @@ import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage;
 import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage.StoredImage;
 import com.lingXi.aiVedio.storage.AiVideoPublicAssetUrlResolver;
+import com.lingXi.aiVedio.util.AiVideoReferenceImagePolicy;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.common.utils.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 
 /**
- * 把 AI 对话页的一组用户参考图转换为现有项目、资产和视频任务。
- * 第一张图片是起始关键帧，后续图片按上传顺序作为多图参考。
+ * 把 AI 对话页的文字描述和可选参考图转换为现有项目、资产和视频任务。
+ * 有图片时第一张是起始关键帧，后续图片按上传顺序作为多图参考；无图片时走文生视频。
  */
 @Service
 @RequiredArgsConstructor
@@ -41,7 +45,7 @@ public class AiVideoQuickGenerationService
     private final AiVideoPublicAssetUrlResolver publicAssetUrlResolver;
     private final ObjectMapper objectMapper;
 
-    /** 创建参考资产并提交视频供应商任务。 */
+    /** 创建可选参考资产并提交视频供应商任务。 */
     public AiVideoQuickGenerationResult submit(AiVideoQuickGenerationRequest request)
     {
         validateRequest(request);
@@ -49,14 +53,21 @@ public class AiVideoQuickGenerationService
         String username = SecurityUtils.getUsername();
         AiVideoProject project = createProject(prompt);
         List<String> storedPaths = new ArrayList<>();
+        List<MultipartFile> images = request.getImages();
+        if (images == null)
+        {
+            images = new ArrayList<>();
+        }
         List<AiVideoAsset> uploadedAssets;
+        AiVideoAsset keyframe;
         AiVideoAsset video;
 
         try
         {
-            uploadedAssets = prepareUploadedAssets(project.getProjectId(), request.getImages(),
+            uploadedAssets = prepareUploadedAssets(project.getProjectId(), images,
                     username, storedPaths);
-            video = createVideoDraft(project.getProjectId(), uploadedAssets.get(0), prompt,
+            keyframe = uploadedAssets.isEmpty() ? null : uploadedAssets.get(0);
+            video = createVideoDraft(project.getProjectId(), keyframe, prompt,
                     request.getDurationMs(), username);
         }
         catch (RuntimeException exception)
@@ -65,8 +76,8 @@ public class AiVideoQuickGenerationService
             throw exception;
         }
 
-        AiVideoAsset keyframe = uploadedAssets.get(0);
-        List<AiVideoAsset> references = uploadedAssets.subList(1, uploadedAssets.size());
+        List<AiVideoAsset> references = uploadedAssets.size() > 1
+                ? uploadedAssets.subList(1, uploadedAssets.size()) : new ArrayList<>();
         // 供应商提交可能已受理但本地未收到任务ID；进入该阶段后保留项目和资产供人工核对。
         try
         {
@@ -182,12 +193,12 @@ public class AiVideoQuickGenerationService
         for (int index = 0; index < images.size(); index++)
         {
             MultipartFile image = images.get(index);
-            validateImage(image, index);
+            byte[] imageBytes = validateImage(image, index);
             AiVideoAsset asset = createImageDraft(projectId, index, username);
             try
             {
                 StoredImage stored = assetStorage.storeUploadedImage(projectId, asset.getAssetId(),
-                        asset.getVersionNo(), asset.getAssetCode(), image.getBytes());
+                        asset.getVersionNo(), asset.getAssetCode(), imageBytes);
                 storedPaths.add(stored.getResourcePath());
                 completeUploadedAsset(asset, stored, username, index == 0);
                 AiVideoAsset completed = assetMapper.selectAiVideoAssetByAssetId(asset.getAssetId());
@@ -274,13 +285,20 @@ public class AiVideoQuickGenerationService
         video.setCanonicalFlag(1);
         video.setStatus("DRAFT");
         video.setVersionNo(1);
-        video.setSourceAssetId(keyframe.getAssetId());
+        if (keyframe != null)
+        {
+            video.setSourceAssetId(keyframe.getAssetId());
+        }
         video.setDurationMs(durationMs);
         video.setPromptText(prompt);
         ObjectNode metadata = objectMapper.createObjectNode();
         metadata.put("source", "CHAT_QUICK_VIDEO");
-        metadata.put("sourceBindingMode", "MANUAL");
-        metadata.put("sourceAssetId", keyframe.getAssetId());
+        metadata.put("generationMode", keyframe == null ? "TEXT_TO_VIDEO" : "IMAGE_TO_VIDEO");
+        metadata.put("sourceBindingMode", keyframe == null ? "NONE" : "MANUAL");
+        if (keyframe != null)
+        {
+            metadata.put("sourceAssetId", keyframe.getAssetId());
+        }
         metadata.put("durationMs", durationMs.intValue());
         video.setGenerationParamsJson(metadata.toString());
         video.setMetadataJson(metadata.toString());
@@ -316,14 +334,13 @@ public class AiVideoQuickGenerationService
         {
             throw new ServiceException("视频时长需在1到15秒之间");
         }
-        if (request.getImages() == null || request.getImages().isEmpty()
-                || request.getImages().size() > MAX_IMAGE_COUNT)
+        if (request.getImages() != null && request.getImages().size() > MAX_IMAGE_COUNT)
         {
-            throw new ServiceException("请添加1到5张参考图片");
+            throw new ServiceException("最多添加5张参考图片");
         }
     }
 
-    private void validateImage(MultipartFile image, int index)
+    byte[] validateImage(MultipartFile image, int index)
     {
         if (image == null || image.isEmpty())
         {
@@ -332,6 +349,23 @@ public class AiVideoQuickGenerationService
         if (image.getSize() > MAX_IMAGE_BYTES)
         {
             throw new ServiceException(safeFilename(image, index) + "：单张图片不能超过10MB");
+        }
+        String filename = safeFilename(image, index);
+        try
+        {
+            byte[] imageBytes = image.getBytes();
+            BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(imageBytes));
+            if (decoded == null)
+            {
+                throw new ServiceException(filename + "：无法读取图片内容，请选择有效的 PNG 或 JPG");
+            }
+            AiVideoReferenceImagePolicy.validateDimensions(
+                    decoded.getWidth(), decoded.getHeight(), filename);
+            return imageBytes;
+        }
+        catch (IOException exception)
+        {
+            throw new ServiceException(filename + "：无法读取图片内容，请重新选择");
         }
     }
 

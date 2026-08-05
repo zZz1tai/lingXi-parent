@@ -307,7 +307,7 @@
           <div class="input-wrapper">
             <!-- 主输入框 -->
             <div class="input-main">
-              <div v-if="pendingAttachments.length" class="pending-attachments">
+              <div v-if="!quickVideoModeActive && pendingAttachments.length" class="pending-attachments">
                 <div
                   v-for="attachment in pendingAttachments"
                   :key="attachment.attachmentId"
@@ -344,7 +344,12 @@
                 v-model="message"
                 type="textarea"
                 :autosize="{ minRows: 1, maxRows: 4 }"
-                :placeholder="enableDataAnalysis ? '请输入要分析的问题，将基于数据看板进行智能分析...' : '向灵犀助手提问...'"
+                :maxlength="quickVideoModeActive ? 2500 : undefined"
+                :show-word-limit="quickVideoModeActive"
+                :disabled="quickVideoModeActive && !!quickVideoTask"
+                :placeholder="quickVideoModeActive
+                  ? '描述你想生成的视频画面、镜头运动和氛围...'
+                  : (enableDataAnalysis ? '请输入要分析的问题，将基于数据看板进行智能分析...' : '向灵犀助手提问...')"
                 @keydown.enter="handleEnter"
                 class="message-input"
                 resize="none"
@@ -357,11 +362,140 @@
                 :accept="acceptedAttachmentTypes"
                 @change="handleAttachmentFiles"
               />
+
+              <div v-if="quickVideoModeActive" class="quick-video-inline">
+                <div class="quick-video-inline-header">
+                  <span class="quick-video-inline-title">
+                    <span class="quick-video-inline-icon">
+                      <el-icon><VideoCamera /></el-icon>
+                    </span>
+                    <span>
+                      <strong>AI 视频快创</strong>
+                      <small v-if="!quickVideoTask">当前聊天输入将作为视频画面描述</small>
+                      <small v-else>{{ quickVideoTaskEyebrow }} · 任务 {{ quickVideoTask.taskId }}</small>
+                    </span>
+                  </span>
+                  <el-button text size="small" :disabled="quickVideoSubmitting" @click="closeQuickVideoMode">
+                    退出视频模式
+                  </el-button>
+                </div>
+
+                <template v-if="!quickVideoTask">
+                  <div class="quick-video-inline-controls">
+                    <section class="quick-video-inline-block">
+                      <div class="quick-video-inline-label">
+                        <strong>视频时长</strong>
+                        <span>自动匹配可用档位</span>
+                      </div>
+                      <div class="duration-strip" role="radiogroup" aria-label="视频时长">
+                        <button
+                          v-for="duration in quickVideoDurations"
+                          :key="duration.value"
+                          type="button"
+                          role="radio"
+                          :class="{ active: quickVideoDurationMs === duration.value }"
+                          :aria-checked="quickVideoDurationMs === duration.value"
+                          @click="quickVideoDurationMs = duration.value"
+                        >
+                          <strong>{{ duration.seconds }}</strong>
+                          <small>秒</small>
+                          <span>{{ duration.hint }}</span>
+                        </button>
+                      </div>
+                    </section>
+
+                    <section class="quick-video-inline-block">
+                      <div class="quick-video-inline-label">
+                        <strong>参考画面（可选）</strong>
+                        <span>{{ quickVideoImages.length ? '首图作为起始帧 · 最多 5 张' : '不上传也可按文字描述生成' }}</span>
+                      </div>
+                      <input
+                        ref="quickVideoImageInput"
+                        class="quick-video-file-input"
+                        type="file"
+                        multiple
+                        accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+                        @change="handleQuickVideoImages"
+                      />
+                      <div class="reference-filmstrip">
+                        <article
+                          v-for="(image, index) in quickVideoImages"
+                          :key="image.id"
+                          class="reference-frame"
+                        >
+                          <img :src="image.previewUrl" :alt="image.name" />
+                          <span class="frame-index">{{ index === 0 ? '首帧' : `参考 ${index}` }}</span>
+                          <button
+                            type="button"
+                            class="remove-reference"
+                            :aria-label="`移除 ${image.name}`"
+                            @click="removeQuickVideoImage(image.id)"
+                          >
+                            <el-icon><Close /></el-icon>
+                          </button>
+                          <strong :title="image.name">{{ image.name }}</strong>
+                        </article>
+                        <button
+                          v-if="quickVideoImages.length < maxQuickVideoImages"
+                          type="button"
+                          class="add-reference-frame"
+                          @click="openQuickVideoImagePicker"
+                        >
+                          <span class="add-reference-icon"><el-icon><Picture /></el-icon></span>
+                          <strong>{{ quickVideoImages.length ? '继续添加' : '添加参考图' }}</strong>
+                          <small>PNG / JPG · ≥300×300 · 10MB</small>
+                        </button>
+                      </div>
+                    </section>
+                  </div>
+
+                  <div class="quick-video-cost-note">
+                    <el-icon><WarningFilled /></el-icon>
+                    <span>
+                      点击“生成视频”后会提交模型任务并产生费用；
+                      {{ quickVideoImages.length ? '第一张图片将作为视频起始帧。' : '未添加参考图，将按文字描述生成。' }}
+                    </span>
+                  </div>
+                </template>
+
+                <div v-else class="quick-video-task-panel" :class="`is-${quickVideoTaskTone}`">
+                  <div
+                    class="quick-video-progress"
+                    :style="{ '--quick-video-progress': `${quickVideoProgress * 3.6}deg` }"
+                    aria-hidden="true"
+                  >
+                    <span><strong>{{ quickVideoProgress }}</strong>%</span>
+                  </div>
+                  <div class="quick-video-task-copy">
+                    <span class="quick-video-task-eyebrow">{{ quickVideoTaskEyebrow }}</span>
+                    <h3>{{ quickVideoTaskTitle }}</h3>
+                    <p>{{ quickVideoTaskDescription }}</p>
+                    <small>{{ formatQuickVideoDuration(quickVideoTask.durationMs || quickVideoDurationMs) }}</small>
+                  </div>
+                  <video
+                    v-if="quickVideoTask.videoUrl"
+                    class="quick-video-result"
+                    :src="quickVideoTask.videoUrl"
+                    controls
+                    playsinline
+                    preload="metadata"
+                  />
+                  <el-button
+                    v-if="quickVideoCanStartAnother"
+                    class="quick-video-again"
+                    @click="resetQuickVideoComposer"
+                  >
+                    再生成一个
+                  </el-button>
+                </div>
+              </div>
+
               <div class="input-actions">
                 <!-- 模式切换按钮 -->
                 <el-button 
                   type="default" 
                   class="mode-btn"
+                  :disabled="quickVideoModeActive"
                   @click="toggleDataAnalysis"
                   :class="{ 'active-mode': enableDataAnalysis }"
                 >
@@ -374,7 +508,7 @@
                   type="default"
                   class="attachment-btn"
                   :loading="attachmentUploading"
-                  :disabled="loading || enableDataAnalysis || pendingAttachments.length >= maxAttachments"
+                  :disabled="loading || enableDataAnalysis || quickVideoModeActive || pendingAttachments.length >= maxAttachments"
                   :title="enableDataAnalysis ? '附件仅支持普通对话模式' : '上传图片或文档'"
                   @click="openAttachmentPicker"
                 >
@@ -387,16 +521,16 @@
                   v-hasPermi="['aivideo:project:edit']"
                   type="default"
                   class="video-btn"
-                  :class="{ 'active-mode': quickVideoDialogVisible }"
-                  title="使用画面描述和多张参考图生成视频"
-                  @click="openQuickVideoDialog"
+                  :class="{ 'active-mode': quickVideoModeActive }"
+                  :title="quickVideoModeActive ? '退出 AI 视频模式' : '使用当前聊天框生成视频'"
+                  @click="toggleQuickVideoMode"
                 >
                   <el-icon><VideoCamera /></el-icon>
                   <span>AI 视频</span>
                 </el-button>
                 
-                <el-dropdown @command="usePreset" trigger="click" placement="top-start" :disabled="!hasValidQuestions">
-                  <el-button type="default" class="preset-btn" :disabled="!hasValidQuestions">
+                <el-dropdown @command="usePreset" trigger="click" placement="top-start" :disabled="quickVideoModeActive || !hasValidQuestions">
+                  <el-button type="default" class="preset-btn" :disabled="quickVideoModeActive || !hasValidQuestions">
                     <el-icon><MagicStick /></el-icon>
                     <span>快捷提问</span>
                   </el-button>
@@ -416,9 +550,26 @@
                   </template>
                 </el-dropdown>
 
-                <span class="input-shortcut">Enter 发送 · Shift + Enter 换行</span>
+                <span class="input-shortcut">
+                  {{ quickVideoModeActive ? '描述画面后点击生成视频' : 'Enter 发送 · Shift + Enter 换行' }}
+                </span>
                 
-                <el-button 
+                <el-button
+                  v-if="quickVideoModeActive && !quickVideoTask"
+                  type="primary"
+                  :loading="quickVideoSubmitting"
+                  :disabled="!quickVideoReady"
+                  @click="submitQuickVideoTask"
+                  class="send-btn quick-video-submit"
+                >
+                  <template #icon>
+                    <el-icon><VideoCamera /></el-icon>
+                  </template>
+                  <span>生成视频</span>
+                </el-button>
+
+                <el-button
+                  v-else-if="!quickVideoModeActive"
                   type="primary" 
                   :loading="loading" 
                   :disabled="loading || attachmentUploading || (!message.trim() && !pendingAttachments.length)"
@@ -532,173 +683,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog
-      v-model="quickVideoDialogVisible"
-      width="min(680px, calc(100vw - 28px))"
-      class="quick-video-dialog"
-      :close-on-click-modal="!quickVideoSubmitting"
-      :close-on-press-escape="!quickVideoSubmitting"
-      @closed="handleQuickVideoDialogClosed"
-    >
-      <template #header>
-        <div class="quick-video-dialog-heading">
-          <span class="quick-video-dialog-icon">
-            <el-icon><VideoCamera /></el-icon>
-          </span>
-          <span>
-            <strong>AI 视频快创</strong>
-            <small>用一段描述和参考画面锁定镜头</small>
-          </span>
-        </div>
-      </template>
-
-      <div v-if="!quickVideoTask" class="quick-video-composer">
-        <section class="quick-video-section">
-          <div class="quick-video-label-row">
-            <label for="quick-video-prompt">画面描述</label>
-            <span>{{ quickVideoPrompt.length }}/2500</span>
-          </div>
-          <el-input
-            id="quick-video-prompt"
-            v-model="quickVideoPrompt"
-            type="textarea"
-            :rows="4"
-            maxlength="2500"
-            resize="none"
-            placeholder="例如：雨后的城市天台，女孩回头望向镜头，风吹动衣角，镜头缓慢推进，电影感光影"
-          />
-        </section>
-
-        <section class="quick-video-section">
-          <div class="quick-video-label-row">
-            <label>视频时长</label>
-            <span>生成模型会自动匹配最接近的可用档位</span>
-          </div>
-          <div class="duration-strip" role="radiogroup" aria-label="视频时长">
-            <button
-              v-for="duration in quickVideoDurations"
-              :key="duration.value"
-              type="button"
-              :class="{ active: quickVideoDurationMs === duration.value }"
-              :aria-pressed="quickVideoDurationMs === duration.value"
-              @click="quickVideoDurationMs = duration.value"
-            >
-              <strong>{{ duration.seconds }}</strong>
-              <small>秒</small>
-              <span>{{ duration.hint }}</span>
-            </button>
-          </div>
-        </section>
-
-        <section class="quick-video-section">
-          <div class="quick-video-label-row">
-            <label>参考画面</label>
-            <span>第 1 张作为起始帧 · 最多 5 张</span>
-          </div>
-          <input
-            ref="quickVideoImageInput"
-            class="quick-video-file-input"
-            type="file"
-            multiple
-            accept=".png,.jpg,.jpeg,image/png,image/jpeg"
-            @change="handleQuickVideoImages"
-          />
-          <div class="reference-filmstrip">
-            <article
-              v-for="(image, index) in quickVideoImages"
-              :key="image.id"
-              class="reference-frame"
-            >
-              <img :src="image.previewUrl" :alt="image.name" />
-              <span class="frame-index">{{ index === 0 ? '首帧' : `参考 ${index}` }}</span>
-              <button
-                type="button"
-                class="remove-reference"
-                :aria-label="`移除 ${image.name}`"
-                @click="removeQuickVideoImage(image.id)"
-              >
-                <el-icon><Close /></el-icon>
-              </button>
-              <strong :title="image.name">{{ image.name }}</strong>
-            </article>
-            <button
-              v-if="quickVideoImages.length < maxQuickVideoImages"
-              type="button"
-              class="add-reference-frame"
-              @click="openQuickVideoImagePicker"
-            >
-              <span class="add-reference-icon"><el-icon><Picture /></el-icon></span>
-              <strong>{{ quickVideoImages.length ? '继续添加' : '添加参考图' }}</strong>
-              <small>PNG / JPG · 单张 10MB</small>
-            </button>
-          </div>
-          <p class="quick-video-reference-note">
-            可分多次添加。建议首图使用清晰的主体构图，其余图片补充人物、服装、场景或美术风格。
-          </p>
-        </section>
-
-        <div class="quick-video-cost-note">
-          <el-icon><WarningFilled /></el-icon>
-          <span>点击生成后会提交模型任务并产生费用；任务提交期间请勿重复操作。</span>
-        </div>
-      </div>
-
-      <div v-else class="quick-video-task-panel" :class="`is-${quickVideoTaskTone}`">
-        <div
-          class="quick-video-progress"
-          :style="{ '--quick-video-progress': `${quickVideoProgress * 3.6}deg` }"
-          aria-hidden="true"
-        >
-          <span><strong>{{ quickVideoProgress }}</strong>%</span>
-        </div>
-        <div class="quick-video-task-copy">
-          <span class="quick-video-task-eyebrow">{{ quickVideoTaskEyebrow }}</span>
-          <h3>{{ quickVideoTaskTitle }}</h3>
-          <p>{{ quickVideoTaskDescription }}</p>
-          <small>任务 {{ quickVideoTask.taskId }} · {{ formatQuickVideoDuration(quickVideoTask.durationMs || quickVideoDurationMs) }}</small>
-        </div>
-        <video
-          v-if="quickVideoTask.videoUrl"
-          class="quick-video-result"
-          :src="quickVideoTask.videoUrl"
-          controls
-          playsinline
-          preload="metadata"
-        />
-        <a
-          v-if="quickVideoTask.videoUrl"
-          class="quick-video-open-result"
-          :href="quickVideoTask.videoUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          在新窗口查看视频
-        </a>
-      </div>
-
-      <template #footer>
-        <div class="quick-video-footer">
-          <el-button @click="quickVideoDialogVisible = false">关闭</el-button>
-          <el-button
-            v-if="quickVideoTask && quickVideoCanStartAnother"
-            @click="resetQuickVideoComposer"
-          >
-            再生成一个
-          </el-button>
-          <el-button
-            v-if="!quickVideoTask"
-            type="primary"
-            class="quick-video-submit"
-            :loading="quickVideoSubmitting"
-            :disabled="!quickVideoReady"
-            @click="submitQuickVideoTask"
-          >
-            <el-icon v-if="!quickVideoSubmitting"><VideoCamera /></el-icon>
-            生成视频
-          </el-button>
-        </div>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -765,6 +749,10 @@ import {
   createLatestSingleFlight,
   smartQuestionRequestKey
 } from '@/utils/latestSingleFlight';
+import {
+  getQuickVideoImageDimensionError,
+  readQuickVideoImageDimensions
+} from '@/utils/quickVideoImages';
 
 // 配置marked
 marked.setOptions({
@@ -805,8 +793,7 @@ const acceptedAttachmentTypes = [
   '.json', '.csv', '.log', '.java', '.py', '.js', '.ts', '.tsx', '.jsx',
   '.vue', '.xml', '.yml', '.yaml', '.sql', '.properties', '.sh', '.ps1'
 ].join(',');
-const quickVideoDialogVisible = ref(false);
-const quickVideoPrompt = ref('');
+const quickVideoModeActive = ref(false);
 const quickVideoDurationMs = ref(5000);
 const quickVideoImages = ref([]);
 const quickVideoImageInput = ref(null);
@@ -922,8 +909,8 @@ const actionDecisionText = action => ({
 
 const quickVideoReady = computed(() => (
   !quickVideoSubmitting.value
-  && quickVideoPrompt.value.trim().length > 0
-  && quickVideoImages.value.length > 0
+  && message.value.trim().length > 0
+  && message.value.trim().length <= 2500
 ));
 
 const quickVideoProgress = computed(() => {
@@ -937,13 +924,13 @@ const quickVideoTaskMeta = computed(() => ({
     tone: 'working',
     eyebrow: '任务已排队',
     title: '正在等待生成资源',
-    description: '参考画面已安全转存，后台即将开始生成。'
+    description: '画面描述与生成参数已提交，后台即将开始生成。'
   },
   WAITING_CALLBACK: {
     tone: 'working',
     eyebrow: '模型已受理',
     title: '视频正在生成',
-    description: '可以关闭窗口继续对话，重新打开后仍可查看本次进度。'
+    description: '可以收起视频模式继续对话，再次打开后仍可查看本次进度。'
   },
   RUNNING: {
     tone: 'working',
@@ -955,13 +942,13 @@ const quickVideoTaskMeta = computed(() => ({
     tone: 'success',
     eyebrow: '生成完成',
     title: '你的视频已经准备好',
-    description: '结果已转存，可直接播放或在新窗口查看。'
+    description: '结果已安全转存，可直接在当前聊天框内播放。'
   },
   FAILED: {
     tone: 'danger',
     eyebrow: '生成未完成',
     title: '这次视频生成失败',
-    description: cleanQuickVideoError(quickVideoTask.value?.errorMessage) || '请检查参考图和画面描述后再试一次。'
+    description: cleanQuickVideoError(quickVideoTask.value?.errorMessage) || '请检查画面描述、时长和可选参考图后再试一次。'
   },
   CANCELED: {
     tone: 'muted',
@@ -979,7 +966,7 @@ const quickVideoTaskMeta = computed(() => ({
   tone: 'working',
   eyebrow: '任务处理中',
   title: '正在准备视频',
-  description: '参考画面和生成参数正在交给后台处理。'
+  description: '画面描述和生成参数正在交给后台处理。'
 }));
 
 const quickVideoTaskTone = computed(() => quickVideoTaskMeta.value.tone);
@@ -1145,21 +1132,36 @@ const toggleDataAnalysis = () => {
   enableDataAnalysis.value = !enableDataAnalysis.value;
 };
 
-function openQuickVideoDialog() {
-  if (!quickVideoTask.value && !quickVideoPrompt.value.trim() && message.value.trim()) {
-    quickVideoPrompt.value = message.value.trim();
+function toggleQuickVideoMode() {
+  if (quickVideoModeActive.value) {
+    closeQuickVideoMode();
+    return;
   }
-  quickVideoDialogVisible.value = true;
+  if (pendingAttachments.value.length) {
+    ElMessage.warning('请先发送或移除普通聊天附件，再进入 AI 视频模式');
+    return;
+  }
+  enableDataAnalysis.value = false;
+  quickVideoModeActive.value = true;
   if (quickVideoTask.value && !quickVideoTerminalStatuses.has(quickVideoTask.value.status)) {
     startQuickVideoPolling();
   }
+  nextTick(() => {
+    document.querySelector('.message-input textarea')?.focus();
+  });
+}
+
+function closeQuickVideoMode() {
+  if (quickVideoSubmitting.value) return;
+  quickVideoModeActive.value = false;
+  stopQuickVideoPolling();
 }
 
 function openQuickVideoImagePicker() {
   quickVideoImageInput.value?.click();
 }
 
-function handleQuickVideoImages(event) {
+async function handleQuickVideoImages(event) {
   const selected = Array.from(event.target?.files || []);
   if (quickVideoImageInput.value) quickVideoImageInput.value.value = '';
   if (!selected.length) return;
@@ -1170,21 +1172,37 @@ function handleQuickVideoImages(event) {
 
   const existingSignatures = new Set(quickVideoImages.value.map(item => item.signature));
   const additions = [];
-  selected.slice(0, available).forEach(file => {
+  for (const file of selected.slice(0, available)) {
     const supported = ['image/png', 'image/jpeg'].includes(file.type)
       || /\.(png|jpe?g)$/i.test(file.name || '');
     if (!supported) {
       ElMessage.error(`${file.name || '图片'}：仅支持 PNG 或 JPG`);
-      return;
+      continue;
     }
     if (file.size <= 0 || file.size > maxQuickVideoImageBytes) {
       ElMessage.error(`${file.name || '图片'}：单张图片需小于10MB`);
-      return;
+      continue;
     }
     const signature = `${file.name}:${file.size}:${file.lastModified}`;
     if (existingSignatures.has(signature)) {
       ElMessage.info(`${file.name} 已添加`);
-      return;
+      continue;
+    }
+    let dimensions;
+    try {
+      dimensions = await readQuickVideoImageDimensions(file);
+    } catch {
+      ElMessage.error(`${file.name || '图片'}：无法读取图片尺寸，请重新选择 PNG 或 JPG`);
+      continue;
+    }
+    const dimensionError = getQuickVideoImageDimensionError(
+      dimensions.width,
+      dimensions.height,
+      file.name || '图片'
+    );
+    if (dimensionError) {
+      ElMessage.error(dimensionError);
+      continue;
     }
     existingSignatures.add(signature);
     additions.push({
@@ -1192,10 +1210,12 @@ function handleQuickVideoImages(event) {
       file,
       name: file.name,
       size: file.size,
+      width: dimensions.width,
+      height: dimensions.height,
       signature,
       previewUrl: URL.createObjectURL(file)
     });
-  });
+  }
   quickVideoImages.value = [...quickVideoImages.value, ...additions];
 }
 
@@ -1220,16 +1240,12 @@ function resetQuickVideoComposer() {
   clearQuickVideoImages();
 }
 
-function handleQuickVideoDialogClosed() {
-  stopQuickVideoPolling();
-}
-
 async function submitQuickVideoTask() {
   if (!quickVideoReady.value) return;
   quickVideoSubmitting.value = true;
   try {
     const response = await submitQuickAiVideo({
-      prompt: quickVideoPrompt.value.trim(),
+      prompt: message.value.trim(),
       durationMs: quickVideoDurationMs.value,
       images: quickVideoImages.value.map(item => item.file)
     });
@@ -1274,7 +1290,7 @@ function stopQuickVideoPolling() {
 async function pollQuickVideoTask(generation) {
   if (
     generation !== quickVideoPollGeneration
-    || !quickVideoDialogVisible.value
+    || !quickVideoModeActive.value
     || !quickVideoTask.value?.projectId
     || !quickVideoTask.value?.taskId
   ) return;
@@ -1304,7 +1320,7 @@ async function pollQuickVideoTask(generation) {
   if (
     shouldContinue
     && generation === quickVideoPollGeneration
-    && quickVideoDialogVisible.value
+    && quickVideoModeActive.value
   ) {
     quickVideoPollTimer = setTimeout(() => pollQuickVideoTask(generation), 4000);
   }
@@ -1509,6 +1525,7 @@ const handleEnter = (event) => {
   // 中文输入法组词确认的回车不应触发发送
   if (event.isComposing || event.keyCode === 229) return;
   if (event.key === 'Enter' && !event.shiftKey) {
+    if (quickVideoModeActive.value) return;
     event.preventDefault();
     sendMessage();
   }
@@ -3171,13 +3188,31 @@ onBeforeUnmount(() => {
   }
 }
 
-.quick-video-dialog-heading {
+.quick-video-inline {
+  margin: 0 8px 4px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--seed-primary) 4%, var(--lx-surface));
+  border: 1px solid color-mix(in srgb, var(--seed-primary) 16%, var(--lx-border-soft));
+  border-radius: 14px;
+}
+
+.quick-video-inline-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.quick-video-inline-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
 
   > span:last-child {
     display: flex;
+    min-width: 0;
     flex-direction: column;
     gap: 2px;
   }
@@ -3193,39 +3228,39 @@ onBeforeUnmount(() => {
   }
 }
 
-.quick-video-dialog-icon {
+.quick-video-inline-icon {
   display: grid;
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   flex: none;
   place-items: center;
   color: white;
   background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
-  border-radius: 13px;
-  box-shadow: 0 7px 18px rgba(15, 118, 110, 0.24);
-  font-size: 20px;
+  border-radius: 10px;
+  box-shadow: 0 5px 14px rgba(15, 118, 110, 0.22);
+  font-size: 17px;
 }
 
-.quick-video-composer {
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
+.quick-video-inline-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.78fr) minmax(300px, 1.35fr);
+  gap: 12px;
 }
 
-.quick-video-section {
+.quick-video-inline-block {
   min-width: 0;
 }
 
-.quick-video-label-row {
+.quick-video-inline-label {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 9px;
+  gap: 8px;
+  margin-bottom: 7px;
 
-  label {
+  strong {
     color: var(--lx-text);
-    font-size: 13.5px;
+    font-size: 12px;
     font-weight: 700;
   }
 
@@ -3246,8 +3281,8 @@ onBeforeUnmount(() => {
     grid-template-columns: auto auto 1fr;
     align-items: baseline;
     gap: 3px;
-    min-height: 58px;
-    padding: 10px 13px;
+    min-height: 48px;
+    padding: 8px 10px;
     color: var(--lx-muted);
     background: var(--lx-canvas);
     border: 1px solid var(--lx-border-soft);
@@ -3275,7 +3310,7 @@ onBeforeUnmount(() => {
     }
 
     strong {
-      font-size: 22px;
+      font-size: 18px;
       font-variant-numeric: tabular-nums;
     }
 
@@ -3297,11 +3332,12 @@ onBeforeUnmount(() => {
 
 .reference-filmstrip {
   position: relative;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  padding: 22px 12px;
-  overflow: hidden;
+  display: flex;
+  gap: 8px;
+  min-height: 90px;
+  padding: 18px 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
   background:
     radial-gradient(circle at 18% 15%, rgba(45, 212, 191, 0.13), transparent 28%),
     linear-gradient(135deg, #153b46, #102a43);
@@ -3332,8 +3368,9 @@ onBeforeUnmount(() => {
 .add-reference-frame {
   position: relative;
   z-index: 1;
-  min-width: 0;
-  min-height: 118px;
+  width: 110px;
+  min-width: 110px;
+  min-height: 86px;
   margin: 0;
   padding: 6px;
   border-radius: 10px;
@@ -3433,18 +3470,12 @@ onBeforeUnmount(() => {
   font-size: 17px;
 }
 
-.quick-video-reference-note {
-  margin: 8px 2px 0;
-  color: var(--lx-muted);
-  font-size: 11px;
-  line-height: 1.55;
-}
-
 .quick-video-cost-note {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 10px 12px;
+  margin-top: 10px;
+  padding: 8px 10px;
   color: #8a5a16;
   background: #fff8e6;
   border: 1px solid #f5ddac;
@@ -3460,11 +3491,10 @@ onBeforeUnmount(() => {
 
 .quick-video-task-panel {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 66px minmax(0, 1fr);
+  gap: 14px;
   align-items: center;
-  min-height: 260px;
-  padding: 28px;
+  padding: 14px;
   background: var(--lx-canvas);
   border: 1px solid var(--lx-border-soft);
   border-radius: 18px;
@@ -3476,8 +3506,8 @@ onBeforeUnmount(() => {
 
 .quick-video-progress {
   display: grid;
-  width: 88px;
-  height: 88px;
+  width: 62px;
+  height: 62px;
   place-items: center;
   background: conic-gradient(
     var(--seed-primary) var(--quick-video-progress),
@@ -3488,8 +3518,8 @@ onBeforeUnmount(() => {
 
   &::before {
     grid-area: 1 / 1;
-    width: 68px;
-    height: 68px;
+    width: 48px;
+    height: 48px;
     background: var(--lx-surface);
     border-radius: 50%;
     content: '';
@@ -3501,7 +3531,7 @@ onBeforeUnmount(() => {
     font-size: 11px;
     font-variant-numeric: tabular-nums;
 
-    strong { font-size: 22px; }
+    strong { font-size: 17px; }
   }
 }
 
@@ -3509,16 +3539,16 @@ onBeforeUnmount(() => {
   min-width: 0;
 
   h3 {
-    margin: 4px 0 7px;
+    margin: 3px 0 5px;
     color: var(--lx-navy);
-    font-size: 19px;
+    font-size: 16px;
   }
 
   p {
-    margin: 0 0 10px;
+    margin: 0 0 7px;
     color: var(--lx-muted);
-    font-size: 13px;
-    line-height: 1.6;
+    font-size: 12px;
+    line-height: 1.5;
   }
 
   small {
@@ -3538,30 +3568,17 @@ onBeforeUnmount(() => {
 .quick-video-result {
   grid-column: 1 / -1;
   width: 100%;
-  max-height: 360px;
-  margin-top: 8px;
+  max-height: 280px;
+  margin-top: 4px;
   background: #081f2a;
   border-radius: 14px;
   object-fit: contain;
   box-shadow: 0 14px 32px rgba(3, 19, 29, 0.20);
 }
 
-.quick-video-open-result {
+.quick-video-again {
   grid-column: 1 / -1;
   justify-self: end;
-  color: var(--lx-primary);
-  font-size: 12px;
-  font-weight: 700;
-  text-decoration: none;
-
-  &:hover { text-decoration: underline; }
-}
-
-.quick-video-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  width: 100%;
 }
 
 .quick-video-submit {
@@ -3690,33 +3707,35 @@ onBeforeUnmount(() => {
     }
   }
 
-  .duration-strip,
-  .reference-filmstrip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .quick-video-inline {
+    margin-right: 4px;
+    margin-left: 4px;
+    padding: 10px;
   }
 
-  .quick-video-label-row {
+  .quick-video-inline-header {
     align-items: flex-start;
-    flex-direction: column;
-    gap: 3px;
+  }
 
-    span { text-align: left; }
+  .quick-video-inline-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .duration-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .quick-video-task-panel {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    padding: 22px 16px;
-    text-align: center;
+    grid-template-columns: 54px minmax(0, 1fr);
+    padding: 12px;
   }
 
-  .quick-video-result,
-  .quick-video-open-result {
+  .quick-video-result {
     grid-column: 1;
   }
 
-  .quick-video-open-result {
-    justify-self: center;
+  .quick-video-again {
+    justify-self: stretch;
   }
 }
 </style>

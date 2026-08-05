@@ -1,10 +1,13 @@
 package com.lingXi.ai.domain.vo;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.web.multipart.MultipartFile;
 
+import com.lingXi.aiVedio.domain.dto.AiVideoQuickGenerationRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
+import java.util.Collections;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -71,6 +74,17 @@ class AiRequestValidationTest {
         AiChatAttachmentUploadVO upload = new AiChatAttachmentUploadVO();
         upload.setSessionId("session-upload");
         assertViolation(validator.validate(upload), "file");
+    }
+
+    @Test
+    void quickVideoRequestAllowsNoReferenceImagesAndLimitsOptionalImages() {
+        AiVideoQuickGenerationRequest request = new AiVideoQuickGenerationRequest();
+        request.setPrompt("云海上方的日出延时摄影，镜头缓慢前移");
+        request.setDurationMs(Integer.valueOf(5000));
+        assertTrue(validator.validate(request).isEmpty());
+
+        request.setImages(Collections.<MultipartFile>nCopies(6, null));
+        assertViolation(validator.validate(request), "images");
     }
 
     private static void assertViolation(
