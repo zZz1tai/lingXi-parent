@@ -39,14 +39,6 @@
         </div>
         <div class="msg-bubble" v-html="msg.role === 'assistant' ? renderMd(msg.content) : msg.content"></div>
       </div>
-
-      <!-- 加载态 -->
-      <div v-if="streaming" class="chat-msg assistant">
-        <div class="msg-avatar"><img src="/favicon.ico" alt="AI" /></div>
-        <div class="msg-bubble typing">
-          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        </div>
-      </div>
     </div>
 
     <!-- 快捷建议 -->
@@ -94,7 +86,8 @@
 import { ref, nextTick, onMounted, watch } from 'vue';
 import { RefreshRight, ArrowRight, Promotion, ChatDotRound } from '@element-plus/icons-vue';
 import { marked } from 'marked';
-import { streamChatWithQwen } from '@/api/ai';
+import { createSession, streamChatWithQwen } from '@/api/ai';
+import useUserStore from '@/store/modules/user';
 
 const props = defineProps({
   // 外部传入的上下文（如当前设备、点位信息）
@@ -121,6 +114,7 @@ const streaming = ref(false);
 const messagesRef = ref(null);
 const sessionId = ref('');
 const userInitial = ref('管');
+const userStore = useUserStore();
 
 const suggestions = ref([
   '查看今日设备告警',
@@ -157,6 +151,16 @@ const scrollToBottom = () => {
   });
 };
 
+// 复用后端会话机制：首次发送前创建会话，之后沿用同一 sessionId
+const ensureSession = async () => {
+  if (sessionId.value) return sessionId.value;
+  const res = await createSession(userStore.id);
+  const created = res?.data || {};
+  if (!created.sessionId) throw new Error('会话创建失败，请稍后重试');
+  sessionId.value = created.sessionId;
+  return sessionId.value;
+};
+
 // 发送消息
 const handleSend = async () => {
   const text = inputText.value.trim();
@@ -181,11 +185,12 @@ const handleSend = async () => {
   messages.value.push(assistantMsg);
 
   try {
+    const sid = await ensureSession();
     await streamChatWithQwen(
       text,
-      sessionId.value || undefined,
-      undefined,
-      undefined,
+      sid,
+      userStore.id,
+      userStore.name,
       {
         onEvent(evt) {
           if (evt.type === 'token' && evt.content) {
@@ -393,24 +398,6 @@ onMounted(() => {
 }
 
 // 打字动画
-.typing {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 14px 18px;
-
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--lx-muted);
-    animation: typing-bounce 1.2s infinite;
-
-    &:nth-child(2) { animation-delay: 0.2s; }
-    &:nth-child(3) { animation-delay: 0.4s; }
-  }
-}
-
 @keyframes typing-bounce {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-4px); opacity: 1; }
@@ -483,13 +470,6 @@ onMounted(() => {
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.06em;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .typing .dot {
-    animation: none;
-    opacity: 0.6;
   }
 }
 </style>

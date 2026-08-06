@@ -56,4 +56,16 @@ public class SystemSecurityConfig
 
     /** 是否已配置 Agent 服务 API Key */
     private Boolean agentServiceApiKeyConfigured;
+
+    // ===== 联网搜索 =====
+
+    /** Tavily Search API Key */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    private String searchTavilyApiKey;
+
+    /** Tavily Search API Key 掩码 */
+    private String searchTavilyApiKeyMasked;
+
+    /** 是否已配置 Tavily Search API Key */
+    private Boolean searchTavilyApiKeyConfigured;
 }

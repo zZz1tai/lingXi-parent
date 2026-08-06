@@ -115,9 +115,21 @@ function Import-PersistedAgentEnvironment {
     }
 }
 
-function Initialize-AgentServiceKey {
+function Import-JavaDatabaseCredentials {
     param([Parameter(Mandatory = $true)][string]$EnvFile)
 
+    foreach ($name in @('DB_PASSWORD', 'REDIS_PASSWORD', 'DRUID_PASSWORD', 'RUOYI_PROFILE', 'TOKEN_SECRET')) {
+        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name, 'Process'))) {
+            $persisted = Get-DotEnvValue -Path $EnvFile -Name $name
+            if (-not [string]::IsNullOrWhiteSpace($persisted)) {
+                [Environment]::SetEnvironmentVariable($name, $persisted, 'Process')
+            }
+        }
+    }
+}
+
+function Initialize-AgentServiceKey {
+    param([Parameter(Mandatory = $true)][string]$EnvFile)
     $processCanonical = if ($env:AGENT_SERVICE_API_KEY) {
         $env:AGENT_SERVICE_API_KEY.Trim()
     } else { $null }
@@ -333,6 +345,7 @@ try {
     $WindowsTerminalCommand = Resolve-WindowsTerminalCommand
     Import-PersistedAgentEnvironment
     Initialize-AgentServiceKey -EnvFile $AgentEnvFile
+    Import-JavaDatabaseCredentials -EnvFile $AgentEnvFile
 
     $javaPortText = if ($env:LINGXI_JAVA_PORT) {
         $env:LINGXI_JAVA_PORT.Trim()

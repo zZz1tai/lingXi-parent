@@ -51,10 +51,12 @@ def _tool_state(name: str, arguments: dict[str, object]) -> dict[str, object]:
 class _FakeTavilyClient:
     last_search_kwargs: ClassVar[dict[str, object]] = {}
     last_http_client: ClassVar[object | None] = None
+    last_api_key: ClassVar[object | None] = None
 
     def __init__(self, **_kwargs: object) -> None:
         self.closed = False
         type(self).last_http_client = _kwargs.get("client")
+        type(self).last_api_key = _kwargs.get("api_key")
 
     async def search(self, **_kwargs: object) -> dict[str, object]:
         type(self).last_search_kwargs = dict(_kwargs)
@@ -74,19 +76,14 @@ class _FakeTavilyClient:
 
 class ToolRuntimeInjectionTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.tavily_key_patch = patch(
-            "app.agents.tools.web_search.settings.tavily_api_key", "test-key"
-        )
         self.tavily_trust_env_patch = patch(
             "app.services.tavily_client.settings.tavily_trust_env", False
         )
         self.tavily_proxy_patch = patch(
             "app.services.tavily_client.settings.tavily_https_proxy", SecretStr("")
         )
-        self.tavily_key_patch.start()
         self.tavily_trust_env_patch.start()
         self.tavily_proxy_patch.start()
-        self.addCleanup(self.tavily_key_patch.stop)
         self.addCleanup(self.tavily_trust_env_patch.stop)
         self.addCleanup(self.tavily_proxy_patch.stop)
 
@@ -105,7 +102,10 @@ class ToolRuntimeInjectionTests(unittest.IsolatedAsyncioTestCase):
                         "time_range": "day",
                     },
                 ),
-                context=AgentContext(user_id="42"),
+                context=AgentContext(
+                    user_id="42",
+                    tavily_api_key=SecretStr("runtime-injected-test-key"),
+                ),
                 stream_mode=["custom", "updates"],
             ):
                 if mode == "custom":
@@ -130,6 +130,22 @@ class ToolRuntimeInjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(http_client)
         self.assertFalse(getattr(http_client, "_trust_env"))
         self.assertTrue(getattr(http_client, "is_closed"))
+        self.assertEqual(_FakeTavilyClient.last_api_key, "runtime-injected-test-key")
+
+    async def test_web_search_fails_closed_without_runtime_key(self) -> None:
+        tool = create_tavily_search_tool()
+
+        with patch("tavily.AsyncTavilyClient", _FakeTavilyClient):
+            with self.assertRaises(Exception) as captured:
+                await _tool_graph(tool).ainvoke(
+                    _tool_state(
+                        "web_search",
+                        {"query": "不会触达外部网络", "topic": "general"},
+                    ),
+                    context=AgentContext(user_id="42"),
+                )
+
+        self.assertIn("Tavily", str(captured.exception))
 
     async def test_business_tool_runtime_survives_explicit_input_schema(self) -> None:
         result = ToolCallResult(

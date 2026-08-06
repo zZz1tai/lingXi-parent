@@ -48,6 +48,13 @@ class LLMConfig(StrictRequestModel):
     model: str = Field(..., min_length=1, max_length=128)
     base_url: str | None = Field(default=None, min_length=8, max_length=2048)
     timeout_seconds: int | None = Field(default=None, ge=1, le=1800)
+    tavily_api_key: SecretStr | None = Field(
+        default=None,
+        min_length=8,
+        max_length=256,
+        repr=False,
+        description="Tavily Search API key managed by the Java security config page",
+    )
 
     @field_validator("api_key", "model")
     @classmethod

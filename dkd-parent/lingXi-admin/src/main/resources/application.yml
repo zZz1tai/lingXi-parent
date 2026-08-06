@@ -5,9 +5,9 @@ ruoyi:
   # 版本
   version: 1.0.0
   # 版权年份
-  copyrightYear: 2025
+  copyrightYear: 2026
   # 文件路径
-  profile: D:/code/lingXi/uploadPath
+  profile: ${RUOYI_PROFILE:./uploadPath}
   # 获取ip地址开关
   addressEnabled: false
   # 验证码类型 math 数字计算 char 字符验证
@@ -73,7 +73,7 @@ spring:
       # 数据库索引
       database: 0
       # 密码
-      password: 123456
+      password: ${REDIS_PASSWORD:}
       # 连接超时时间
       timeout: 10s
       lettuce:

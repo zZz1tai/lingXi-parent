@@ -65,10 +65,12 @@ def _normalized_results(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def create_tavily_search_tool() -> BaseTool:
-    """创建一个带有自定义进度流的超时限制Tavily工具。"""
+    """创建一个带有自定义进度流的超时限制Tavily工具。
 
-    if not settings.tavily_api_key:
-        raise ConfigurationError("TAVILY_API_KEY is not configured")
+    工具注册时不校验密钥：Tavily API Key 由 Java 安全配置页面管理，
+    每次请求通过 llm_config.tavily_api_key 注入到运行时上下文，
+    并在工具调用边界执行 fail-closed 校验。
+    """
 
     @tool(
         "web_search",
@@ -87,10 +89,20 @@ def create_tavily_search_tool() -> BaseTool:
         topic: Literal["general", "news", "finance"] = "general",
         time_range: Literal["day", "week", "month", "year"] | None = None,
     ) -> tuple[str, dict[str, Any]]:
+        api_key = (
+            runtime.context.tavily_api_key.get_secret_value()
+            if runtime.context.tavily_api_key is not None
+            else ""
+        )
+        if not api_key.strip():
+            raise ConfigurationError(
+                "Tavily API key is not configured; set it on the Java security config page"
+            )
+
         runtime.stream_writer(
             {"type": "tool_progress", "tool": "web_search", "status": "started"}
         )
-        async with tavily_client_lifespan() as client:
+        async with tavily_client_lifespan(api_key=api_key) as client:
             async with asyncio.timeout(settings.tool_timeout):
                 payload = await client.search(
                     query=query,
@@ -136,11 +148,7 @@ def create_tavily_search_tool() -> BaseTool:
 
 
 def get_default_tools() -> list[BaseTool]:
-    """返回配置的工具，当搜索禁用时明确降级。"""
-
-    if not settings.tavily_api_key:
-        logger.warning("TAVILY_API_KEY is not configured; search tool disabled")
-        return []
+    """返回配置的搜索工具；密钥在每次请求的运行时边界校验。"""
 
     try:
         search_tool = create_tavily_search_tool()

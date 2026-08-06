@@ -2865,3 +2865,7 @@ WHERE NOT EXISTS (SELECT 1 FROM sys_config WHERE config_key = 'security.oss.base
 INSERT INTO sys_config (config_name, config_key, config_value, config_type, create_by, create_time, remark)
 SELECT 'Agent服务-API Key', 'security.agent.serviceApiKey', '', 'Y', 'admin', NOW(), '系统安全配置页面维护'
 WHERE NOT EXISTS (SELECT 1 FROM sys_config WHERE config_key = 'security.agent.serviceApiKey');
+
+INSERT INTO sys_config (config_name, config_key, config_value, config_type, create_by, create_time, remark)
+SELECT '联网搜索-Tavily API Key', 'security.search.tavilyApiKey', '', 'Y', 'admin', NOW(), '系统安全配置页面维护'
+WHERE NOT EXISTS (SELECT 1 FROM sys_config WHERE config_key = 'security.search.tavilyApiKey');

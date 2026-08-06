@@ -28,10 +28,12 @@ public class SystemSecurityConfigService
     private static final String KEY_OSS_DOMAIN = "security.oss.domain";
     private static final String KEY_OSS_BASE_PATH = "security.oss.basePath";
     private static final String KEY_AGENT_SERVICE_API_KEY = "security.agent.serviceApiKey";
+    private static final String KEY_SEARCH_TAVILY_API_KEY = "security.search.tavilyApiKey";
 
     /** 所有敏感键集合，用于在 SysConfigController 中保护这些配置不被通用接口修改 */
     public static final Set<String> SENSITIVE_KEYS = new HashSet<>(Arrays.asList(
-            KEY_OSS_ACCESS_KEY, KEY_OSS_SECRET_KEY, KEY_AGENT_SERVICE_API_KEY));
+            KEY_OSS_ACCESS_KEY, KEY_OSS_SECRET_KEY, KEY_AGENT_SERVICE_API_KEY,
+            KEY_SEARCH_TAVILY_API_KEY));
 
     private static final Set<String> VALID_OSS_ENDPOINTS = new HashSet<>(Arrays.asList(
             "oss-cn-hangzhou.aliyuncs.com",
@@ -123,6 +125,13 @@ public class SystemSecurityConfigService
         String agentApiKey = normalizeSecretKey(input.getAgentServiceApiKey(), "Agent API Key", 0, 256);
         // Agent API Key 允许为空（通过环境变量提供）
 
+        // Tavily Search API Key
+        String tavilyApiKey = normalizeSecretKey(input.getSearchTavilyApiKey(), "Tavily API Key", 8, 256);
+        if (tavilyApiKey == null && StringUtils.isEmpty(read(KEY_SEARCH_TAVILY_API_KEY)))
+        {
+            throw new ServiceException("请填写 Tavily API Key");
+        }
+
         // 持久化
         upsert(KEY_OSS_ACCESS_KEY, "阿里云OSS-AccessKey", ossAccessKey != null ? ossAccessKey : storedOssAccessKey, username);
         upsert(KEY_OSS_SECRET_KEY, "阿里云OSS-SecretKey", ossSecretKey != null ? ossSecretKey : storedOssSecretKey, username);
@@ -134,6 +143,8 @@ public class SystemSecurityConfigService
         {
             upsert(KEY_AGENT_SERVICE_API_KEY, "Agent服务-API Key", agentApiKey, username);
         }
+        upsert(KEY_SEARCH_TAVILY_API_KEY, "联网搜索-Tavily API Key",
+                tavilyApiKey != null ? tavilyApiKey : read(KEY_SEARCH_TAVILY_API_KEY), username);
 
         // 配置持久化后热刷新存储平台（若 OSS 已配置完整则立即生效）
         ossStoragePlatformBinder.bind();
@@ -168,6 +179,12 @@ public class SystemSecurityConfigService
         config.setAgentServiceApiKeyConfigured(StringUtils.isNotEmpty(agentApiKey));
         if (includeSecret) config.setAgentServiceApiKey(agentApiKey);
         config.setAgentServiceApiKeyMasked(maskSecret(agentApiKey));
+
+        // 联网搜索
+        String tavilyApiKey = read(KEY_SEARCH_TAVILY_API_KEY);
+        config.setSearchTavilyApiKeyConfigured(StringUtils.isNotEmpty(tavilyApiKey));
+        if (includeSecret) config.setSearchTavilyApiKey(tavilyApiKey);
+        config.setSearchTavilyApiKeyMasked(maskSecret(tavilyApiKey));
 
         return config;
     }

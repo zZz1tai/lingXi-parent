@@ -14,10 +14,19 @@ if TYPE_CHECKING:
 
 
 @asynccontextmanager
-async def tavily_client_lifespan() -> AsyncIterator["AsyncTavilyClient"]:
-    """创建不受桌面系统代理意外影响的短生命周期 Tavily 客户端。"""
+async def tavily_client_lifespan(
+    api_key: str | None = None,
+) -> AsyncIterator["AsyncTavilyClient"]:
+    """������������ϵͳ��������Ӱ��Ķ��������� Tavily �ͻ��ˡ�"""
 
     from tavily import AsyncTavilyClient
+
+    resolved_key = (api_key or "").strip() or settings.tavily_api_key.strip()
+    if not resolved_key:
+        raise ValueError(
+            "Tavily API key is not configured; set it on the Java security "
+            "config page or via TAVILY_API_KEY"
+        )
 
     proxy = settings.tavily_https_proxy_value or None
     client_kwargs: dict[str, object] = {
@@ -30,6 +39,6 @@ async def tavily_client_lifespan() -> AsyncIterator["AsyncTavilyClient"]:
 
     async with httpx.AsyncClient(**client_kwargs) as http_client:
         yield AsyncTavilyClient(
-            api_key=settings.tavily_api_key,
+            api_key=resolved_key,
             client=http_client,
         )

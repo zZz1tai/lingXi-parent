@@ -155,6 +155,48 @@
             </div>
           </el-form-item>
         </section>
+
+        <!-- 联网搜索 -->
+        <section class="workspace-panel">
+          <div class="panel-heading">
+            <div class="heading-icon search-icon"><Search /></div>
+            <div>
+              <p class="section-kicker">WEB SEARCH</p>
+              <h2>联网搜索 API Key</h2>
+              <p>Agent 联网搜索工具使用的 Tavily API Key。每次对话请求时由后端注入，未配置时联网搜索不可用。</p>
+            </div>
+          </div>
+
+          <el-form-item label="Tavily API Key" prop="searchTavilyApiKey">
+            <div class="secret-field">
+              <el-input
+                v-if="tavilyApiKeyEditing"
+                ref="tavilyApiKeyInputRef"
+                v-model="form.searchTavilyApiKey"
+                type="password"
+                show-password
+                clearable
+                autocomplete="new-password"
+                maxlength="256"
+                size="large"
+                placeholder="粘贴新的 Tavily API Key"
+              />
+              <el-input
+                v-else
+                :model-value="form.searchTavilyApiKeyMasked"
+                readonly
+                size="large"
+                aria-label="已保存的 Tavily API Key 掩码"
+              />
+              <el-button v-if="form.searchTavilyApiKeyConfigured && !tavilyApiKeyEditing" size="large" @click="startTavilyApiKeyEdit">
+                更换
+              </el-button>
+              <el-button v-if="form.searchTavilyApiKeyConfigured && tavilyApiKeyEditing" size="large" @click="cancelTavilyApiKeyEdit">
+                取消
+              </el-button>
+            </div>
+          </el-form-item>
+        </section>
       </el-form>
 
       <footer class="action-bar">
@@ -172,7 +214,7 @@
 </template>
 
 <script setup name="SystemSecurityConfig">
-import { ArrowLeft, Check, Connection, Lock, Picture, Refresh, Upload } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, Connection, Lock, Picture, Refresh, Search, Upload } from '@element-plus/icons-vue'
 import { getSystemSecurityConfig, updateSystemSecurityConfig } from '@/api/system/securityConfig'
 
 const { proxy } = getCurrentInstance()
@@ -188,6 +230,8 @@ const ossSecretKeyEditing = ref(true)
 const ossSecretKeyInputRef = ref()
 const agentApiKeyEditing = ref(true)
 const agentApiKeyInputRef = ref()
+const tavilyApiKeyEditing = ref(true)
+const tavilyApiKeyInputRef = ref()
 
 const form = reactive({
   ossAccessKey: '',
@@ -202,7 +246,10 @@ const form = reactive({
   ossBasePath: 'dkd-images/',
   agentServiceApiKey: '',
   agentServiceApiKeyMasked: '',
-  agentServiceApiKeyConfigured: false
+  agentServiceApiKeyConfigured: false,
+  searchTavilyApiKey: '',
+  searchTavilyApiKeyMasked: '',
+  searchTavilyApiKeyConfigured: false
 })
 
 function validateSecret(_rule, value, callback) {
@@ -220,7 +267,8 @@ const rules = {
   ],
   ossDomain: [],
   ossBasePath: [],
-  agentServiceApiKey: [{ validator: validateSecret, trigger: ['blur', 'change'] }]
+  agentServiceApiKey: [{ validator: validateSecret, trigger: ['blur', 'change'] }],
+  searchTavilyApiKey: [{ validator: validateSecret, trigger: ['blur', 'change'] }]
 }
 
 function applyConfig(data = {}) {
@@ -237,11 +285,15 @@ function applyConfig(data = {}) {
     ossBasePath: data.ossBasePath || 'dkd-images/',
     agentServiceApiKey: '',
     agentServiceApiKeyMasked: data.agentServiceApiKeyMasked || '',
-    agentServiceApiKeyConfigured: Boolean(data.agentServiceApiKeyConfigured)
+    agentServiceApiKeyConfigured: Boolean(data.agentServiceApiKeyConfigured),
+    searchTavilyApiKey: '',
+    searchTavilyApiKeyMasked: data.searchTavilyApiKeyMasked || '',
+    searchTavilyApiKeyConfigured: Boolean(data.searchTavilyApiKeyConfigured)
   })
   ossAccessKeyEditing.value = !form.ossAccessKeyConfigured
   ossSecretKeyEditing.value = !form.ossSecretKeyConfigured
   agentApiKeyEditing.value = !form.agentServiceApiKeyConfigured
+  tavilyApiKeyEditing.value = !form.searchTavilyApiKeyConfigured
 }
 
 // OSS AccessKey edit handlers
@@ -277,6 +329,17 @@ function cancelAgentApiKeyEdit() {
   agentApiKeyEditing.value = false
 }
 
+// Tavily API Key edit handlers
+function startTavilyApiKeyEdit() {
+  form.searchTavilyApiKey = ''
+  tavilyApiKeyEditing.value = true
+  nextTick(() => tavilyApiKeyInputRef.value?.focus())
+}
+function cancelTavilyApiKeyEdit() {
+  form.searchTavilyApiKey = ''
+  tavilyApiKeyEditing.value = false
+}
+
 async function loadConfig() {
   loading.value = true
   try {
@@ -302,6 +365,7 @@ async function saveConfig() {
     if (ossAccessKeyEditing.value) payload.ossAccessKey = form.ossAccessKey.trim()
     if (ossSecretKeyEditing.value) payload.ossSecretKey = form.ossSecretKey.trim()
     if (agentApiKeyEditing.value) payload.agentServiceApiKey = form.agentServiceApiKey.trim()
+    if (tavilyApiKeyEditing.value) payload.searchTavilyApiKey = form.searchTavilyApiKey.trim()
     const response = await updateSystemSecurityConfig(payload)
     applyConfig(response.data)
     proxy.$modal.msgSuccess('安全配置已保存')
@@ -337,6 +401,7 @@ h1 { margin: 0; font-size: clamp(34px, 5vw, 58px); line-height: .98; letter-spac
 .heading-icon { display: grid; flex: 0 0 46px; height: 46px; place-items: center; border: 1px solid rgba(99, 211, 255, .2); border-radius: 13px; background: rgba(99, 211, 255, .06); font-size: 20px; }
 .oss-icon { color: #ffb85c; border-color: rgba(255, 184, 92, .2); background: rgba(255, 184, 92, .06); }
 .agent-icon { color: #63d3ff; border-color: rgba(99, 211, 255, .2); background: rgba(99, 211, 255, .06); }
+.search-icon { color: #7dd3a8; border-color: rgba(125, 211, 168, .2); background: rgba(125, 211, 168, .06); }
 .panel-heading h2 { margin: 0; font-size: 20px; }
 .panel-heading p:last-child { margin: 7px 0 0; color: #8f9aaa; line-height: 1.55; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }

@@ -13,6 +13,7 @@ import com.lingXi.ai.domain.dto.tool.AgentToolAccess;
 import com.lingXi.ai.service.AgentToolTokenService;
 import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
+import com.lingXi.system.config.SystemSecurityConfigService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -63,6 +64,9 @@ public class AgentClient {
     private final AiVideoModelConfigService modelConfigService;
     /** 签发与对话生命周期绑定的短期 Java Tool Gateway 令牌。 */
     private final AgentToolTokenService toolTokenService;
+    /** 提供数据库安全配置（含 Tavily Search API Key）；可选依赖，测试构造可缺省。 */
+    @Autowired
+    private SystemSecurityConfigService securityConfigService;
 
     /**
      * 创建生产环境使用的 Agent 客户端。
@@ -1284,6 +1288,12 @@ public class AgentClient {
         llmConfig.put("api_key", runtimeConfig.getApiKey());
         llmConfig.put("model", runtimeConfig.getTextModel());
         llmConfig.put("base_url", runtimeConfig.getWorkspaceBaseUrl());
+        if (securityConfigService != null) {
+            String tavilyApiKey = securityConfigService.getRequiredConfig().getSearchTavilyApiKey();
+            if (tavilyApiKey != null && !tavilyApiKey.trim().isEmpty()) {
+                llmConfig.put("tavily_api_key", tavilyApiKey);
+            }
+        }
     }
 
     /** 兼容新旧响应信封并提取非空回答文本。 */

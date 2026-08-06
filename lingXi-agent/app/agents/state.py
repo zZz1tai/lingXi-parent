@@ -44,6 +44,11 @@ class AgentContext:
         repr=False,
         compare=False,
     )
+    tavily_api_key: SecretStr | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     model: BaseChatModel | None = field(default=None, repr=False, compare=False)
 
 

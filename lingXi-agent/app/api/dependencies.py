@@ -395,6 +395,9 @@ def create_agent_context(
         memory_preferences=memory_preferences,
         agent_request_id=agent_request_id,
         tool_access_token=tool_access_token,
+        tavily_api_key=(
+            llm_config.tavily_api_key if llm_config is not None else None
+        ),
         model=model,
     )
 

@@ -1,3 +1,48 @@
-LingXiTerminal_1.0.0_x64-setup.exe
+# 构建产物与运行日志
+target/
+dist/
+node_modules/
+*.log
 hs_err_*.log
 output/
+
+# 环境变量与密钥文件（禁止提交）
+.env
+.env.*
+!.env.example
+!lingXi-agent/.env.example
+!lingXi-vue/.env.development
+!lingXi-vue/.env.production
+!lingXi-vue/.env.staging
+!lingXi-vue/.env.desktop
+*.pem
+*.key
+*.jks
+*.p12
+*.pfx
+keystore*
+
+# IDE 与本地工具
+.idea/
+.vscode/
+*.iml
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coze
+
+# 本地数据与临时文件
+tmp/
+.codegraph/
+
+# 安装包
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db

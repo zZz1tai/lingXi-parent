@@ -287,18 +287,6 @@
                 </div>
               </div>
             </div>
-            
-            <!-- 加载指示器 -->
-            <div v-if="loading" class="loading-indicator">
-              <div class="typing-indicator">
-                <div class="typing-dot"></div>
-                <div class="typing-dot"></div>
-                <div class="typing-dot"></div>
-              </div>
-              <span class="typing-text">
-                {{ currentActivityLabel }}
-              </span>
-            </div>
           </div>
         </div>
         
@@ -474,12 +462,23 @@
                   </div>
                   <video
                     v-if="quickVideoTask.videoUrl"
+                    ref="quickVideoEl"
                     class="quick-video-result"
                     :src="quickVideoTask.videoUrl"
                     controls
                     playsinline
                     preload="metadata"
                   />
+                  <div v-if="quickVideoTask.videoUrl" class="quick-video-actions">
+                    <el-button size="small" text @click="enterQuickVideoFullscreen">
+                      <el-icon><FullScreen /></el-icon>
+                      <span>全屏</span>
+                    </el-button>
+                    <el-button size="small" text @click="downloadQuickVideo">
+                      <el-icon><Download /></el-icon>
+                      <span>下载</span>
+                    </el-button>
+                  </div>
                   <el-button
                     v-if="quickVideoCanStartAnother"
                     class="quick-video-again"
@@ -683,6 +682,43 @@
       </template>
     </el-dialog>
 
+    <!-- AI 生成图片放大预览浮层：先显示低清缩略图，原图加载完成后淡入 -->
+    <teleport to="body">
+      <Transition name="media-viewer-fade">
+        <div v-if="mediaPreview" class="chat-media-viewer" @click.self="closeMediaPreview">
+          <div class="chat-media-viewer-toolbar">
+            <span class="chat-media-viewer-title">图片预览</span>
+            <button type="button" :disabled="previewScale <= 0.25" @click="zoomPreview(-0.15)">
+              缩小
+            </button>
+            <span class="chat-media-viewer-scale">{{ Math.round(previewScale * 100) }}%</span>
+            <button type="button" :disabled="previewScale >= 5" @click="zoomPreview(0.15)">
+              放大
+            </button>
+            <button type="button" @click="downloadChatMedia(mediaPreview.src, mediaPreview.filename)">
+              下载
+            </button>
+            <button type="button" class="is-close" @click="closeMediaPreview">关闭</button>
+          </div>
+          <div class="chat-media-viewer-stage">
+            <img
+              class="chat-media-viewer-thumb"
+              :src="mediaPreview.thumb"
+              alt=""
+            />
+            <img
+              class="chat-media-viewer-image"
+              :class="{ 'is-loaded': previewFullLoaded }"
+              :src="mediaPreview.src"
+              :style="{ transform: `scale(${previewScale})` }"
+              @load="previewFullLoaded = true"
+              @click="zoomPreview(previewScale >= 3 ? -0.15 : 0.15)"
+            />
+          </div>
+        </div>
+      </Transition>
+    </teleport>
+
   </div>
 </template>
 
@@ -724,7 +760,9 @@ import {
   Paperclip,
   WarningFilled,
   VideoCamera,
-  Picture
+  Picture,
+  FullScreen,
+  Download
 } from '@element-plus/icons-vue';
 import {
   clearLongTermMemories,
@@ -761,6 +799,73 @@ marked.setOptions({
   headerIds: false
 });
 
+// ── AI 生成媒体（图片/视频）渲染 ──────────────────────────────────────────
+const chatMediaRenderer = new marked.Renderer();
+
+const MEDIA_ICON_ZOOM =
+  '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 13.5 13.5"/></svg>';
+const MEDIA_ICON_DOWNLOAD =
+  '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2.5v7.5M4.8 6.8 8 10l3.2-3.2"/><path d="M2.5 13.5h11"/></svg>';
+const MEDIA_ICON_FULLSCREEN =
+  '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>';
+
+function escapeHtmlAttribute(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// 阿里云 OSS 图片生成低清缩略图，用于回复内快速预览，原图用于放大和下载。
+function toChatImageThumb(url) {
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.hostname.includes('aliyuncs.com')
+      || parsed.hostname.includes('oss-cn-')
+    ) {
+      parsed.searchParams.set('x-oss-process', 'image/resize,w_560/quality,q_60');
+      return parsed.toString();
+    }
+  } catch {
+    // 非标准 URL 直接使用原图
+  }
+  return url;
+}
+
+function mediaFilename(url, fallbackExt) {
+  try {
+    const pathname = new URL(url).pathname;
+    const name = decodeURIComponent(pathname.split('/').pop() || '');
+    if (name && name.includes('.')) return name;
+  } catch {
+    // 继续使用默认文件名
+  }
+  return `ai-media-${Date.now()}.${fallbackExt}`;
+}
+
+// 图片：回复内显示低清预览，附带 预览/下载 按钮。
+chatMediaRenderer.image = (href, title, text) => {
+  if (!href) return '';
+  const src = escapeHtmlAttribute(href);
+  const thumb = escapeHtmlAttribute(toChatImageThumb(href));
+  const alt = escapeHtmlAttribute(text || 'AI 生成的图片');
+  return (
+    '<span class="chat-media is-image"'
+    + ` data-src="${src}"`
+    + ` data-thumb="${thumb}"`
+    + ` data-filename="${escapeHtmlAttribute(mediaFilename(href, 'png'))}">`
+    + `<img src="${thumb}" alt="${alt}" loading="lazy" />`
+    + '<span class="chat-media-actions">'
+    + `<button type="button" data-action="preview">${MEDIA_ICON_ZOOM}<span>预览</span></button>`
+    + `<button type="button" data-action="download">${MEDIA_ICON_DOWNLOAD}<span>下载</span></button>`
+    + '</span>'
+    + '</span>'
+  );
+};
+marked.setOptions({ renderer: chatMediaRenderer });
+
 // 转换markdown为html（带内存缓存，切会话/重复渲染时避免反复解析）
 const markdownCache = new Map();
 const MARKDOWN_CACHE_LIMIT = 120;
@@ -772,7 +877,26 @@ const renderMarkdown = (content) => {
   const cleanedContent = content
     .replace(/\n{3,}/g, '\n\n') // 将3个以上连续换行替换为2个
     .trim();
-  const html = marked.parse(cleanedContent);
+  let html = marked.parse(cleanedContent);
+  // 回复中内嵌的视频（原生 <video>）同样包装 全屏/下载 按钮。
+  html = html.replace(
+    /<video\b([^>]*)>([\s\S]*?)<\/video>/gi,
+    (whole, attrs) => {
+      const srcMatch = attrs.match(/\bsrc="([^"]+)"/i);
+      if (!srcMatch) return whole;
+      return (
+        '<span class="chat-media is-video"'
+        + ` data-src="${escapeHtmlAttribute(srcMatch[1])}"`
+        + ` data-filename="${escapeHtmlAttribute(mediaFilename(srcMatch[1], 'mp4'))}">`
+        + whole
+        + '<span class="chat-media-actions">'
+        + `<button type="button" data-action="fullscreen">${MEDIA_ICON_FULLSCREEN}<span>全屏</span></button>`
+        + `<button type="button" data-action="download">${MEDIA_ICON_DOWNLOAD}<span>下载</span></button>`
+        + '</span>'
+        + '</span>'
+      );
+    }
+  );
   markdownCache.set(content, html);
   return html;
 };
@@ -877,13 +1001,6 @@ const userStore = useUserStore();
 const aiChatStore = useAiChatStore();
 const currentDraft = computed(() => aiChatStore.draftFor(currentSessionId.value));
 const loading = computed(() => ['streaming', 'resuming'].includes(currentDraft.value?.status));
-const currentActivityLabel = computed(() => {
-  const running = [...(currentDraft.value?.activities || [])]
-    .reverse()
-    .find(item => item.status === 'running');
-  if (running) return `${running.label}...`;
-  return currentDraft.value?.assistantContent ? '灵犀正在输入...' : '灵犀正在思考...';
-});
 
 const activityStatusText = status => ({
   running: '进行中',
@@ -1335,6 +1452,116 @@ function formatQuickVideoDuration(durationMs) {
   return `${seconds} 秒`;
 }
 
+// ── AI 生成媒体交互（图片预览/下载、视频全屏/下载）────────────────────────
+const mediaPreview = ref(null);
+const previewScale = ref(1);
+const previewFullLoaded = ref(false);
+const quickVideoEl = ref(null);
+
+const openImagePreview = (media) => {
+  mediaPreview.value = {
+    kind: 'image',
+    src: media.dataset.src,
+    thumb: media.dataset.thumb || media.dataset.src,
+    filename: media.dataset.filename || 'ai-image'
+  };
+  previewScale.value = 1;
+  previewFullLoaded.value = false;
+};
+
+const closeMediaPreview = () => {
+  mediaPreview.value = null;
+};
+
+const zoomPreview = (delta) => {
+  previewScale.value = Math.min(5, Math.max(0.25, previewScale.value + delta));
+};
+
+const enterChatMediaFullscreen = (media) => {
+  const video = media.querySelector('video');
+  if (!video) return;
+  const fullscreenApi = video.requestFullscreen
+    || video.webkitRequestFullscreen
+    || video.msRequestFullscreen;
+  if (fullscreenApi) {
+    fullscreenApi.call(video);
+  } else {
+    window.open(video.currentSrc || video.src, '_blank', 'noopener,noreferrer');
+  }
+};
+
+const downloadChatMedia = async (url, filename) => {
+  let objectUrl = '';
+  try {
+    const response = await fetch(url, { credentials: 'omit' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const blob = await response.blob();
+    objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename || 'ai-media';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    ElMessage.success('已开始下载');
+  } catch {
+    // 跨域受限时退化为新窗口打开，用户可右键另存为
+    window.open(url, '_blank', 'noopener,noreferrer');
+    ElMessage.info('已在新窗口打开，可右键另存为');
+  } finally {
+    if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  }
+};
+
+const handleChatMediaClick = (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target) return;
+  const actionButton = target.closest('[data-action]');
+  const media = target.closest('.chat-media');
+  if (!media) return;
+  const src = media.dataset.src;
+  if (!src) return;
+  if (actionButton) {
+    const action = actionButton.dataset.action;
+    if (action === 'preview') openImagePreview(media);
+    else if (action === 'download') void downloadChatMedia(src, media.dataset.filename);
+    else if (action === 'fullscreen') enterChatMediaFullscreen(media);
+  } else if (media.classList.contains('is-image')) {
+    // 点击回复内的低清预览图直接放大查看原图
+    openImagePreview(media);
+  }
+};
+
+const handleMediaViewerKeydown = (event) => {
+  if (!mediaPreview.value) return;
+  if (event.key === 'Escape') {
+    closeMediaPreview();
+  } else if (event.key === '+' || event.key === '=') {
+    zoomPreview(0.15);
+  } else if (event.key === '-') {
+    zoomPreview(-0.15);
+  }
+};
+
+const enterQuickVideoFullscreen = () => {
+  const video = quickVideoEl.value;
+  if (!video) return;
+  const fullscreenApi = video.requestFullscreen
+    || video.webkitRequestFullscreen
+    || video.msRequestFullscreen;
+  if (fullscreenApi) {
+    fullscreenApi.call(video);
+  } else {
+    window.open(video.currentSrc || video.src, '_blank', 'noopener,noreferrer');
+  }
+};
+
+const downloadQuickVideo = () => {
+  const url = quickVideoTask.value?.videoUrl;
+  if (!url) return;
+  void downloadChatMedia(url, mediaFilename(url, 'mp4'));
+};
+
 const handleActionDecision = async (item, decision) => {
   const action = item.pendingAction;
   const sessionId = currentSessionId.value;
@@ -1750,9 +1977,13 @@ onMounted(async () => {
     currentSessionId.value = savedSessionId;
   }
   await loadSessions();
+  chatContainer.value?.addEventListener('click', handleChatMediaClick);
+  document.addEventListener('keydown', handleMediaViewerKeydown);
 });
 
 onBeforeUnmount(() => {
+  chatContainer.value?.removeEventListener('click', handleChatMediaClick);
+  document.removeEventListener('keydown', handleMediaViewerKeydown);
   stopQuickVideoPolling();
   clearQuickVideoImages();
   if (pendingAttachments.value.length) {
@@ -2857,44 +3088,6 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 加载指示器 */
-.loading-indicator {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  background: var(--lx-surface);
-  border: 1px solid var(--lx-border-soft);
-  border-radius: 4px 16px 16px 16px;
-  max-width: 320px;
-  margin-right: auto;
-  margin-left: 48px;
-  box-shadow: var(--lx-shadow-sm);
-
-  .typing-indicator {
-    display: flex;
-    gap: 4px;
-
-    .typing-dot {
-      width: 8px;
-      height: 8px;
-      background: var(--seed-primary);
-      border-radius: 50%;
-      animation: typing 1.4s infinite ease-in-out;
-
-      &:nth-child(1) { animation-delay: 0s; }
-      &:nth-child(2) { animation-delay: 0.2s; }
-      &:nth-child(3) { animation-delay: 0.4s; }
-    }
-  }
-
-  .typing-text {
-    font-size: 14px;
-    color: var(--lx-muted);
-    font-weight: 500;
-  }
-}
-
 /* 输入区域 */
 .chat-input-container {
   flex: none;
@@ -3166,7 +3359,6 @@ onBeforeUnmount(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .welcome-icon,
-  .typing-dot,
   .status-lamp {
     animation: none !important;
   }
@@ -3737,5 +3929,192 @@ onBeforeUnmount(() => {
   .quick-video-again {
     justify-self: stretch;
   }
+
+  .quick-video-actions {
+    grid-column: 1;
+    justify-content: stretch;
+
+    .el-button {
+      flex: 1;
+    }
+  }
+}
+
+/* ── AI 生成媒体（图片/视频） ──────────────────────────────────────────── */
+.chat-media {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  margin: 12px 0 2px;
+
+  > img,
+  > video {
+    display: block;
+    width: auto;
+    max-width: min(100%, 520px);
+    max-height: min(52vh, 520px);
+    margin: 0;
+    border: 1px solid var(--lx-border-soft);
+    border-radius: 14px;
+    background: var(--lx-canvas);
+    box-shadow: 0 10px 28px rgba(18, 52, 59, 0.10);
+    object-fit: contain;
+  }
+
+  > video {
+    width: 100%;
+    background: #081f2a;
+    box-shadow: 0 14px 32px rgba(3, 19, 29, 0.20);
+  }
+
+  &.is-image > img {
+    cursor: zoom-in;
+  }
+
+  .chat-media-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 14px;
+      border: 1px solid var(--lx-border-soft);
+      border-radius: 999px;
+      background: var(--lx-surface);
+      color: var(--lx-muted);
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+      transition: all 0.2s ease;
+
+      svg {
+        flex: none;
+      }
+
+      &:hover {
+        color: var(--lx-primary);
+        border-color: var(--seed-primary);
+        background: rgba(15, 118, 110, 0.06);
+      }
+    }
+  }
+}
+
+/* ── AI 生成图片放大预览浮层 ───────────────────────────────────────────── */
+.chat-media-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 13, 20, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.chat-media-viewer-toolbar {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  .chat-media-viewer-title {
+    margin-right: 6px;
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 13px;
+  }
+
+  .chat-media-viewer-scale {
+    min-width: 52px;
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 12px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  button {
+    padding: 7px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.10);
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.20);
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    &.is-close {
+      border-color: rgba(220, 53, 69, 0.40);
+      background: rgba(220, 53, 69, 0.35);
+    }
+  }
+}
+
+.chat-media-viewer-stage {
+  position: relative;
+  display: grid;
+  max-width: 92vw;
+  max-height: 88vh;
+  place-items: center;
+}
+
+.chat-media-viewer-thumb {
+  position: absolute;
+  max-width: 92vw;
+  max-height: 88vh;
+  object-fit: contain;
+  filter: blur(28px) brightness(0.6);
+  transform: scale(1.02);
+  opacity: 0.6;
+}
+
+.chat-media-viewer-image {
+  position: relative;
+  max-width: 92vw;
+  max-height: 88vh;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.50);
+  opacity: 0;
+  cursor: zoom-in;
+  transition: opacity 0.35s ease, transform 0.2s ease;
+
+  &.is-loaded {
+    opacity: 1;
+  }
+}
+
+.media-viewer-fade-enter-active,
+.media-viewer-fade-leave-active {
+  transition: opacity 0.25s ease;
+}
+
+.media-viewer-fade-enter-from,
+.media-viewer-fade-leave-to {
+  opacity: 0;
+}
+
+/* 快速视频结果操作按钮 */
+.quick-video-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 6px;
 }
 </style>
