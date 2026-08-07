@@ -135,6 +135,20 @@ export const constantRoutes = [
 // 动态路由，基于用户权限动态去加载
 export const dynamicRoutes = [
   {
+    path: '/novel/writing',
+    component: Layout,
+    hidden: true,
+    permissions: ['novel:writing:list'],
+    children: [
+      {
+        path: 'index',
+        component: () => import('@/views/novel/index'),
+        name: 'NovelWriting',
+        meta: { title: 'AI小说创作', activeMenu: '/novel/writing', noCache: true }
+      }
+    ]
+  },
+  {
     path: '/aiVedio/chapter-workspace',
     component: Layout,
     hidden: true,
