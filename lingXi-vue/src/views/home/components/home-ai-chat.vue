@@ -30,14 +30,24 @@
 
 <script setup>
 import { ref } from 'vue';
-import { chatWithQwen } from '@/api/ai';
+import { createSession, streamChatWithQwen } from '@/api/ai';
 import useUserStore from '@/store/modules/user';
 
 const message = ref('');
 const history = ref([]);
 const loading = ref(false);
 const error = ref('');
+const sessionId = ref('');
 const userStore = useUserStore();
+
+const ensureSession = async () => {
+  if (sessionId.value) return sessionId.value;
+  const res = await createSession(userStore.id);
+  const created = res?.data || {};
+  if (!created.sessionId) throw new Error('会话创建失败，请稍后重试');
+  sessionId.value = created.sessionId;
+  return sessionId.value;
+};
 
 const sendMessage = async () => {
   const content = message.value.trim();
@@ -47,13 +57,28 @@ const sendMessage = async () => {
   error.value = '';
   loading.value = true;
   history.value.push({ role: 'user', content });
+  message.value = '';
+  history.value.push({ role: 'assistant', content: '' });
+  const assistant = history.value[history.value.length - 1];
   try {
-    const reply = await chatWithQwen(content, userStore.id, userStore.name);
-    history.value.push({ role: 'assistant', content: reply });
-    message.value = '';
+    const sid = await ensureSession();
+    await streamChatWithQwen(content, sid, userStore.id, userStore.name, {
+      onEvent(evt) {
+        if (evt.type === 'token' && evt.content) {
+          assistant.content += evt.content;
+        }
+      }
+    });
+    if (!assistant.content) {
+      assistant.content = '未收到回复，请稍后重试';
+    }
   } catch (err) {
-    error.value = err?.msg || err?.message || '发送失败，请稍后重试';
-    history.value.pop();
+    if (!assistant.content) {
+      error.value = err?.msg || err?.message || '发送失败，请稍后重试';
+      history.value.pop();
+    } else {
+      assistant.content += '\n（请求中断，内容可能不完整）';
+    }
   } finally {
     loading.value = false;
   }
