@@ -267,6 +267,38 @@ class Settings(BaseSettings):
         le=1.0,
     )
 
+    # ── 可观测性（Langfuse）配置 ─────────────────────────────────
+    langfuse_enabled: bool = Field(
+        default=False,
+        validation_alias="LANGFUSE_ENABLED",
+        description="Send LLM traces to Langfuse for observability",
+    )
+    langfuse_public_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias="LANGFUSE_PUBLIC_KEY",
+        description="Langfuse public (pk-) key",
+    )
+    langfuse_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias="LANGFUSE_SECRET_KEY",
+        description="Langfuse secret (sk-) key",
+    )
+    langfuse_host: str = Field(
+        default="https://cloud.langfuse.com",
+        validation_alias="LANGFUSE_HOST",
+        description="Langfuse server URL (cloud or self-hosted)",
+    )
+    langfuse_environment: str = Field(
+        default="development",
+        validation_alias="LANGFUSE_ENVIRONMENT",
+        description="Environment label attached to traces (production/staging/development)",
+    )
+    langfuse_debug: bool = Field(
+        default=False,
+        validation_alias="LANGFUSE_DEBUG",
+        description="Enable Langfuse SDK debug logging",
+    )
+
     # ── 服务端配置 ─────────────────────────────────────────────────
     host: str = Field(default="127.0.0.1", description="Server bind host")
     port: int = Field(default=5000, description="Server bind port")
@@ -325,6 +357,16 @@ class Settings(BaseSettings):
     def agent_memory_namespace_secret_value(self) -> str:
         """仅在记忆服务构造边界返回命名空间 HMAC 密钥。"""
         return self.agent_memory_namespace_secret.get_secret_value()
+
+    @property
+    def langfuse_public_key_value(self) -> str:
+        """返回 Langfuse 公钥；不会出现在 repr/日志中。"""
+        return self.langfuse_public_key.get_secret_value().strip()
+
+    @property
+    def langfuse_secret_key_value(self) -> str:
+        """返回 Langfuse 私钥；不会出现在 repr/日志中。"""
+        return self.langfuse_secret_key.get_secret_value().strip()
 
     @property
     def outbound_host_allowlist(self) -> set[str]:

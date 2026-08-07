@@ -115,11 +115,13 @@ class ChapterAnalysisChain:
         timeout_seconds: float | None = None,
         progress_callback: ProgressCallback | None = None,
         scene_concurrency: int = DEFAULT_SCENE_CONCURRENCY,
+        callbacks: list[Any] | None = None,
+        trace_metadata: dict[str, Any] | None = None,
     ) -> ChapterAnalysisChainResult:
         """异步调用章节分析链，生成并验证章节故事圣经。"""
         if scene_concurrency < 1 or scene_concurrency > MAX_SCENE_CONCURRENCY:
             raise ValueError("章节场景并发数必须在1到8之间")
-        config = self._run_config(request_id)
+        config = self._run_config(request_id, callbacks, trace_metadata)
         await self._emit_progress(
             progress_callback,
             "PLANNING",
@@ -915,13 +917,23 @@ class ChapterAnalysisChain:
         return "".join(chunks)
 
     @staticmethod
-    def _run_config(request_id: str) -> RunnableConfig:
+    def _run_config(
+        request_id: str,
+        callbacks: list[Any] | None = None,
+        trace_metadata: dict[str, Any] | None = None,
+    ) -> RunnableConfig:
         """生成运行配置。"""
-        return {
+        config: RunnableConfig = {
             "run_name": "chapter_story_bible",
             "tags": ["ai-video", "chapter-analysis"],
-            "metadata": {"request_id": request_id},
+            "metadata": {
+                "request_id": request_id,
+                **(trace_metadata or {}),
+            },
         }
+        if callbacks:
+            config["callbacks"] = callbacks
+        return config
 
     def _parse_and_validate(
         self,

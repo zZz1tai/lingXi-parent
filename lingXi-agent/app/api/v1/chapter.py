@@ -26,6 +26,7 @@ from app.chains.chapter_analysis import (
     ChapterAnalysisOutputTooLargeError,
     build_chapter_analysis_chain,
 )
+from app.observability.tracing import with_trace
 from app.schemas.chapter import AnalyzeChapterRequest, AnalyzeChapterResponse
 from app.security.outbound import validate_outbound_http_url
 from app.services.chapter_analysis import (
@@ -305,6 +306,12 @@ async def _run_chapter_analysis(
             request.scene_concurrency,
         )
         analysis_chain = build_chapter_analysis_chain(llm)
+        trace_config = with_trace(
+            {},
+            "analyze-chapter",
+            tags=["chapter"],
+            metadata={"request_id": request_id, "video_model": request.video_model},
+        )
         chain_result = await _invoke_with_capacity(
             analysis_chain,
             prompt,
@@ -315,6 +322,8 @@ async def _run_chapter_analysis(
             timeout_seconds=request.llm_config.timeout_seconds,
             progress_callback=progress_callback,
             scene_concurrency=request.scene_concurrency,
+            callbacks=trace_config.get("callbacks"),
+            trace_metadata=trace_config.get("metadata"),
         )
         raw_response = chain_result.raw_response
         story_bible = chain_result.story_bible

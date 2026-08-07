@@ -39,6 +39,7 @@ from app.chains.business_chat import (
     stream_context_analysis,
 )
 from app.config.settings import settings
+from app.observability.tracing import with_trace
 from app.schemas.request import (
     ChatMode,
     ChatRequest,
@@ -265,7 +266,13 @@ async def image_ocr(
                         },
                     ]
                 ),
-            ]
+            ],
+            config=with_trace(
+                {},
+                "transcribe-image",
+                tags=["chat"],
+                metadata={"request_id": request_id},
+            ),
         )
         normalized = _message_text(response).replace("\x00", "").strip()
         truncated = len(normalized) > MAX_ATTACHMENT_TEXT_CHARS
@@ -608,6 +615,14 @@ async def chat_invoke(
                 llm,
                 request.message,
                 request.context_data,
+                config=with_trace(
+                    {},
+                    "analyze-context",
+                    user_id=request.user_id or "",
+                    thread_id=public_thread_id,
+                    tags=["chat"],
+                    metadata={"request_id": request_id},
+                ),
             )
             memory_saved = await _capture_preferences(
                 request.user_id,
@@ -665,7 +680,17 @@ async def chat_invoke(
         )
         result = await agent.ainvoke(
             _build_agent_input(request),
-            config=_build_agent_config(request, request_id=request_id),
+            config=with_trace(
+                _build_agent_config(request, request_id=request_id),
+                "generate-chat-response",
+                user_id=request.user_id or "",
+                thread_id=public_thread_id,
+                tags=["chat"],
+                metadata={
+                    "request_id": request_id,
+                    "business_tag": request.business_tag or "",
+                },
+            ),
             context=context,
         )
         messages = list(result.get("messages") or [])
@@ -732,7 +757,18 @@ async def smart_questions(
             temperature=0.2,
             max_retries=1,
         )
-        questions = await generate_smart_questions(llm, request.chat_history)
+        questions = await generate_smart_questions(
+            llm,
+            request.chat_history,
+            config=with_trace(
+                {},
+                "generate-smart-questions",
+                user_id=request.user_id or "",
+                thread_id=request.thread_id or "",
+                tags=["chat"],
+                metadata={"request_id": request_id},
+            ),
+        )
         return SmartQuestionsResponse(
             success=True,
             message="ok",
@@ -768,6 +804,14 @@ async def _stream_context_analysis(
             llm,
             request.message,
             request.context_data,
+            config=with_trace(
+                {},
+                "analyze-context-stream",
+                user_id=request.user_id or "",
+                thread_id=public_thread_id,
+                tags=["chat"],
+                metadata={"request_id": request_id},
+            ),
         )
         async for content in context_stream:
             if not content:
@@ -1042,7 +1086,22 @@ async def _stream_agent_events(
             agent_input = _build_agent_input(request)
         agent_stream = agent.astream(
             agent_input,
-            config=_build_agent_config(request, request_id=request_id),
+            config=with_trace(
+                _build_agent_config(request, request_id=request_id),
+                "generate-chat-response-stream",
+                user_id=request.user_id or "",
+                thread_id=public_thread_id,
+                tags=["chat"],
+                metadata={
+                    "request_id": request_id,
+                    "resume": resume,
+                    "business_tag": (
+                        request.business_tag or ""
+                        if isinstance(request, ChatRequest)
+                        else ""
+                    ),
+                },
+            ),
             context=context,
             stream_mode=["messages", "updates", "custom"],
         )

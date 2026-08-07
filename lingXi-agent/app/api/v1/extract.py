@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from app.agents.builder import build_extraction_agent, get_recursion_limit
 from app.api.dependencies import get_llm, get_request_id
+from app.observability.tracing import with_trace
 from app.schemas.request import (
     ExtractRequest,
     ExtractionSchemaName,
@@ -122,10 +123,15 @@ async def _extract_with_strategy(
     )
     result = await agent.ainvoke(
         {"messages": [HumanMessage(content=text)]},
-        config={
-            "recursion_limit": get_recursion_limit(3),
-            "metadata": {"request_id": request_id},
-        },
+        config=with_trace(
+            {
+                "recursion_limit": get_recursion_limit(3),
+                "metadata": {"request_id": request_id},
+            },
+            "extract-structured",
+            tags=["extract"],
+            metadata={"request_id": request_id, "strategy": strategy.value},
+        ),
     )
     return _validated_structured_response(result, schema)
 

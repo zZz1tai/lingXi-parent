@@ -35,6 +35,7 @@ from app.services.http_client import (
 from app.services.knowledge import create_knowledge_retriever
 from app.services.agent_tool_client import create_agent_tool_client
 from app.services.memory import LongTermMemoryService
+from app.observability.tracing import flush_traces
 from app.schemas.response import HealthData, HealthResponse
 from app.utils.exceptions import (
     AgentError,
@@ -122,6 +123,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             stack.push_async_callback(close_http_client)
             yield
         finally:
+            flush_traces()
             reset_singletons()
             logger.info("Application shutdown complete")
 

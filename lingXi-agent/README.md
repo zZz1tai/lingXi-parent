@@ -84,6 +84,22 @@ app/
 `[DONE]` 标记；`AGENT_STREAM_MAX_SECONDS` 与
 `AGENT_STREAM_MAX_TEXT_CHARS` 分别限制总时长和累计文本输出。
 
+## 可观测性（Langfuse）
+
+默认关闭。启用后，对话（同步/SSE）、图片 OCR、快捷问题、结构化提取和章节分析
+的每次 LLM 调用都会上报 Langfuse，可按用户与会话回放完整链路、查看 token 成本
+和工具调用：
+
+```dotenv
+LANGFUSE_ENABLED=true
+LANGFUSE_PUBLIC_KEY=pk-xxx
+LANGFUSE_SECRET_KEY=sk-xxx
+LANGFUSE_HOST=https://cloud.langfuse.com
+```
+
+密钥使用 `SecretStr` 保存，不会出现在配置 repr 或日志中；未配置时自动跳过，
+不影响业务链路。自托管 Langfuse 时 `LANGFUSE_HOST` 指向自建地址。
+
 ## 短期记忆
 
 本地与测试默认使用进程内存：

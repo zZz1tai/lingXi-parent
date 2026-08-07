@@ -60,11 +60,17 @@ def build_context_analysis_chain(model: BaseChatModel):
     return CONTEXT_ANALYSIS_PROMPT | model | StrOutputParser()
 
 
-async def analyze_context(model: BaseChatModel, message: str, context_data: Any) -> str:
+async def analyze_context(
+    model: BaseChatModel,
+    message: str,
+    context_data: Any,
+    config: dict[str, Any] | None = None,
+) -> str:
     """异步分析上下文并返回分析结果字符串。"""
     chain = build_context_analysis_chain(model)
     return await chain.ainvoke(
-        {"message": message, "context_json": _json_text(context_data)}
+        {"message": message, "context_json": _json_text(context_data)},
+        config=config,
     )
 
 
@@ -72,11 +78,13 @@ async def stream_context_analysis(
     model: BaseChatModel,
     message: str,
     context_data: Any,
+    config: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     """异步流式分析上下文，逐块生成分析结果。"""
     chain = build_context_analysis_chain(model)
     async for chunk in chain.astream(
-        {"message": message, "context_json": _json_text(context_data)}
+        {"message": message, "context_json": _json_text(context_data)},
+        config=config,
     ):
         if chunk:
             yield chunk
@@ -93,6 +101,7 @@ def build_smart_questions_chain(model: BaseChatModel):
 async def generate_smart_questions(
     model: BaseChatModel,
     history: list[SmartQuestionHistoryItem],
+    config: dict[str, Any] | None = None,
 ) -> list[str]:
     """异步生成智能问题列表，基于对话历史。"""
     chain, parser = build_smart_questions_chain(model)
@@ -105,7 +114,8 @@ async def generate_smart_questions(
         {
             "history_json": _json_text(normalized_history),
             "format_instructions": parser.get_format_instructions(),
-        }
+        },
+        config=config,
     )
     output = SmartQuestionsOutput.model_validate(raw)
     return output.questions
