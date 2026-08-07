@@ -206,6 +206,46 @@ class WeatherToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.code, "TOOL_LOCATION_NOT_FOUND")
         self.assertIn("补充城市", raised.exception.public_message)
 
+    async def test_province_location_resolves_to_provincial_capital(self) -> None:
+        geocoded_names: list[str] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "geocoding-api.open-meteo.com":
+                geocoded_names.append(str(request.url.params.get("name")))
+                return httpx.Response(
+                    200,
+                    json={
+                        "results": [
+                            {
+                                "name": "杭州",
+                                "admin1": "浙江",
+                                "country": "中国",
+                                "latitude": 30.29365,
+                                "longitude": 120.16142,
+                            }
+                        ]
+                    },
+                )
+            return httpx.Response(200, json=_forecast_payload())
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            with patch("app.agents.tools.weather.get_http_client", return_value=client):
+                output = await _tool_graph().ainvoke(
+                    _tool_state("浙江省", 3),
+                    context=AgentContext(user_id="42"),
+                )
+        finally:
+            await client.aclose()
+
+        self.assertEqual(geocoded_names, ["杭州"])
+        message = output["messages"][-1]
+        self.assertIsInstance(message, ToolMessage)
+        content = json.loads(message.content)
+        self.assertEqual(content["location"], "杭州，浙江，中国")
+        self.assertIn("location_note", content)
+        self.assertEqual(message.artifact["query"], "浙江省")
+
     def test_weather_runtime_is_hidden_and_location_is_single_line(self) -> None:
         tool = create_weather_tool()
         self.assertIn("runtime", tool.get_input_schema().model_fields)

@@ -60,6 +60,52 @@ _WEATHER_CONDITIONS = {
     99: "雷暴伴强冰雹",
 }
 
+_PROVINCE_SUFFIXES = (
+    "维吾尔自治区",
+    "壮族自治区",
+    "回族自治区",
+    "特别行政区",
+    "自治区",
+    "省",
+)
+
+_PROVINCE_CAPITALS = {
+    "北京": "北京",
+    "天津": "天津",
+    "上海": "上海",
+    "重庆": "重庆",
+    "河北": "石家庄",
+    "山西": "太原",
+    "辽宁": "沈阳",
+    "吉林": "长春",
+    "黑龙江": "哈尔滨",
+    "江苏": "南京",
+    "浙江": "杭州",
+    "安徽": "合肥",
+    "福建": "福州",
+    "江西": "南昌",
+    "山东": "济南",
+    "河南": "郑州",
+    "湖北": "武汉",
+    "湖南": "长沙",
+    "广东": "广州",
+    "海南": "海口",
+    "四川": "成都",
+    "贵州": "贵阳",
+    "云南": "昆明",
+    "陕西": "西安",
+    "甘肃": "兰州",
+    "青海": "西宁",
+    "台湾": "台北",
+    "内蒙古": "呼和浩特",
+    "广西": "南宁",
+    "西藏": "拉萨",
+    "宁夏": "银川",
+    "新疆": "乌鲁木齐",
+    "香港": "香港",
+    "澳门": "澳门",
+}
+
 
 class WeatherInput(BaseModel):
     model_config = ConfigDict(
@@ -102,7 +148,8 @@ def create_weather_tool() -> BaseTool:
         description=(
             "Get current weather and a 1-7 day forecast for a public place using Open-Meteo. "
             "Use for current or forecast weather; include province/state and country when a "
-            "place name is ambiguous. Never use it for internal device or customer locations."
+            "place name is ambiguous. Province-level Chinese names (e.g. 浙江省) are resolved "
+            "to the provincial capital. Never use it for internal device or customer locations."
         ),
     )
     async def get_weather(
@@ -111,11 +158,12 @@ def create_weather_tool() -> BaseTool:
         forecast_days: int = 3,
     ) -> tuple[str, dict[str, Any]]:
         _progress(runtime, "started")
+        resolved_location = _resolve_location(location)
         try:
             geocoding = await _fetch_json(
                 _GEOCODING_URL,
                 {
-                    "name": location,
+                    "name": resolved_location,
                     "count": 5,
                     "language": "zh",
                     "format": "json",
@@ -143,6 +191,8 @@ def create_weather_tool() -> BaseTool:
                 },
             )
             data = _weather_payload(place, forecast, forecast_days)
+            if resolved_location != location:
+                data["location_note"] = "省级天气查询以省会城市天气为代表"
             provider = "open-meteo"
             result_count = len(data["daily"])
         except ToolExecutionError as exc:
@@ -271,13 +321,23 @@ async def _fetch_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
         ) from exc
 
 
+def _resolve_location(location: str) -> str:
+    """省级地名（浙江省/广西壮族自治区/香港特别行政区等）归一化为省会城市名。"""
+    name = location.strip()
+    for suffix in _PROVINCE_SUFFIXES:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return _PROVINCE_CAPITALS.get(name, location)
+
+
 def _first_place(payload: dict[str, Any]) -> dict[str, Any]:
     results = payload.get("results")
     if not isinstance(results, list) or not results or not isinstance(results[0], dict):
         raise ToolExecutionError(
             "Weather location was not found",
             code="TOOL_LOCATION_NOT_FOUND",
-            public_message="没有找到这个地点，请补充城市、地区或国家后重试",
+            public_message="没有找到这个地点，请补充城市或区县（如：浙江省杭州市）后重试",
             status_code=404,
         )
     place = results[0]
