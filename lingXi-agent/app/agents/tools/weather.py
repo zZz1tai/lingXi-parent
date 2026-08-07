@@ -160,16 +160,7 @@ def create_weather_tool() -> BaseTool:
         _progress(runtime, "started")
         resolved_location = _resolve_location(location)
         try:
-            geocoding = await _fetch_json(
-                _GEOCODING_URL,
-                {
-                    "name": resolved_location,
-                    "count": 5,
-                    "language": "zh",
-                    "format": "json",
-                },
-            )
-            place = _first_place(geocoding)
+            place = await _resolve_place(resolved_location)
             forecast = await _fetch_json(
                 _FORECAST_URL,
                 {
@@ -329,6 +320,33 @@ def _resolve_location(location: str) -> str:
             name = name[: -len(suffix)]
             break
     return _PROVINCE_CAPITALS.get(name, location)
+
+
+async def _resolve_place(location: str) -> dict[str, Any]:
+    """地理编码定位地点；原名查不到且带“市”后缀时去掉“市”重试。"""
+    candidates = [location]
+    stripped = location.strip()
+    if stripped.endswith("市") and len(stripped) > 2:
+        candidates.append(stripped[:-1])
+    for candidate in candidates:
+        geocoding = await _fetch_json(
+            _GEOCODING_URL,
+            {
+                "name": candidate,
+                "count": 5,
+                "language": "zh",
+                "format": "json",
+            },
+        )
+        results = geocoding.get("results")
+        if isinstance(results, list) and results:
+            return _first_place(geocoding)
+    raise ToolExecutionError(
+        "Weather location was not found",
+        code="TOOL_LOCATION_NOT_FOUND",
+        public_message="没有找到这个地点，请补充城市或区县（如：浙江省杭州市）后重试",
+        status_code=404,
+    )
 
 
 def _first_place(payload: dict[str, Any]) -> dict[str, Any]:

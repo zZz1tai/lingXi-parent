@@ -246,6 +246,48 @@ class WeatherToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("location_note", content)
         self.assertEqual(message.artifact["query"], "浙江省")
 
+    async def test_city_suffix_retries_without_shi(self) -> None:
+        geocoded_names: list[str] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "geocoding-api.open-meteo.com":
+                geocoded_names.append(str(request.url.params.get("name")))
+                if request.url.params.get("name") == "东阳市":
+                    return httpx.Response(200, json={"results": []})
+                return httpx.Response(
+                    200,
+                    json={
+                        "results": [
+                            {
+                                "name": "东阳",
+                                "admin1": "浙江",
+                                "country": "中国",
+                                "latitude": 29.26778,
+                                "longitude": 120.22528,
+                            }
+                        ]
+                    },
+                )
+            return httpx.Response(200, json=_forecast_payload())
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            with patch("app.agents.tools.weather.get_http_client", return_value=client):
+                output = await _tool_graph().ainvoke(
+                    _tool_state("东阳市", 3),
+                    context=AgentContext(user_id="42"),
+                )
+        finally:
+            await client.aclose()
+
+        self.assertEqual(geocoded_names, ["东阳市", "东阳"])
+        message = output["messages"][-1]
+        self.assertIsInstance(message, ToolMessage)
+        content = json.loads(message.content)
+        self.assertEqual(content["location"], "东阳，浙江，中国")
+        self.assertNotIn("location_note", content)
+        self.assertEqual(message.artifact["query"], "东阳市")
+
     def test_weather_runtime_is_hidden_and_location_is_single_line(self) -> None:
         tool = create_weather_tool()
         self.assertIn("runtime", tool.get_input_schema().model_fields)
