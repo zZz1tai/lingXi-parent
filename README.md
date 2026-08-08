@@ -284,6 +284,7 @@ Agent 的对话、章节分析、图片生成和视频任务接口统一在 `/ap
 
 ## 相关文档
 
+- [平台架构治理与服务生命周期](docs/platform-architecture-lifecycle.md)
 - [AI Agent 开发与接口说明](lingXi-agent/README.md)
 - [知识索引发布规范](lingXi-agent/knowledge/README.md)
 - [后端业务模块说明](dkd-parent/README.md)
