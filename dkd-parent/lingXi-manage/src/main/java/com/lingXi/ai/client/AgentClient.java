@@ -49,6 +49,22 @@ import java.util.function.Consumer;
 @Component
 public class AgentClient {
 
+    /**
+     * 流式对话终态回调。
+     * <p>一次流式请求只会报告一个终态：成功（完整回答）、失败（稳定错误码）或取消（客户端断开）。</p>
+     */
+    public interface StreamOutcomeListener {
+
+        /** 收到完整回答并确认流正常终止。 */
+        void onReply(String fullReply);
+
+        /** 流异常终止，携带稳定错误码。 */
+        void onFailed(String errorCode);
+
+        /** 客户端在终态前断开。 */
+        void onCancelled();
+    }
+
     /** 单次流式回答允许累计的最大字符数，防止异常响应耗尽服务内存。 */
     static final int MAX_STREAM_REPLY_CHARS = 200_000;
     /** 单个 SSE 事件允许读取的最大字符数。 */
@@ -317,7 +333,49 @@ public class AgentClient {
                 null,
                 userContext,
                 attachments,
-                completedReplyConsumer);
+                completedReplyConsumer,
+                false);
+    }
+
+    /** 普通流式聊天并报告成功/失败/取消终态，供消息生命周期落库。 */
+    public SseEmitter streamChat(
+            String message,
+            String sessionId,
+            AgentUserContext userContext,
+            Consumer<String> completedReplyConsumer,
+            StreamOutcomeListener outcomeListener) {
+        return streamChat(
+                message,
+                sessionId,
+                userContext.getUserId(),
+                "chat",
+                null,
+                userContext,
+                List.of(),
+                completedReplyConsumer,
+                false,
+                outcomeListener);
+    }
+
+    /** 普通流式聊天（含附件）并报告终态。 */
+    public SseEmitter streamChat(
+            String message,
+            String sessionId,
+            AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments,
+            Consumer<String> completedReplyConsumer,
+            StreamOutcomeListener outcomeListener) {
+        return streamChat(
+                message,
+                sessionId,
+                userContext.getUserId(),
+                "chat",
+                null,
+                userContext,
+                attachments,
+                completedReplyConsumer,
+                false,
+                outcomeListener);
     }
 
     /** 使用可信 Java 登录上下文并保留白名单化结构事件的 V2 流式调用。 */
@@ -349,6 +407,39 @@ public class AgentClient {
                 true);
     }
 
+    /** 结构化 V2 流并报告成功/失败/取消终态，供消息生命周期落库。 */
+    public SseEmitter streamChatV2(
+            String message,
+            String sessionId,
+            AgentUserContext userContext,
+            Consumer<String> completedReplyConsumer,
+            StreamOutcomeListener outcomeListener) {
+        return streamChatV2(
+                message, sessionId, userContext, List.of(),
+                completedReplyConsumer, outcomeListener);
+    }
+
+    /** 结构化 V2 流（含附件）并报告成功/失败/取消终态，供消息生命周期落库。 */
+    public SseEmitter streamChatV2(
+            String message,
+            String sessionId,
+            AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments,
+            Consumer<String> completedReplyConsumer,
+            StreamOutcomeListener outcomeListener) {
+        return streamChat(
+                message,
+                sessionId,
+                userContext.getUserId(),
+                "chat",
+                null,
+                userContext,
+                attachments,
+                completedReplyConsumer,
+                true,
+                outcomeListener);
+    }
+
     /** 使用当前登录态的新令牌恢复一个已经由 Java 记录决定的受控动作。 */
     public SseEmitter streamResumeAction(
             String sessionId,
@@ -356,6 +447,19 @@ public class AgentClient {
             String actionId,
             String decision,
             Consumer<String> completedReplyConsumer) {
+        return streamResumeAction(
+                sessionId, userContext, actionId, decision,
+                completedReplyConsumer, null);
+    }
+
+    /** 受控动作恢复流并报告终态，供消息生命周期落库。 */
+    public SseEmitter streamResumeAction(
+            String sessionId,
+            AgentUserContext userContext,
+            String actionId,
+            String decision,
+            Consumer<String> completedReplyConsumer,
+            StreamOutcomeListener outcomeListener) {
         return streamAgent(
                 "",
                 sessionId,
@@ -367,7 +471,8 @@ public class AgentClient {
                 completedReplyConsumer,
                 true,
                 actionId,
-                decision);
+                decision,
+                outcomeListener);
     }
 
     /**
@@ -404,6 +509,27 @@ public class AgentClient {
                 contextData,
                 userContext,
                 completedReplyConsumer);
+    }
+
+    /** 流式分析结构化页面快照并报告终态，供消息生命周期落库。 */
+    public SseEmitter streamChatWithContext(
+            String message,
+            Object contextData,
+            String sessionId,
+            AgentUserContext userContext,
+            Consumer<String> completedReplyConsumer,
+            StreamOutcomeListener outcomeListener) {
+        return streamChat(
+                message,
+                sessionId,
+                userContext.getUserId(),
+                "context_analysis",
+                contextData,
+                userContext,
+                List.of(),
+                completedReplyConsumer,
+                false,
+                outcomeListener);
     }
 
     /**
@@ -508,9 +634,9 @@ public class AgentClient {
                             objectMapper,
                             responseBody,
                             statusCode,
-                            "AGENT_SYNOPSIS_STREAM_ERROR",
-                            "AI 拟写梗概失败");
-                    throw remoteFailure(error, "AGENT_SYNOPSIS_STREAM_ERROR", "AI 拟写梗概失败");
+                            "AGENT_STREAM_HTTP_ERROR",
+                            "Agent 流式请求失败");
+                    throw remoteFailure(error, "AGENT_STREAM_HTTP_ERROR", "Agent 流式请求失败");
                 }
 
                 try (BufferedReader br = new BufferedReader(
@@ -634,6 +760,31 @@ public class AgentClient {
             List<AiChatAttachmentAgentDTO> attachments,
             Consumer<String> completedReplyConsumer,
             boolean structuredEvents) {
+        return streamChat(
+                message,
+                sessionId,
+                userId,
+                mode,
+                contextData,
+                userContext,
+                attachments,
+                completedReplyConsumer,
+                structuredEvents,
+                null);
+    }
+
+    /** 支持报告终态的回调变体。 */
+    private SseEmitter streamChat(
+            String message,
+            String sessionId,
+            String userId,
+            String mode,
+            Object contextData,
+            AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments,
+            Consumer<String> completedReplyConsumer,
+            boolean structuredEvents,
+            StreamOutcomeListener outcomeListener) {
         return streamAgent(
                 message,
                 sessionId,
@@ -645,7 +796,8 @@ public class AgentClient {
                 completedReplyConsumer,
                 structuredEvents,
                 null,
-                null);
+                null,
+                outcomeListener);
     }
 
     /** 普通聊天和动作恢复共用同一条有界、可取消的 SSE 转发实现。 */
@@ -660,7 +812,8 @@ public class AgentClient {
             Consumer<String> completedReplyConsumer,
             boolean structuredEvents,
             String actionId,
-            String decision) {
+            String decision,
+            StreamOutcomeListener outcomeListener) {
         long streamTimeout = config.getStreamTimeout() == null
                 || config.getStreamTimeout().longValue() <= 0L
                         ? 310_000L : config.getStreamTimeout().longValue();
@@ -668,6 +821,8 @@ public class AgentClient {
         AtomicBoolean replyDelivered = new AtomicBoolean(false);
         AtomicReference<HttpURLConnection> connectionRef = new AtomicReference<>();
         AtomicReference<Future<?>> futureRef = new AtomicReference<>();
+        AtomicBoolean outcomeReported = new AtomicBoolean(false);
+        AtomicReference<String> failureCode = new AtomicReference<>();
         AgentToolAccess toolAccess = createToolAccess(userContext, sessionId);
 
         Runnable streamTask = () -> {
@@ -737,6 +892,7 @@ public class AgentClient {
                                 if (content.length()
                                         > MAX_STREAM_REPLY_CHARS - fullReply.length()) {
                                     streamFailed = true;
+                                    failureCode.compareAndSet(null, "AGENT_STREAM_OVER_LIMIT");
                                     log.warn("Agent 流式回复超过大小限制");
                                     sendSafeStreamError(emitter, structuredEvents,
                                             "Agent 回复过长，请缩小问题范围");
@@ -752,6 +908,7 @@ public class AgentClient {
                                 if (fullReply.length() == 0) {
                                     if (content.length() > MAX_STREAM_REPLY_CHARS) {
                                         streamFailed = true;
+                                        failureCode.compareAndSet(null, "AGENT_STREAM_OVER_LIMIT");
                                         log.warn("Agent 流式回复超过大小限制");
                                         sendSafeStreamError(emitter, structuredEvents,
                                                 "Agent 回复过长，请缩小问题范围");
@@ -771,6 +928,7 @@ public class AgentClient {
                                 }
                             } else if ("error".equals(eventType)) {
                                 streamFailed = true;
+                                failureCode.compareAndSet(null, "AGENT_STREAM_ERROR");
                                 log.warn("Agent 流式响应返回错误事件");
                                 sendSafeStreamError(emitter, structuredEvents,
                                         "Agent 流式请求失败，请稍后重试");
@@ -783,6 +941,7 @@ public class AgentClient {
                             }
                         } catch (IOException parseError) {
                             streamFailed = true;
+                            failureCode.compareAndSet(null, "AGENT_STREAM_INVALID_EVENT");
                             log.warn("解析 Agent 流式事件失败，errorType={}",
                                     parseError.getClass().getSimpleName());
                             sendSafeStreamError(emitter, structuredEvents,
@@ -794,6 +953,7 @@ public class AgentClient {
 
                 if (!streamFailed && !terminalReceived) {
                     streamFailed = true;
+                    failureCode.compareAndSet(null, "AGENT_STREAM_INCOMPLETE");
                     log.warn("Agent 流式响应缺少终止标记");
                     sendSafeStreamError(emitter, structuredEvents,
                             "Agent 流式响应不完整，请稍后重试");
@@ -803,9 +963,16 @@ public class AgentClient {
                         && terminalReceived
                         && !approvalPending
                         && fullReply.length() > 0
-                        && completedReplyConsumer != null
                         && replyDelivered.compareAndSet(false, true)) {
                     completedReplyConsumer.accept(fullReply.toString());
+                }
+                if (!streamFailed && terminalReceived && !approvalPending
+                        && outcomeListener != null
+                        && outcomeReported.compareAndSet(false, true)) {
+                    outcomeListener.onReply(fullReply.toString());
+                }
+                if (streamFailed) {
+                    reportFailed(outcomeListener, outcomeReported, failureCode.get());
                 }
                 emitter.complete();
             } catch (Exception e) {
@@ -830,15 +997,22 @@ public class AgentClient {
         emitter.onCompletion(() -> {
             toolTokenService.revoke(toolAccess);
             cancelStream(connectionRef, futureRef);
+            if (outcomeListener != null && outcomeReported.compareAndSet(false, true)) {
+                outcomeListener.onCancelled();
+            }
         });
         emitter.onTimeout(() -> {
             toolTokenService.revoke(toolAccess);
             cancelStream(connectionRef, futureRef);
+            reportFailed(outcomeListener, outcomeReported, "AGENT_STREAM_TIMEOUT");
             completeWithSafeError(emitter, "Agent 流式请求超时", structuredEvents);
         });
         emitter.onError(error -> {
             toolTokenService.revoke(toolAccess);
             cancelStream(connectionRef, futureRef);
+            if (outcomeListener != null && outcomeReported.compareAndSet(false, true)) {
+                outcomeListener.onCancelled();
+            }
         });
 
         try {
@@ -1056,6 +1230,17 @@ public class AgentClient {
                 || "action_completed".equals(eventType)
                 || "action_rejected".equals(eventType)
                 || "heartbeat".equals(eventType);
+    }
+
+    /** 报告流式失败终态；同一流只报告一次。 */
+    private static void reportFailed(
+            StreamOutcomeListener listener,
+            AtomicBoolean reported,
+            String errorCode) {
+        if (listener != null && reported.compareAndSet(false, true)) {
+            listener.onFailed(errorCode == null || errorCode.isEmpty()
+                    ? "AGENT_STREAM_ERROR" : errorCode);
+        }
     }
 
     /** 重建用户可见事件，禁止透传工具原始参数、结果、内部节点和任意扩展字段。 */

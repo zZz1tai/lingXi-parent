@@ -11,6 +11,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="userName" column="user_name" />
         <result property="content" column="content" />
         <result property="messageType" column="message_type" />
+        <result property="status" column="status" />
+        <result property="errorCode" column="error_code" />
+        <result property="requestId" column="request_id" />
+        <result property="completedAt" column="completed_at" />
         <result property="modelName" column="model_name" />
         <result property="tokens" column="tokens" />
         <result property="createTime" column="created_at" />
@@ -18,7 +22,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </resultMap>
 
     <sql id="selectModelHistoryVo">
-        select id, session_id, user_id, user_name, content, message_type, model_name, tokens, created_at, updated_at from tb_model_history
+        select id, session_id, user_id, user_name, content, message_type, status, error_code, request_id, completed_at, model_name, tokens, created_at, updated_at from tb_model_history
     </sql>
 
     <select id="selectModelHistoryList" parameterType="ModelHistory" resultMap="ModelHistoryResult">
@@ -51,6 +55,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="userName != null">user_name,</if>
             content,
             <if test="messageType != null">message_type,</if>
+            <if test="status != null">status,</if>
+            <if test="errorCode != null">error_code,</if>
+            <if test="requestId != null">request_id,</if>
+            <if test="completedAt != null">completed_at,</if>
             <if test="modelName != null">model_name,</if>
             <if test="tokens != null">tokens,</if>
             <if test="createTime != null">created_at,</if>
@@ -61,6 +69,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="userName != null">#{userName},</if>
             #{content},
             <if test="messageType != null">#{messageType},</if>
+            <if test="status != null">#{status},</if>
+            <if test="errorCode != null">#{errorCode},</if>
+            <if test="requestId != null">#{requestId},</if>
+            <if test="completedAt != null">#{completedAt},</if>
             <if test="modelName != null">#{modelName},</if>
             <if test="tokens != null">#{tokens},</if>
             <if test="createTime != null">#{createTime},</if>
@@ -75,6 +87,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="userName != null">user_name = #{userName},</if>
             <if test="content != null">content = #{content},</if>
             <if test="messageType != null">message_type = #{messageType},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="errorCode != null">error_code = #{errorCode},</if>
+            <if test="requestId != null">request_id = #{requestId},</if>
+            <if test="completedAt != null">completed_at = #{completedAt},</if>
             <if test="modelName != null">model_name = #{modelName},</if>
             <if test="tokens != null">tokens = #{tokens},</if>
             <if test="updateTime != null">updated_at = #{updateTime},</if>

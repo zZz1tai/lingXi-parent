@@ -14,7 +14,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -147,11 +146,12 @@ class QwenServiceImplTest {
         when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
         when(agentClient.streamChat(
                 anyString(), anyString(), any(AgentUserContext.class),
-                any(Consumer.class)))
+                any(), any(AgentClient.StreamOutcomeListener.class)))
                 .thenAnswer(invocation -> {
-                    Consumer<String> completed = invocation.getArgument(3);
-                    completed.accept("完整助手回复");
-                    completed.accept("完整助手回复");
+                    AgentClient.StreamOutcomeListener outcome =
+                            invocation.getArgument(4);
+                    outcome.onReply("完整助手回复");
+                    outcome.onReply("完整助手回复");
                     return new SseEmitter();
                 });
 
@@ -174,6 +174,7 @@ class QwenServiceImplTest {
         assertEquals("完整助手回复", assistant.getContent());
         assertEquals("session-1", assistant.getSessionId());
         assertEquals("user-9", assistant.getUserId());
+        assertEquals("SUCCEEDED", assistant.getStatus());
     }
 
     @SuppressWarnings("unchecked")
@@ -185,11 +186,12 @@ class QwenServiceImplTest {
         when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
         when(agentClient.streamChatV2(
                 anyString(), anyString(), any(AgentUserContext.class),
-                any(Consumer.class)))
+                any(), any(AgentClient.StreamOutcomeListener.class)))
                 .thenAnswer(invocation -> {
-                    Consumer<String> completed = invocation.getArgument(3);
-                    completed.accept("V2 完整回复");
-                    completed.accept("V2 完整回复");
+                    AgentClient.StreamOutcomeListener outcome =
+                            invocation.getArgument(4);
+                    outcome.onReply("V2 完整回复");
+                    outcome.onReply("V2 完整回复");
                     return new SseEmitter();
                 });
         QwenServiceImpl service = new QwenServiceImpl(
@@ -205,5 +207,122 @@ class QwenServiceImplTest {
                 .filter(item -> "assistant".equals(item.getMessageType()))
                 .count();
         assertEquals(1L, assistantCount);
+        ModelHistory assistant = captor.getAllValues().stream()
+                .filter(item -> "assistant".equals(item.getMessageType()))
+                .findFirst()
+                .orElseThrow(AssertionError::new);
+        assertEquals("SUCCEEDED", assistant.getStatus());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void streamingFailurePersistsFailedAssistantMessageWithErrorCode() {
+        AgentClient agentClient = mock(AgentClient.class);
+        IModelHistoryService historyService = mock(IModelHistoryService.class);
+        IDashBoardService dashboardService = mock(IDashBoardService.class);
+        when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
+        when(agentClient.streamChat(
+                anyString(), anyString(), any(AgentUserContext.class),
+                any(), any(AgentClient.StreamOutcomeListener.class)))
+                .thenAnswer(invocation -> {
+                    AgentClient.StreamOutcomeListener outcome =
+                            invocation.getArgument(4);
+                    outcome.onFailed("AGENT_STREAM_OVER_LIMIT");
+                    outcome.onFailed("AGENT_STREAM_OVER_LIMIT");
+                    return new SseEmitter();
+                });
+
+        QwenServiceImpl service = new QwenServiceImpl(
+                agentClient, historyService, dashboardService);
+        service.streamChat("session-fail", "user-9", "测试用户", "问题");
+
+        ArgumentCaptor<ModelHistory> captor = ArgumentCaptor.forClass(ModelHistory.class);
+        verify(historyService, org.mockito.Mockito.times(2))
+                .insertModelHistory(captor.capture());
+        ModelHistory assistant = captor.getAllValues().stream()
+                .filter(item -> "assistant".equals(item.getMessageType()))
+                .findFirst()
+                .orElseThrow(AssertionError::new);
+        assertEquals("FAILED", assistant.getStatus());
+        assertEquals("AGENT_STREAM_OVER_LIMIT", assistant.getErrorCode());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void streamingCancellationPersistsCancelledAssistantMessage() {
+        AgentClient agentClient = mock(AgentClient.class);
+        IModelHistoryService historyService = mock(IModelHistoryService.class);
+        IDashBoardService dashboardService = mock(IDashBoardService.class);
+        when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
+        when(agentClient.streamChat(
+                anyString(), anyString(), any(AgentUserContext.class),
+                any(), any(AgentClient.StreamOutcomeListener.class)))
+                .thenAnswer(invocation -> {
+                    AgentClient.StreamOutcomeListener outcome =
+                            invocation.getArgument(4);
+                    outcome.onCancelled();
+                    return new SseEmitter();
+                });
+
+        QwenServiceImpl service = new QwenServiceImpl(
+                agentClient, historyService, dashboardService);
+        service.streamChat("session-cancel", "user-9", "测试用户", "问题");
+
+        ArgumentCaptor<ModelHistory> captor = ArgumentCaptor.forClass(ModelHistory.class);
+        verify(historyService, org.mockito.Mockito.times(2))
+                .insertModelHistory(captor.capture());
+        ModelHistory assistant = captor.getAllValues().stream()
+                .filter(item -> "assistant".equals(item.getMessageType()))
+                .findFirst()
+                .orElseThrow(AssertionError::new);
+        assertEquals("CANCELLED", assistant.getStatus());
+    }
+
+    @Test
+    void syncFailurePersistsFailedAssistantMessageWithExtractedCode() {
+        AgentClient agentClient = mock(AgentClient.class);
+        IModelHistoryService historyService = mock(IModelHistoryService.class);
+        IDashBoardService dashboardService = mock(IDashBoardService.class);
+        when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
+        when(agentClient.chat(anyString(), anyString(), any(AgentUserContext.class)))
+                .thenThrow(new RuntimeException("Agent 调用失败 CODE:AGENT_CALL_OVER_LIMIT"));
+
+        QwenServiceImpl service = new QwenServiceImpl(
+                agentClient, historyService, dashboardService);
+        assertThrows(RuntimeException.class,
+                () -> service.chat("session-sync-fail", "user-9", "测试用户", "问题"));
+
+        ArgumentCaptor<ModelHistory> captor = ArgumentCaptor.forClass(ModelHistory.class);
+        verify(historyService, org.mockito.Mockito.times(2))
+                .insertModelHistory(captor.capture());
+        ModelHistory assistant = captor.getAllValues().stream()
+                .filter(item -> "assistant".equals(item.getMessageType()))
+                .findFirst()
+                .orElseThrow(AssertionError::new);
+        assertEquals("FAILED", assistant.getStatus());
+        assertEquals("AGENT_CALL_OVER_LIMIT", assistant.getErrorCode());
+    }
+
+    @Test
+    void userMessageIsMarkedAcceptedWithRequestId() {
+        AgentClient agentClient = mock(AgentClient.class);
+        IModelHistoryService historyService = mock(IModelHistoryService.class);
+        IDashBoardService dashboardService = mock(IDashBoardService.class);
+        when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
+        when(agentClient.chat(anyString(), anyString(), any(AgentUserContext.class)))
+                .thenReturn("回复");
+        QwenServiceImpl service = new QwenServiceImpl(
+                agentClient, historyService, dashboardService);
+
+        service.chat("session-acc", "user-9", "测试用户", "问题");
+
+        ArgumentCaptor<ModelHistory> captor = ArgumentCaptor.forClass(ModelHistory.class);
+        verify(historyService, org.mockito.Mockito.times(2))
+                .insertModelHistory(captor.capture());
+        ModelHistory userMessage = captor.getAllValues().stream()
+                .filter(item -> "user".equals(item.getMessageType()))
+                .findFirst()
+                .orElseThrow(AssertionError::new);
+        assertEquals("ACCEPTED", userMessage.getStatus());
     }
 }

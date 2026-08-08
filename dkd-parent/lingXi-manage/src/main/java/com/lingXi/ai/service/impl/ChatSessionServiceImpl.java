@@ -4,6 +4,7 @@ import java.util.List;
 import com.lingXi.common.utils.DateUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import com.lingXi.ai.mapper.ChatSessionMapper;
 import com.lingXi.manage.domain.ChatSession;
 import com.lingXi.ai.service.IChatSessionService;
@@ -160,6 +161,7 @@ public class ChatSessionServiceImpl implements IChatSessionService {
      * @return 结果
      */
     @Override
+    @Transactional
     public int deleteChatSessionAndHistoryBySessionIds(String[] sessionIds) {
         int result = 0;
         // 逐个复用单会话删除流程，确保每个会话都同步清理历史记录。
@@ -176,6 +178,7 @@ public class ChatSessionServiceImpl implements IChatSessionService {
      * @return 结果
      */
     @Override
+    @Transactional
     public int deleteChatSessionAndHistoryBySessionId(String sessionId) {
         // 先删除关联历史，再删除会话主体，避免留下无法归属的消息记录。
         int historyResult = modelHistoryService.deleteModelHistoryBySessionId(sessionId);

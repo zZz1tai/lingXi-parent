@@ -1,11 +1,13 @@
 package com.lingXi.ai.service.impl;
 
 import com.lingXi.ai.client.AgentClient;
+import com.lingXi.ai.client.AgentClient.StreamOutcomeListener;
 import com.lingXi.ai.domain.dto.AgentUserContext;
 import com.lingXi.ai.domain.dto.AiChatAttachmentAgentDTO;
 import com.lingXi.ai.domain.vo.ChatBaseVO;
 import com.lingXi.ai.service.AiChatAttachmentService;
 import com.lingXi.ai.service.IQwenService;
+import com.dkd.framework.web.filter.RequestIdFilter;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.manage.domain.ModelHistory;
 import com.lingXi.manage.service.IDashBoardService;
@@ -16,11 +18,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -35,6 +39,10 @@ public class QwenServiceImpl implements IQwenService {
     /** 与请求对象保持一致的会话标识格式校验器。 */
     private static final Pattern SESSION_ID_FORMAT =
             Pattern.compile(ChatBaseVO.SESSION_ID_REGEX);
+
+    /** 从异常消息中提取 Agent 错误码（如 {@code CODE:AGENT_STREAM_ERROR}）。 */
+    private static final Pattern ERROR_CODE_PATTERN =
+            Pattern.compile("CODE:\\s*([A-Z0-9_]+)");
 
     /** 负责与 Python Agent 通信。 */
     private final AgentClient agentClient;
@@ -102,10 +110,20 @@ public class QwenServiceImpl implements IQwenService {
         bindAttachments(
                 attachmentIds, normalizedSessionId,
                 trustedContext.getUserId(), userHistory.getId());
-        String reply = attachments.isEmpty()
-                ? agentClient.chat(normalizedMessage, normalizedSessionId, trustedContext)
-                : agentClient.chat(
-                        normalizedMessage, normalizedSessionId, trustedContext, attachments);
+        String reply;
+        try {
+            reply = attachments.isEmpty()
+                    ? agentClient.chat(normalizedMessage, normalizedSessionId, trustedContext)
+                    : agentClient.chat(
+                            normalizedMessage, normalizedSessionId, trustedContext, attachments);
+        } catch (RuntimeException agentFailure) {
+            saveFailedAssistantMessage(
+                    normalizedSessionId,
+                    trustedContext.getUserId(),
+                    trustedContext.getUserName(),
+                    extractErrorCode(agentFailure));
+            throw agentFailure;
+        }
         // 仅在 Agent 成功返回完整回答后保存助手消息。
         saveAssistantReply(
                 normalizedSessionId,
@@ -140,8 +158,18 @@ public class QwenServiceImpl implements IQwenService {
                 trustedContext.getUserId(),
                 trustedContext.getUserName(),
                 normalizedMessage);
-        String reply = agentClient.chatWithContext(
-                normalizedMessage, contextData, normalizedSessionId, trustedContext);
+        String reply;
+        try {
+            reply = agentClient.chatWithContext(
+                    normalizedMessage, contextData, normalizedSessionId, trustedContext);
+        } catch (RuntimeException agentFailure) {
+            saveFailedAssistantMessage(
+                    normalizedSessionId,
+                    trustedContext.getUserId(),
+                    trustedContext.getUserName(),
+                    extractErrorCode(agentFailure));
+            throw agentFailure;
+        }
         saveAssistantReply(
                 normalizedSessionId,
                 trustedContext.getUserId(),
@@ -181,21 +209,18 @@ public class QwenServiceImpl implements IQwenService {
         bindAttachments(
                 attachmentIds, normalizedSessionId,
                 trustedContext.getUserId(), userHistory.getId());
-        // 完成回调和异常边界可能竞争触发，使用原子标记保证助手回答最多落库一次。
-        AtomicBoolean assistantSaved = new AtomicBoolean(false);
-        Consumer<String> completedReply = reply -> saveStreamReplyOnce(
-                        assistantSaved,
-                        normalizedSessionId,
-                        trustedContext.getUserId(),
-                        trustedContext.getUserName(),
-                        reply);
+        // 终态统一由 outcome 回调落库：成功/失败/取消各一次，且只报告一次。
+        StreamOutcomeListener outcome = createStreamOutcome(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName());
         SseEmitter emitter = attachments.isEmpty()
                 ? agentClient.streamChat(
                         normalizedMessage, normalizedSessionId,
-                        trustedContext, completedReply)
+                        trustedContext, null, outcome)
                 : agentClient.streamChat(
                         normalizedMessage, normalizedSessionId,
-                        trustedContext, attachments, completedReply);
+                        trustedContext, attachments, null, outcome);
         emitter.onCompletion(() -> log.info(
                 "流式聊天完成，sessionIdLength={}", safeLength(normalizedSessionId)));
         return emitter;
@@ -226,20 +251,17 @@ public class QwenServiceImpl implements IQwenService {
         bindAttachments(
                 attachmentIds, normalizedSessionId,
                 trustedContext.getUserId(), userHistory.getId());
-        AtomicBoolean assistantSaved = new AtomicBoolean(false);
-        Consumer<String> completedReply = reply -> saveStreamReplyOnce(
-                        assistantSaved,
-                        normalizedSessionId,
-                        trustedContext.getUserId(),
-                        trustedContext.getUserName(),
-                        reply);
+        StreamOutcomeListener outcome = createStreamOutcome(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName());
         SseEmitter emitter = attachments.isEmpty()
                 ? agentClient.streamChatV2(
                         normalizedMessage, normalizedSessionId,
-                        trustedContext, completedReply)
+                        trustedContext, null, outcome)
                 : agentClient.streamChatV2(
                         normalizedMessage, normalizedSessionId,
-                        trustedContext, attachments, completedReply);
+                        trustedContext, attachments, null, outcome);
         emitter.onCompletion(() -> log.info(
                 "V2 流式聊天完成，sessionIdLength={}", safeLength(normalizedSessionId)));
         return emitter;
@@ -255,18 +277,17 @@ public class QwenServiceImpl implements IQwenService {
         String normalizedSessionId = requireValidSessionId(sessionId);
         String normalizedActionId = requireActionId(actionId);
         String normalizedDecision = requireDecision(decision);
-        AtomicBoolean assistantSaved = new AtomicBoolean(false);
+        StreamOutcomeListener outcome = createStreamOutcome(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName());
         SseEmitter emitter = agentClient.streamResumeAction(
                 normalizedSessionId,
                 trustedContext,
                 normalizedActionId,
                 normalizedDecision,
-                reply -> saveStreamReplyOnce(
-                        assistantSaved,
-                        normalizedSessionId,
-                        trustedContext.getUserId(),
-                        trustedContext.getUserName(),
-                        reply));
+                null,
+                outcome);
         emitter.onCompletion(() -> log.info(
                 "受控动作恢复流完成，sessionIdLength={}", safeLength(normalizedSessionId)));
         return emitter;
@@ -296,19 +317,18 @@ public class QwenServiceImpl implements IQwenService {
                 trustedContext.getUserId(),
                 trustedContext.getUserName(),
                 normalizedMessage);
-        // 与普通流式聊天共享“仅保存一次”的持久化约束。
-        AtomicBoolean assistantSaved = new AtomicBoolean(false);
+        // 终态统一由 outcome 回调落库：成功/失败/取消各一次，且只报告一次。
+        StreamOutcomeListener outcome = createStreamOutcome(
+                normalizedSessionId,
+                trustedContext.getUserId(),
+                trustedContext.getUserName());
         SseEmitter emitter = agentClient.streamChatWithContext(
                 normalizedMessage,
                 contextData,
                 normalizedSessionId,
                 trustedContext,
-                reply -> saveStreamReplyOnce(
-                        assistantSaved,
-                        normalizedSessionId,
-                        trustedContext.getUserId(),
-                        trustedContext.getUserName(),
-                        reply));
+                null,
+                outcome);
         emitter.onCompletion(() -> log.info(
                 "流式上下文聊天完成，sessionIdLength={}",
                 safeLength(normalizedSessionId)));
@@ -492,6 +512,8 @@ public class QwenServiceImpl implements IQwenService {
         history.setContent(content);
         history.setMessageType("user");
         history.setModelName("agent");
+        history.setStatus("ACCEPTED");
+        history.setRequestId(RequestIdFilter.current());
         if (modelHistoryService.insertModelHistory(history) != 1) {
             throw new IllegalStateException("用户消息持久化失败");
         }
@@ -499,7 +521,7 @@ public class QwenServiceImpl implements IQwenService {
     }
 
     /**
-     * 保存助手回复到对话历史
+     * 保存助手回复到对话历史（终态：成功）
      *
      * @param sessionId 会话唯一标识
      * @param userId    用户唯一标识
@@ -518,36 +540,132 @@ public class QwenServiceImpl implements IQwenService {
         history.setContent(content);
         history.setMessageType("assistant");
         history.setModelName("agent");
+        history.setStatus("SUCCEEDED");
+        history.setRequestId(RequestIdFilter.current());
+        history.setCompletedAt(new Date());
         if (modelHistoryService.insertModelHistory(history) != 1) {
             throw new IllegalStateException("助手回复持久化失败");
         }
     }
 
     /**
-     * 保存流式助手回复（仅保存一次，避免重复）
+     * 保存失败的助手消息（终态：失败，携带错误码）
      *
-     * @param assistantSaved 助手回复已保存标记
-     * @param sessionId      会话唯一标识
-     * @param userId         用户唯一标识
-     * @param userName       用户名称
-     * @param content        回复内容
+     * @param sessionId 会话唯一标识
+     * @param userId    用户唯一标识
+     * @param userName  用户名称
+     * @param errorCode 错误码
      */
-    private void saveStreamReplyOnce(
-            AtomicBoolean assistantSaved,
+    private void saveFailedAssistantMessage(
+            String sessionId, String userId, String userName, String errorCode) {
+        saveTerminalAssistantMessage(
+                sessionId, userId, userName, "FAILED", errorCode);
+    }
+
+    /**
+     * 保存被取消的助手消息（终态：已取消）
+     *
+     * @param sessionId 会话唯一标识
+     * @param userId    用户唯一标识
+     * @param userName  用户名称
+     */
+    private void saveCancelledAssistantMessage(
+            String sessionId, String userId, String userName) {
+        saveTerminalAssistantMessage(sessionId, userId, userName, "CANCELLED", null);
+    }
+
+    /**
+     * 保存终态（失败/取消）的助手消息，不包含回复内容
+     *
+     * @param sessionId 会话唯一标识
+     * @param userId    用户唯一标识
+     * @param userName  用户名称
+     * @param status    终态状态
+     * @param errorCode 错误码（可为空）
+     */
+    private void saveTerminalAssistantMessage(
             String sessionId,
             String userId,
             String userName,
-            String content) {
-        if (content == null || content.trim().isEmpty()) {
-            log.warn("忽略空的流式助手回复，sessionIdLength={}", safeLength(sessionId));
-            return;
+            String status,
+            String errorCode) {
+        ModelHistory history = new ModelHistory();
+        history.setSessionId(sessionId);
+        history.setUserId(userId);
+        history.setUserName(userName);
+        history.setMessageType("assistant");
+        history.setModelName("agent");
+        history.setStatus(status);
+        history.setErrorCode(errorCode);
+        history.setRequestId(RequestIdFilter.current());
+        history.setCompletedAt(new Date());
+        if (modelHistoryService.insertModelHistory(history) != 1) {
+            throw new IllegalStateException("助手消息终态持久化失败");
         }
-        if (assistantSaved.compareAndSet(false, true)) {
-            saveAssistantReply(sessionId, userId, userName, content);
-        } else {
-            log.warn("忽略重复的流式助手回复，sessionIdLength={}",
-                    safeLength(sessionId));
+    }
+
+    /**
+     * 构造流式终态回调：成功/失败/取消最多各落库一次，整体只报告一次。
+     *
+     * @param sessionId 会话唯一标识
+     * @param userId    用户唯一标识
+     * @param userName  用户名称
+     * @return 终态监听器
+     */
+    private StreamOutcomeListener createStreamOutcome(
+            String sessionId,
+            String userId,
+            String userName) {
+        AtomicBoolean outcomeReported = new AtomicBoolean(false);
+        return new StreamOutcomeListener() {
+            @Override
+            public void onReply(String reply) {
+                if (!outcomeReported.compareAndSet(false, true)) {
+                    log.warn("忽略重复的流式成功报告，sessionIdLength={}",
+                            safeLength(sessionId));
+                    return;
+                }
+                saveAssistantReply(sessionId, userId, userName, reply);
+            }
+
+            @Override
+            public void onFailed(String errorCode) {
+                if (!outcomeReported.compareAndSet(false, true)) {
+                    log.warn("忽略重复的流式失败报告，sessionIdLength={}",
+                            safeLength(sessionId));
+                    return;
+                }
+                saveFailedAssistantMessage(sessionId, userId, userName, errorCode);
+            }
+
+            @Override
+            public void onCancelled() {
+                if (!outcomeReported.compareAndSet(false, true)) {
+                    log.warn("忽略重复的流式取消报告，sessionIdLength={}",
+                            safeLength(sessionId));
+                    return;
+                }
+                saveCancelledAssistantMessage(sessionId, userId, userName);
+            }
+        };
+    }
+
+    /**
+     * 从异常中提取稳定的错误码：优先解析消息中的 {@code CODE:xxx}，
+     * 否则按异常类型兜底为通用错误码。
+     *
+     * @param failure 同步调用抛出的异常
+     * @return 错误码
+     */
+    private static String extractErrorCode(RuntimeException failure) {
+        String message = failure.getMessage();
+        if (message != null && !message.isBlank()) {
+            Matcher matcher = ERROR_CODE_PATTERN.matcher(message);
+            if (matcher.find()) {
+                return matcher.group(1);
+            }
         }
+        return "AGENT_CALL_FAILED";
     }
 
     /**
