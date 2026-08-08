@@ -47,7 +47,7 @@ function structuredEvent(event, data) {
   return { type: event === 'message' ? 'token' : event, content: data };
 }
 
-async function streamSse(path, { body, query, signal, onChunk, onEvent } = {}) {
+export async function streamSse(path, { body, query, signal, onChunk, onEvent } = {}) {
   const search = new URLSearchParams();
   Object.entries(query || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {

@@ -21,6 +21,7 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.extract import router as extract_router
 from app.api.v1.video import router as video_router
 from app.api.v1.chapter import router as chapter_router
+from app.api.v1.novel import router as novel_router
 from app.config.settings import settings
 from app.api.auth import require_service_auth
 from app.api.middleware import ResourceLimitMiddleware
@@ -204,6 +205,7 @@ app.include_router(chat_router, dependencies=protected)
 app.include_router(extract_router, dependencies=protected)
 app.include_router(video_router, dependencies=protected)
 app.include_router(chapter_router, dependencies=protected)
+app.include_router(novel_router, dependencies=protected)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])

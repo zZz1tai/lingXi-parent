@@ -46,7 +46,11 @@ $nk-gold: #b9922c;
 }
 
 @mixin nk-paper-grain($tone: light) {
-  background-color: if($tone == deep, $nk-kraft-3, $nk-kraft-1);
+  @if $tone == deep {
+    background-color: $nk-kraft-3;
+  } @else {
+    background-color: $nk-kraft-1;
+  }
   background-image:
     radial-gradient(ellipse at 20% 15%, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 55%),
     radial-gradient(ellipse at 80% 90%, rgba(160, 96, 46, 0.12) 0%, rgba(160, 96, 46, 0) 60%),
@@ -80,7 +84,7 @@ $nk-gold: #b9922c;
 // ════════════════════════════════════════════════════════
 .nk-page {
   position: relative;
-  height: 100%;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -425,6 +429,16 @@ $nk-gold: #b9922c;
         flex-wrap: wrap;
 
         .nk-word-count { font-weight: 700; color: var(--nk-sienna); }
+        .nk-worktype-badge {
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          padding: 2px 8px;
+          border-radius: 999px;
+          &.is-novel { background: rgba(71, 90, 131, 0.14); color: #475a83; }
+          &.is-short { background: rgba(160, 86, 46, 0.12); color: var(--nk-sienna); }
+        }
+        .nk-chapter-pos { font-weight: 600; color: var(--nk-ink); }
         .nk-save-state {
           display: inline-flex;
           align-items: center;
@@ -694,19 +708,19 @@ $nk-gold: #b9922c;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
 
-  .nk-chat-scroll {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 4px 2px 8px;
+.nk-chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 2px 8px;
 
-    &::-webkit-scrollbar { width: 8px; }
-    &::-webkit-scrollbar-thumb { background: rgba(160, 86, 46, 0.3); border-radius: 4px; }
-  }
+  &::-webkit-scrollbar { width: 8px; }
+  &::-webkit-scrollbar-thumb { background: rgba(160, 86, 46, 0.3); border-radius: 4px; }
 }
 
 .nk-chat-empty {
@@ -924,6 +938,40 @@ $nk-gold: #b9922c;
 }
 
 // 章节目录（目录纸）
+.nk-ai-next-chapter {
+  width: 100%;
+  justify-content: center;
+  margin-bottom: 8px;
+  background: rgba(160, 86, 46, 0.12);
+  border-color: rgba(160, 86, 46, 0.45);
+  color: var(--nk-sienna);
+  font-weight: 600;
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+// 短篇作品档案
+.nk-archive-card {
+  border: 1px solid rgba(110, 72, 34, 0.25);
+  background: rgba(244, 232, 205, 0.35);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+
+  .nk-archive-text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--nk-ink);
+    white-space: pre-wrap;
+  }
+
+  .nk-archive-done { color: var(--nk-sienna); font-weight: 600; }
+}
+
 .nk-chapter-list {
   display: flex;
   flex-direction: column;

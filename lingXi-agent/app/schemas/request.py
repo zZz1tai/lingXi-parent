@@ -267,6 +267,144 @@ class ChatRequest(StrictRequestModel):
         return self
 
 
+MAX_NOVEL_SETTINGS = 60
+MAX_NOVEL_SETTING_CHARS = 4_000
+MAX_NOVEL_WORK_CONTEXT_JSON_BYTES = 256 * 1024
+
+
+class NovelSettingItem(StrictRequestModel):
+    """作品设定卡条目，由 Java 从设定表加载后提交。"""
+
+    setting_type: str = Field(
+        ...,
+        min_length=1,
+        max_length=32,
+        pattern=r"^(character|world|outline|item|organization|event|style|other)$",
+        validation_alias=AliasChoices("setting_type", "settingType"),
+    )
+    title: str = Field(..., min_length=1, max_length=128)
+    content: str = Field(..., min_length=1, max_length=MAX_NOVEL_SETTING_CHARS)
+
+
+class NovelWorkContext(StrictRequestModel):
+    """小说创作的作品上下文，由受信任 Java 服务从作品库组装。"""
+
+    work_id: int | None = Field(
+        default=None, ge=1, validation_alias=AliasChoices("work_id", "workId")
+    )
+    work_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        validation_alias=AliasChoices("work_name", "workName"),
+    )
+    work_type: Literal["short", "novel"] = Field(
+        default="novel", validation_alias=AliasChoices("work_type", "workType")
+    )
+    genre: str | None = Field(default=None, min_length=1, max_length=64)
+    synopsis: str | None = Field(default=None, min_length=1, max_length=4_000)
+    chapter_title: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        validation_alias=AliasChoices("chapter_title", "chapterTitle"),
+    )
+    chapter_synopsis: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=4_000,
+        validation_alias=AliasChoices("chapter_synopsis", "chapterSynopsis"),
+    )
+    manuscript_tail: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=8_000,
+        description="当前章节正文末尾片段，用于无缝续写",
+        validation_alias=AliasChoices("manuscript_tail", "manuscriptTail"),
+    )
+    settings: list[NovelSettingItem] = Field(
+        default_factory=list,
+        max_length=MAX_NOVEL_SETTINGS,
+    )
+
+    @model_validator(mode="after")
+    def validate_total_bytes(self) -> "NovelWorkContext":
+        """作品上下文整体受编码后字节上限约束，防止提示词膨胀。"""
+        payload = self.model_dump(mode="json", exclude_none=True)
+        if not payload.get("settings"):
+            payload.pop("settings", None)
+        substantive = set(payload) - {"work_id", "work_type", "work_name"}
+        if not substantive:
+            raise ValueError("work_context must carry at least one piece of work data")
+        try:
+            encoded = json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("work_context must be JSON serializable") from exc
+        if len(encoded) > MAX_NOVEL_WORK_CONTEXT_JSON_BYTES:
+            raise ValueError(
+                f"work_context exceeds {MAX_NOVEL_WORK_CONTEXT_JSON_BYTES} encoded bytes"
+            )
+        return self
+
+
+class NovelSynopsisRequest(StrictRequestModel):
+    """「根据书名自动编写故事梗概」的轻量请求，直接调用 LLM，不进入 Agent。"""
+
+    work_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        validation_alias=AliasChoices("work_name", "workName"),
+    )
+    work_type: Literal["short", "novel"] = Field(
+        default="novel", validation_alias=AliasChoices("work_type", "workType")
+    )
+    genre: str | None = Field(default=None, min_length=1, max_length=64)
+    llm_config: LLMConfig | None = None
+
+    @field_validator("work_name", "genre", mode="before")
+    @classmethod
+    def reject_blank_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized if normalized else None
+
+
+class NovelWriteRequest(StrictRequestModel):
+    """小说创作智能体的流式创作请求。"""
+
+    message: str = Field(..., min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
+    user_id: str = Field(..., min_length=1, max_length=128)
+    thread_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$",
+        validation_alias=AliasChoices("thread_id", "session_id"),
+        description=(
+            "Per-work conversation identifier used by the checkpointer; "
+            "distinct from user_id"
+        ),
+    )
+    work_context: NovelWorkContext | None = None
+    max_iterations: int | None = Field(default=None, ge=1, le=20)
+    llm_config: LLMConfig | None = None
+
+    @field_validator("message")
+    @classmethod
+    def reject_blank_message(cls, value: str) -> str:
+        """拒绝空白创作指令。"""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("message must not be blank")
+        return normalized
+
+
 class ActionResumeRequest(StrictRequestModel):
     """Java 登录端确认后恢复同一 LangGraph checkpoint 的严格请求。"""
 

@@ -407,6 +407,184 @@ public class AgentClient {
     }
 
     /**
+     * 使用服务端组装的作品上下文调用小说创作智能体。
+     * <p>作品上下文从作品库加载，模型密钥与 Tavily 密钥服务端注入；
+     * 返回白名单化的结构化事件流，与 V2 聊天共用同一事件协议。</p>
+     */
+    public SseEmitter streamNovelWrite(
+            String message,
+            String sessionId,
+            String userId,
+            Object workContext,
+            Consumer<String> completedReplyConsumer) {
+        return streamNovel(message, sessionId, userId, workContext, completedReplyConsumer);
+    }
+
+    /**
+     * 根据书名与题材调用 Python 生成一段故事梗概。
+     * <p>直接使用白名单 LLM，不进入 Agent 图、不产生会话记忆与历史记录；
+     * 供新建作品表单在填好书名后一键自动拟写梗概。</p>
+     *
+     * @param workName 书名（必填）
+     * @param workType 作品类型：short/novel
+     * @param genre    题材，可空
+     * @return 生成的梗概文本
+     */
+    public String generateNovelSynopsis(String workName, String workType, String genre) {
+        try {
+            ObjectNode root = objectMapper.createObjectNode();
+            root.put("work_name", workName == null ? "" : workName.trim());
+            root.put("work_type", workType == null ? "novel" : workType.trim());
+            if (genre != null && !genre.trim().isEmpty()) {
+                root.put("genre", genre.trim());
+            }
+            putLlmConfig(root);
+
+            JsonNode response = requestJson(
+                    "POST",
+                    config.getNovelSynopsisUrl(),
+                    objectMapper.writeValueAsString(root));
+            requireSuccess(response, "AGENT_SYNOPSIS_FAILED", "AI 拟写梗概失败");
+            JsonNode data = response.get("data");
+            if (data == null || data.get("synopsis") == null
+                    || !data.get("synopsis").isTextual()
+                    || data.get("synopsis").asText().trim().isEmpty()) {
+                throw new RuntimeException("AI 返回了空的梗概");
+            }
+            return data.get("synopsis").asText().trim();
+        } catch (Exception e) {
+            log.error("AI 拟写梗概失败，errorType={}", e.getClass().getSimpleName());
+            throw new RuntimeException("AI 拟写梗概失败", e);
+        }
+    }
+
+    /**
+     * 根据书名流式拟写故事梗概，将 Python 侧的 token 事件逐字转发给浏览器。
+     * <p>与 {@link #generateNovelSynopsis} 同构，但不做聚合等待，
+     * 前端可在梗概文本框中实时看到生成过程。</p>
+     *
+     * @param workName 书名（必填）
+     * @param workType 作品类型：short/novel
+     * @param genre    题材，可空
+     * @return 转发 Python SSE 事件的 SseEmitter
+     */
+    public SseEmitter streamNovelSynopsis(String workName, String workType, String genre) {
+        long streamTimeout = config.getStreamTimeout() == null
+                || config.getStreamTimeout().longValue() <= 0L
+                        ? 310_000L : config.getStreamTimeout().longValue();
+        SseEmitter emitter = new SseEmitter(streamTimeout);
+        AtomicReference<HttpURLConnection> connectionRef = new AtomicReference<>();
+        AtomicReference<Future<?>> futureRef = new AtomicReference<>();
+
+        Runnable streamTask = () -> {
+            HttpURLConnection conn = null;
+            try {
+                ObjectNode root = objectMapper.createObjectNode();
+                root.put("work_name", workName == null ? "" : workName.trim());
+                root.put("work_type", workType == null ? "novel" : workType.trim());
+                if (genre != null && !genre.trim().isEmpty()) {
+                    root.put("genre", genre.trim());
+                }
+                putLlmConfig(root);
+
+                URL url = new URL(config.getBaseUrl() + config.getNovelSynopsisStreamUrl());
+                conn = (HttpURLConnection) url.openConnection();
+                connectionRef.set(conn);
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                conn.setRequestProperty("Accept", "text/event-stream");
+                applyServiceAuth(conn);
+                conn.setConnectTimeout(config.getConnectTimeout());
+                conn.setReadTimeout(config.getReadTimeout());
+                conn.setDoOutput(true);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(objectMapper.writeValueAsBytes(root));
+                }
+
+                int statusCode = conn.getResponseCode();
+                if (statusCode != HttpURLConnection.HTTP_OK) {
+                    String responseBody = AgentResponseUtil.readResponseBody(conn, statusCode);
+                    JsonNode error = AgentResponseUtil.normalizeError(
+                            objectMapper,
+                            responseBody,
+                            statusCode,
+                            "AGENT_SYNOPSIS_STREAM_ERROR",
+                            "AI 拟写梗概失败");
+                    throw remoteFailure(error, "AGENT_SYNOPSIS_STREAM_ERROR", "AI 拟写梗概失败");
+                }
+
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = readBoundedLine(br, MAX_STREAM_EVENT_CHARS)) != null) {
+                        line = line.trim();
+                        if (!line.startsWith("data:")) {
+                            continue;
+                        }
+                        String data = line.substring(5).trim();
+                        if (data.isEmpty()) {
+                            continue;
+                        }
+                        try {
+                            JsonNode node = objectMapper.readTree(data);
+                            String eventType = node.path("type").asText("");
+                            String content = node.path("content").asText("");
+                            if ("error".equals(eventType)) {
+                                emitter.send(SseEmitter.event().data(data));
+                                break;
+                            }
+                            if ("token".equals(eventType) && !content.isEmpty()) {
+                                emitter.send(SseEmitter.event().data(data));
+                            } else if ("done".equals(eventType)) {
+                                emitter.send(SseEmitter.event().data(data));
+                                break;
+                            }
+                        } catch (IOException parseError) {
+                            log.warn("解析梗概流式事件失败，errorType={}",
+                                    parseError.getClass().getSimpleName());
+                            emitter.send(SseEmitter.event().data(
+                                    "{\"type\":\"error\",\"content\":\"AI 拟写梗概失败，请稍后重试\"}"));
+                            break;
+                        }
+                    }
+                }
+                emitter.complete();
+            } catch (Exception e) {
+                log.error("AI 拟写梗概流式调用失败，errorType={}",
+                        e.getClass().getSimpleName());
+                try {
+                    emitter.send(SseEmitter.event().data(
+                            "{\"type\":\"error\",\"content\":\"AI 拟写梗概失败，请稍后重试\"}"));
+                    emitter.complete();
+                } catch (Exception ex) {
+                    emitter.completeWithError(ex);
+                }
+            } finally {
+                HttpURLConnection activeConnection = connectionRef.getAndSet(null);
+                if (activeConnection != null) {
+                    activeConnection.disconnect();
+                }
+            }
+        };
+
+        emitter.onCompletion(() -> cancelStream(connectionRef, futureRef));
+        emitter.onTimeout(() -> {
+            cancelStream(connectionRef, futureRef);
+            completeWithSafeError(emitter, "AI 拟写梗概超时，请稍后重试", true);
+        });
+        emitter.onError(error -> cancelStream(connectionRef, futureRef));
+
+        try {
+            futureRef.set(executorService.submit(streamTask));
+        } catch (RejectedExecutionException rejected) {
+            log.warn("梗概流式请求被限流，线程池与队列均已满");
+            completeWithSafeError(emitter, "AI 服务繁忙，请稍后重试", true);
+        }
+
+        return emitter;
+    }
+
+    /**
      * 建立到 Python Agent 的 SSE 连接，并把 token 事件转发给浏览器。
      * <p>完成、超时和客户端断开都会取消后台任务及 HTTP 连接；仅在收到完整终止标记后
      * 才把聚合后的回答交给持久化回调。</p>
@@ -672,6 +850,170 @@ public class AgentClient {
                     emitter, "Agent 流式服务繁忙，请稍后重试", structuredEvents);
         }
 
+        return emitter;
+    }
+
+    /**
+     * 建立到 Python 小说创作智能体的 SSE 连接，并把结构化事件转发给浏览器。
+     * <p>完成、超时和客户端断开都会取消后台任务及 HTTP 连接；仅在收到完整终止标记后
+     * 才把聚合后的回答交给持久化回调。此链路不使用 Java 业务工具令牌。</p>
+     */
+    private SseEmitter streamNovel(
+            String message,
+            String sessionId,
+            String userId,
+            Object workContext,
+            Consumer<String> completedReplyConsumer) {
+        long streamTimeout = config.getStreamTimeout() == null
+                || config.getStreamTimeout().longValue() <= 0L
+                        ? 310_000L : config.getStreamTimeout().longValue();
+        SseEmitter emitter = new SseEmitter(streamTimeout);
+        AtomicBoolean replyDelivered = new AtomicBoolean(false);
+        AtomicReference<HttpURLConnection> connectionRef = new AtomicReference<>();
+        AtomicReference<Future<?>> futureRef = new AtomicReference<>();
+
+        Runnable streamTask = () -> {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(config.getBaseUrl() + config.getNovelStreamUrl());
+                conn = (HttpURLConnection) url.openConnection();
+                connectionRef.set(conn);
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                conn.setRequestProperty("Accept", "text/event-stream");
+                applyServiceAuth(conn);
+                conn.setConnectTimeout(config.getConnectTimeout());
+                conn.setReadTimeout(config.getReadTimeout());
+                conn.setDoOutput(true);
+
+                String requestBody = buildNovelRequest(message, sessionId, userId, workContext);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(requestBody.getBytes(StandardCharsets.UTF_8));
+                }
+
+                int statusCode = conn.getResponseCode();
+                if (statusCode != HttpURLConnection.HTTP_OK) {
+                    String responseBody = AgentResponseUtil.readResponseBody(conn, statusCode);
+                    JsonNode error = AgentResponseUtil.normalizeError(
+                            objectMapper,
+                            responseBody,
+                            statusCode,
+                            "AGENT_STREAM_HTTP_ERROR",
+                            "Agent 流式请求失败");
+                    throw remoteFailure(error, "AGENT_STREAM_HTTP_ERROR", "Agent 流式请求失败");
+                }
+
+                StringBuilder fullReply = new StringBuilder();
+                boolean streamFailed = false;
+                boolean terminalReceived = false;
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = readBoundedLine(br, MAX_STREAM_EVENT_CHARS)) != null) {
+                        line = line.trim();
+                        if (!line.startsWith("data:")) {
+                            continue;
+                        }
+                        String data = line.substring(5).trim();
+                        if ("[DONE]".equals(data)) {
+                            terminalReceived = true;
+                            break;
+                        }
+                        try {
+                            JsonNode node = objectMapper.readTree(data);
+                            String eventType = node.path("type").asText("");
+                            String content = node.path("content").asText("");
+
+                            if ("token".equals(eventType) && !content.isEmpty()) {
+                                if (content.length()
+                                        > MAX_STREAM_REPLY_CHARS - fullReply.length()) {
+                                    streamFailed = true;
+                                    log.warn("Agent 流式回复超过大小限制");
+                                    sendSafeStreamError(emitter, true,
+                                            "Agent 回复过长，请缩小问题范围");
+                                    break;
+                                }
+                                fullReply.append(content);
+                                sendStructuredEvent(emitter, eventType, node);
+                            } else if ("done".equals(eventType) && !content.isEmpty()) {
+                                if (fullReply.length() == 0) {
+                                    if (content.length() > MAX_STREAM_REPLY_CHARS) {
+                                        streamFailed = true;
+                                        log.warn("Agent 流式回复超过大小限制");
+                                        sendSafeStreamError(emitter, true,
+                                                "Agent 回复过长，请缩小问题范围");
+                                        break;
+                                    }
+                                    fullReply.append(content);
+                                }
+                                sendStructuredEvent(emitter, eventType, node);
+                            } else if ("done".equals(eventType)) {
+                                sendStructuredEvent(emitter, eventType, node);
+                            } else if ("error".equals(eventType)) {
+                                streamFailed = true;
+                                log.warn("Agent 流式响应返回错误事件");
+                                sendSafeStreamError(emitter, true,
+                                        "Agent 流式请求失败，请稍后重试");
+                                break;
+                            } else if (isStructuredEvent(eventType)) {
+                                sendStructuredEvent(emitter, eventType, node);
+                            }
+                        } catch (IOException parseError) {
+                            streamFailed = true;
+                            log.warn("解析 Agent 流式事件失败，errorType={}",
+                                    parseError.getClass().getSimpleName());
+                            sendSafeStreamError(emitter, true,
+                                    "Agent 流式响应格式无效，请稍后重试");
+                            break;
+                        }
+                    }
+                }
+
+                if (!streamFailed && !terminalReceived) {
+                    streamFailed = true;
+                    log.warn("Agent 流式响应缺少终止标记");
+                    sendSafeStreamError(emitter, true,
+                            "Agent 流式响应不完整，请稍后重试");
+                }
+
+                if (!streamFailed
+                        && terminalReceived
+                        && fullReply.length() > 0
+                        && completedReplyConsumer != null
+                        && replyDelivered.compareAndSet(false, true)) {
+                    completedReplyConsumer.accept(fullReply.toString());
+                }
+                emitter.complete();
+            } catch (Exception e) {
+                log.error("Agent 流式调用失败，errorType={}",
+                        e.getClass().getSimpleName());
+                try {
+                    sendSafeStreamError(emitter, true, "Agent 流式调用失败，请稍后重试");
+                    emitter.complete();
+                } catch (Exception ex) {
+                    emitter.completeWithError(ex);
+                }
+            } finally {
+                HttpURLConnection activeConnection = connectionRef.getAndSet(null);
+                if (activeConnection != null) {
+                    activeConnection.disconnect();
+                }
+            }
+        };
+
+        emitter.onCompletion(() -> cancelStream(connectionRef, futureRef));
+        emitter.onTimeout(() -> {
+            cancelStream(connectionRef, futureRef);
+            completeWithSafeError(emitter, "Agent 流式请求超时", true);
+        });
+        emitter.onError(error -> cancelStream(connectionRef, futureRef));
+
+        try {
+            futureRef.set(executorService.submit(streamTask));
+        } catch (RejectedExecutionException rejected) {
+            log.warn("Agent 流式请求被限流，线程池与队列均已满");
+            completeWithSafeError(emitter, "Agent 流式服务繁忙，请稍后重试", true);
+        }
         return emitter;
     }
 
@@ -987,6 +1329,28 @@ public class AgentClient {
         }
     }
 
+    /** 删除小说作品会话对应的 Python checkpoint 创作记忆。 */
+    public void deleteNovelThreadMemory(String sessionId, String userId) {
+        try {
+            ObjectNode request = objectMapper.createObjectNode();
+            request.put("user_id", userId == null ? "" : userId.trim());
+            request.put("thread_id", sessionId == null ? "" : sessionId.trim());
+
+            JsonNode response = requestJson(
+                    "DELETE",
+                    config.getNovelThreadDeleteUrl(),
+                    objectMapper.writeValueAsString(request));
+            requireSuccess(
+                    response,
+                    "AGENT_THREAD_DELETE_FAILED",
+                    "Agent 会话记忆删除失败");
+        } catch (Exception e) {
+            log.error("删除 Agent 会话记忆失败，errorType={}",
+                    e.getClass().getSimpleName());
+            throw new RuntimeException("删除 Agent 会话记忆失败", e);
+        }
+    }
+
     /** 获取当前认证用户的规范化长期回答偏好。 */
     public Map<String, Object> listLongTermMemories(String userId) {
         try {
@@ -1094,6 +1458,29 @@ public class AgentClient {
             return objectMapper.writeValueAsString(root);
         } catch (Exception exception) {
             throw new RuntimeException("构建动作恢复请求失败", exception);
+        }
+    }
+
+    /** 构造小说创作智能体请求体；作品上下文由服务端组装，模型与搜索密钥服务端注入。 */
+    private String buildNovelRequest(
+            String message, String sessionId, String userId, Object workContext) {
+        try {
+            ObjectNode root = objectMapper.createObjectNode();
+            root.put("message", message);
+            if (sessionId != null && !sessionId.trim().isEmpty()) {
+                root.put("thread_id", sessionId.trim());
+            }
+            if (userId != null && !userId.trim().isEmpty()) {
+                root.put("user_id", userId.trim());
+            }
+            if (workContext != null) {
+                root.set("work_context", objectMapper.valueToTree(workContext));
+            }
+            root.put("max_iterations", config.getMaxIterations());
+            putLlmConfig(root);
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            throw new RuntimeException("构建请求失败", e);
         }
     }
 

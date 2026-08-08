@@ -7,7 +7,7 @@ import json
 import os
 from collections import OrderedDict
 from threading import RLock
-from typing import Any
+from typing import Any, Mapping
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
@@ -18,6 +18,7 @@ from pydantic import SecretStr
 
 from app.agents.builder import build_search_agent
 from app.agents.checkpoints import create_in_memory_checkpointer
+from app.agents.novel_builder import build_novel_agent, get_novel_tools
 from app.agents.state import AgentContext, checkpoint_thread_id
 from app.agents.tools.business_data import create_business_data_tools
 from app.agents.tools.general import create_general_tools
@@ -42,6 +43,7 @@ from app.utils.logger import logger
 _llm_instance: BaseChatModel | None = None
 _agent_instance: CompiledStateGraph | None = None
 _ephemeral_agent_instance: CompiledStateGraph | None = None
+_novel_agent_instance: CompiledStateGraph | None = None
 _checkpointer_instance: BaseCheckpointSaver | None = None
 _store_instance: BaseStore | None = None
 _knowledge_retriever_instance: KnowledgeRetriever | None = None
@@ -270,8 +272,9 @@ def configure_agent_runtime(
     """在服务前注入生命周期拥有的持久化内存、Store 和知识后端。"""
 
     global _checkpointer_instance, _store_instance, _agent_instance
-    global _ephemeral_agent_instance, _knowledge_retriever_instance
-    global _agent_tool_client_instance, _memory_service_instance
+    global _ephemeral_agent_instance, _novel_agent_instance
+    global _knowledge_retriever_instance, _agent_tool_client_instance
+    global _memory_service_instance
     _checkpointer_instance = checkpointer
     _store_instance = store
     _knowledge_retriever_instance = knowledge_retriever
@@ -279,6 +282,7 @@ def configure_agent_runtime(
     _memory_service_instance = memory_service
     _agent_instance = None
     _ephemeral_agent_instance = None
+    _novel_agent_instance = None
 
 
 def get_checkpointer() -> BaseCheckpointSaver:
@@ -402,6 +406,67 @@ def create_agent_context(
     )
 
 
+def get_novel_agent(
+    *,
+    checkpointed: bool = True,
+    model: BaseChatModel | None = None,
+) -> CompiledStateGraph:
+    """返回小说创作 Agent，默认缓存共享图并携带持久检查点。"""
+
+    if model is not None:
+        return build_novel_agent(
+            model=model,
+            tools=get_novel_tools(),
+            checkpointer=get_checkpointer() if checkpointed else None,
+            store=_store_instance,
+        )
+
+    global _novel_agent_instance
+    if checkpointed:
+        if _novel_agent_instance is None:
+            _novel_agent_instance = build_novel_agent(
+                model=get_llm(profile="agent-default"),
+                tools=get_novel_tools(),
+                checkpointer=get_checkpointer(),
+                store=_store_instance,
+            )
+            logger.info("Checkpointed novel agent initialized and cached")
+        return _novel_agent_instance
+
+    return build_novel_agent(
+        model=get_llm(profile="agent-default"),
+        tools=get_novel_tools(),
+        checkpointer=None,
+        store=_store_instance,
+    )
+
+
+def create_novel_agent_context(
+    *,
+    llm_config: LLMConfig | None,
+    user_id: str,
+    thread_id: str,
+    novel_context: Mapping[str, Any] | None = None,
+) -> AgentContext:
+    """构建小说创作调用上下文并解析任何有界的模型覆盖。"""
+
+    model = (
+        create_llm(llm_config, profile="chat-request")
+        if llm_config is not None
+        else None
+    )
+    return AgentContext(
+        user_id=user_id,
+        thread_id=thread_id,
+        checkpointed=bool(thread_id),
+        novel_context=novel_context,
+        tavily_api_key=(
+            llm_config.tavily_api_key if llm_config is not None else None
+        ),
+        model=model,
+    )
+
+
 def get_request_id() -> str:
     """重用请求中间件的ID，仅在直接调用时生成。"""
 
@@ -416,11 +481,13 @@ def reset_singletons() -> None:
     """重置用于测试和应用程序关闭的进程本地缓存。"""
 
     global _llm_instance, _agent_instance, _ephemeral_agent_instance
-    global _checkpointer_instance, _store_instance, _knowledge_retriever_instance
-    global _agent_tool_client_instance, _memory_service_instance
+    global _novel_agent_instance, _checkpointer_instance, _store_instance
+    global _knowledge_retriever_instance, _agent_tool_client_instance
+    global _memory_service_instance
     _llm_instance = None
     _agent_instance = None
     _ephemeral_agent_instance = None
+    _novel_agent_instance = None
     _checkpointer_instance = None
     _store_instance = None
     _knowledge_retriever_instance = None

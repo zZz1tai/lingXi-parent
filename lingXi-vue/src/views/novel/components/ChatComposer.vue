@@ -4,10 +4,6 @@
       <span class="nk-paper-title">对话创作</span>
       <span class="nk-stamp">AI 执笔</span>
       <div class="nk-paper-tools">
-        <label class="nk-context-toggle" title="发送时自动携带当前手稿/章节作为上下文">
-          <input v-model="carryContext" type="checkbox" />
-          <span>携带上下文</span>
-        </label>
         <button v-if="messages.length" class="nk-btn is-quiet" type="button" title="清空本作品的创作对话" @click="handleClearChat">
           <el-icon><Delete /></el-icon>
         </button>
@@ -82,7 +78,7 @@
       <textarea
         v-model="draftText"
         rows="2"
-        placeholder="向 AI 下达写作指令，例如：以悬疑的笔调续写下一段……"
+        :placeholder="props.work?.workType === 'novel' ? '向 AI 下达写作指令，例如：以悬疑的笔调续写本章下一段……' : '向 AI 下达写作指令，例如：扩写这个开头，让画面更有冲击力……'"
         @keydown.enter.exact.prevent="send(draftText, false)"
       />
       <div class="nk-chat-tools">
@@ -126,7 +122,6 @@ const emit = defineEmits(['insert'])
 const messages = ref([])
 const draftText = ref('')
 const streaming = ref(false)
-const carryContext = ref(true)
 const scrollRef = ref(null)
 let abortController = null
 
@@ -153,15 +148,15 @@ watch(
   { immediate: true }
 )
 
-async function loadHistory(workId) {
+  async function loadHistory(workId) {
   const work = props.work
   if (!work) return
   try {
     const result = await getChatHistory(workSessionId(work))
-    const history = result?.rows || result?.data?.rows || []
+    const history = result?.data || result?.rows || []
     messages.value = (Array.isArray(history) ? history : []).map(item => ({
       id: `${item.id || Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      role: item.role === 'user' ? 'user' : 'ai',
+      role: item.messageType === 'user' ? 'user' : 'ai',
       content: item.content || '',
       streaming: false
     }))
@@ -209,22 +204,6 @@ const suggestionPrompts = computed(() => {
 // ── 发送 ─────────────────────────────────────────────
 const canSend = computed(() => !!(draftText.value.trim() || streaming.value) && !streaming.value)
 
-function buildContext() {
-  if (!props.work) return ''
-  const isNovel = props.work.workType === 'novel'
-  const parts = []
-  parts.push(`作品：《${props.work.workName}》${isNovel ? '（长篇小说）' : '（短篇故事）'}`)
-  if (props.work.genre) parts.push(`题材：${props.work.genre}`)
-  if (props.work.synopsis) parts.push(`梗概：${props.work.synopsis}`)
-  if (isNovel) {
-    if (props.chapter?.chapterTitle) parts.push(`当前章节：《${props.chapter.chapterTitle}》`)
-    if (props.chapter?.synopsis) parts.push(`本章梗概：${props.chapter.synopsis}`)
-  }
-  const tail = (props.manuscript || '').trim().slice(-800)
-  if (tail) parts.push(`\n——当前正文（末尾 800 字）——\n${tail}`)
-  return parts.join('\n')
-}
-
 async function send(rawText, asInstruction) {
   const text = (rawText || '').trim()
   if (!text || streaming.value) return
@@ -232,10 +211,6 @@ async function send(rawText, asInstruction) {
   let content = text
   if (asInstruction) {
     content = `【写作指令】${text}`
-  }
-  if (carryContext.value) {
-    const context = buildContext()
-    if (context) content = `${content}\n\n【上下文】\n${context}`
   }
 
   const userMessage = { id: `u_${Date.now()}`, role: 'user', content, streaming: false }
@@ -252,8 +227,8 @@ async function send(rawText, asInstruction) {
       {
         message: content,
         sessionId: workSessionId(props.work),
-        userId: props.userId || undefined,
-        userName: props.userName || undefined
+        workId: props.work?.workId,
+        chapterId: props.chapter?.chapterId || undefined
       },
       {
         signal: abortController.signal,
@@ -330,22 +305,10 @@ async function scrollToBottom(soft = false) {
 }
 
 // 父组件暴露作品变化时更新会话上下文
-defineExpose({ workSessionId })
+defineExpose({ workSessionId, send })
 </script>
 
 <style scoped>
-.nk-context-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--nk-ink-soft);
-  cursor: pointer;
-  user-select: none;
-
-  input { accent-color: var(--nk-sienna); cursor: pointer; }
-}
-
 .nk-msg-actions {
   display: flex;
   gap: 8px;

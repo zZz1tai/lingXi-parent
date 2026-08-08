@@ -163,6 +163,10 @@ agent:
   memory-list-url: /api/v1/chat/memory/list
   memory-preference-url: /api/v1/chat/memory/preference
   memory-clear-url: /api/v1/chat/memory
+  novel-stream-url: /api/v1/novel/write/stream
+  novel-thread-delete-url: /api/v1/novel/thread
+  novel-synopsis-url: /api/v1/novel/synopsis/generate
+  novel-synopsis-stream-url: /api/v1/novel/synopsis/stream
   style: professional
   max-iterations: 5
   connect-timeout: 5000

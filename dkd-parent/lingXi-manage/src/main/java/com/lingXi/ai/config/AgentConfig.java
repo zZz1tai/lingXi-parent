@@ -39,6 +39,14 @@ public class AgentConfig implements EnvironmentAware {
     private String imageOcrUrl = "/api/v1/chat/ocr";
     /** 删除 Python checkpoint 会话记忆接口路径 */
     private String threadDeleteUrl = "/api/v1/chat/thread";
+    /** 小说创作智能体流式创作接口路径 */
+    private String novelStreamUrl = "/api/v1/novel/write/stream";
+    /** 删除小说作品会话记忆接口路径 */
+    private String novelThreadDeleteUrl = "/api/v1/novel/thread";
+    /** 根据书名自动生成故事梗概接口路径 */
+    private String novelSynopsisUrl = "/api/v1/novel/synopsis/generate";
+    /** 根据书名流式生成故事梗概接口路径 */
+    private String novelSynopsisStreamUrl = "/api/v1/novel/synopsis/stream";
     /** 查看当前用户长期回答偏好接口路径。 */
     private String memoryListUrl = "/api/v1/chat/memory/list";
     /** 修改当前用户单项长期回答偏好接口路径。 */

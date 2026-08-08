@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal, Mapping
 
 from langchain.agents import AgentState
 from langchain_core.language_models import BaseChatModel
@@ -38,6 +38,11 @@ class AgentContext:
     region_name: str = ""
     permissions: tuple[str, ...] = ()
     memory_preferences: tuple[tuple[str, str], ...] = ()
+    novel_context: Mapping[str, Any] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     agent_request_id: str = ""
     tool_access_token: SecretStr | None = field(
         default=None,

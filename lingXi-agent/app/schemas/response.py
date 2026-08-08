@@ -98,6 +98,18 @@ class ImageOcrResponse(BaseResponse):
     data: ImageOcrData
 
 
+class NovelSynopsisData(BaseModel):
+    """根据书名生成的自动故事梗概。"""
+
+    synopsis: str
+
+
+class NovelSynopsisResponse(BaseResponse):
+    """``POST /api/v1/novel/synopsis/generate``端点的响应。"""
+
+    data: NovelSynopsisData
+
+
 class MemoryListData(BaseModel):
     """长期记忆功能状态与当前用户偏好。"""
 

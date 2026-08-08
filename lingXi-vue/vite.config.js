@@ -39,7 +39,7 @@ export default defineConfig(({ mode, command }) => {
       proxy: {
         // https://cn.vitejs.dev/config/#server-proxy
         '/dev-api': {
-          target: process.env.VITE_APP_PROXY_TARGET || VITE_APP_PROXY_TARGET || 'http://127.0.0.1:8080',
+          target: process.env.VITE_APP_PROXY_TARGET || VITE_APP_PROXY_TARGET || 'http://127.0.0.1:8081',
           // target: 'https://api.wzs.pub/mock/13',
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/dev-api/, '')

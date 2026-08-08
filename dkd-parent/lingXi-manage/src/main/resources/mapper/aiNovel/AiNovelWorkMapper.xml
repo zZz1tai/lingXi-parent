@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiNovel.mapper.AiNovelWorkMapper">
+
+    <resultMap id="AiNovelWorkResult" type="AiNovelWork">
+        <id property="workId" column="work_id"/>
+        <result property="workName" column="work_name"/>
+        <result property="workType" column="work_type"/>
+        <result property="genre" column="genre"/>
+        <result property="synopsis" column="synopsis"/>
+        <result property="manuscript" column="manuscript"/>
+        <result property="status" column="status"/>
+        <result property="ownerUserId" column="owner_user_id"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateBy" column="update_by"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="remark" column="remark"/>
+    </resultMap>
+
+    <sql id="selectAiNovelWorkVo">
+        select work_id, work_name, work_type, genre, synopsis, manuscript, status,
+               owner_user_id, create_by, create_time, update_by, update_time, remark
+        from ai_novel_work
+    </sql>
+
+    <select id="selectAiNovelWorkByWorkId" parameterType="Long" resultMap="AiNovelWorkResult">
+        <include refid="selectAiNovelWorkVo"/>
+        where work_id = #{workId} and del_flag = '0'
+    </select>
+
+    <select id="selectAiNovelWorkList" parameterType="AiNovelWork" resultMap="AiNovelWorkResult">
+        <include refid="selectAiNovelWorkVo"/>
+        <where>
+            del_flag = '0'
+            <if test="ownerUserId != null">and owner_user_id = #{ownerUserId}</if>
+            <if test="workName != null and workName != ''">and work_name like concat('%', #{workName}, '%')</if>
+            <if test="workType != null and workType != ''">and work_type = #{workType}</if>
+            <if test="status != null and status != ''">and status = #{status}</if>
+        </where>
+        order by update_time desc, work_id desc
+    </select>
+
+    <insert id="insertAiNovelWork" parameterType="AiNovelWork" useGeneratedKeys="true" keyProperty="workId">
+        insert into ai_novel_work
+        (work_name, work_type, genre, synopsis, manuscript, status, owner_user_id, create_by, create_time, remark)
+        values
+        (#{workName}, #{workType}, #{genre}, #{synopsis}, #{manuscript}, #{status}, #{ownerUserId}, #{createBy}, #{createTime}, #{remark})
+    </insert>
+
+    <update id="updateAiNovelWork" parameterType="AiNovelWork">
+        update ai_novel_work
+        <set>
+            <if test="workName != null">work_name = #{workName},</if>
+            <if test="workType != null">work_type = #{workType},</if>
+            <if test="genre != null">genre = #{genre},</if>
+            <if test="synopsis != null">synopsis = #{synopsis},</if>
+            <if test="manuscript != null">manuscript = #{manuscript},</if>
+            <if test="status != null">status = #{status},</if>
+            update_by = #{updateBy},
+            update_time = #{updateTime}
+        </set>
+        where work_id = #{workId} and del_flag = '0'
+    </update>
+
+    <update id="deleteAiNovelWorkByWorkIds">
+        update ai_novel_work set del_flag = '2', update_time = now()
+        where owner_user_id = #{ownerUserId} and del_flag = '0' and work_id in
+        <foreach collection="workIds" item="workId" open="(" separator="," close=")">
+            #{workId}
+        </foreach>
+    </update>
+</mapper>

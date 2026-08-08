@@ -1,5 +1,5 @@
 import request from '@/utils/request'
-import { streamChatWithQwen } from '@/api/ai'
+import { streamSse } from '@/api/ai'
 
 /**
  * AI 小说创作工作台接口契约。
@@ -44,6 +44,32 @@ export function delNovelWork(workId) {
   return request({
     url: '/novel/work/' + workId,
     method: 'delete'
+  })
+}
+
+/**
+ * 根据书名自动拟写故事梗概（服务端直接调用 LLM，不进入创作会话）。
+ * @param {{workName: string, workType: string, genre?: string}} data
+ */
+export function generateNovelSynopsis(data) {
+  return request({
+    url: '/novel/synopsis/generate',
+    method: 'post',
+    data: data,
+    timeout: 60000
+  })
+}
+
+/**
+ * 流式拟写故事梗概（SSE），梗概文本逐字回调
+ * @param {{workName: string, workType: string, genre?: string}} data
+ * @param {{signal?: AbortSignal, onChunk?: (text: string) => void}} options
+ */
+export function streamNovelSynopsis(data, { signal, onChunk } = {}) {
+  return streamSse('/novel/synopsis/stream', {
+    body: data,
+    signal,
+    onChunk
   })
 }
 
@@ -138,15 +164,20 @@ export function saveNovelManuscript(workId, data) {
 }
 
 /**
- * 流式调用灵犀智能助手进行创作（复用现有 AI 对话链路）。
- * 通过 prompt 携带作品上下文，让模型按指定角色/要求续写或润色。
+ * 流式调用小说创作智能体（独立智能体，自动联网核查）。
+ * 服务端从作品库组装作品上下文（梗概/章节/正文末尾/设定卡），
+ * 浏览器仅提交创作指令、作品会话与作品/章节标识。
  */
 export function streamNovelWrite(payload, { signal, onChunk, onEvent } = {}) {
-  return streamChatWithQwen(
-    payload.message,
-    payload.sessionId,
-    payload.userId,
-    payload.userName,
-    { signal, onChunk, onEvent }
-  )
+  return streamSse('/novel/write/stream', {
+    body: {
+      message: payload.message,
+      sessionId: payload.sessionId,
+      workId: payload.workId,
+      chapterId: payload.chapterId
+    },
+    signal,
+    onChunk,
+    onEvent
+  })
 }
