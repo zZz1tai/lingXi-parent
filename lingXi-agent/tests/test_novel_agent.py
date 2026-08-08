@@ -275,7 +275,8 @@ def test_novel_synopsis_prompt_contains_book_and_constraints() -> None:
     assert "《雾隐城》" in prompt
     assert "长篇" in prompt
     assert "东方玄幻" in prompt
-    assert "200～400 字" in NOVEL_SYNOPSIS_SYSTEM_PROMPT
+    assert "200～400 字" not in NOVEL_SYNOPSIS_SYSTEM_PROMPT
+    assert "800～1500 字" in NOVEL_SYNOPSIS_SYSTEM_PROMPT
 
 
 def test_novel_synopsis_prompt_defaults_genre_and_short_type() -> None:

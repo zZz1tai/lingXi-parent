@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.dkd.framework.web.filter.RequestIdFilter;
 import com.lingXi.common.filter.RepeatableFilter;
 import com.lingXi.common.filter.XssFilter;
 import com.lingXi.common.utils.StringUtils;
@@ -40,6 +41,18 @@ public class FilterConfig
         Map<String, String> initParameters = new HashMap<String, String>();
         initParameters.put("excludes", excludes);
         registration.setInitParameters(initParameters);
+        return registration;
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    @Bean
+    public FilterRegistrationBean requestIdFilterRegistration()
+    {
+        FilterRegistrationBean registration = new FilterRegistrationBean();
+        registration.setFilter(new RequestIdFilter());
+        registration.addUrlPatterns("/*");
+        registration.setName("requestIdFilter");
+        registration.setOrder(FilterRegistrationBean.HIGHEST_PRECEDENCE + 10);
         return registration;
     }
 

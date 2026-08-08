@@ -5,6 +5,7 @@ import com.lingXi.ai.domain.dto.AgentUserContext;
 import com.lingXi.ai.domain.dto.tool.AgentToolAccess;
 import com.lingXi.ai.domain.dto.tool.AgentToolException;
 import com.lingXi.ai.domain.dto.tool.AgentToolGrant;
+import com.dkd.framework.web.filter.RequestIdFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -58,7 +59,7 @@ public class AgentToolTokenService {
         byte[] tokenBytes = new byte[TOKEN_BYTES];
         secureRandom.nextBytes(tokenBytes);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
-        String requestId = "req-" + UUID.randomUUID().toString().replace("-", "");
+        String requestId = resolveRequestId();
         Set<String> permissions = new LinkedHashSet<>(userContext.getPermissions());
         Set<String> allowedTools = AgentToolCatalog.allowedTools(permissions);
         if (!config.isWriteActionsEnabled()) {
@@ -131,6 +132,19 @@ public class AgentToolTokenService {
 
     int activeGrantCount() {
         return grants.size();
+    }
+
+    /**
+     * 复用当前 HTTP 请求的 request_id（当其为 {@code req-} 格式时），
+     * 使 Agent 工具调用与 Java 日志、响应头使用同一条链路标识；
+     * 否则生成新的 {@code req-} 前缀标识。
+     */
+    static String resolveRequestId() {
+        String fromContext = RequestIdFilter.current();
+        if (fromContext != null && RequestIdFilter.GENERATED_PATTERN.matcher(fromContext).matches()) {
+            return fromContext;
+        }
+        return "req-" + UUID.randomUUID().toString().replace("-", "");
     }
 
     private void cleanupExpired() {

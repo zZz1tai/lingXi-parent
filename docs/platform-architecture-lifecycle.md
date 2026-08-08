@@ -721,6 +721,7 @@ status, error_code, provider, model_profile
 ## 16. 相关文档
 
 - [平台总览](../README.md)
+- [Java ↔ Agent 服务契约（v1）](java-agent-contract.md)
 - [AI Agent 开发与接口说明](../lingXi-agent/README.md)
 - [Java AI 对话编排实现](../dkd-parent/lingXi-manage/src/main/java/com/lingXi/ai/service/impl/QwenServiceImpl.java)
 - [Java Agent 客户端](../dkd-parent/lingXi-manage/src/main/java/com/lingXi/ai/client/AgentClient.java)

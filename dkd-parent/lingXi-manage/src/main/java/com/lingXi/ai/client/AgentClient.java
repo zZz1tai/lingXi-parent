@@ -65,7 +65,7 @@ public class AgentClient {
     /** 签发与对话生命周期绑定的短期 Java Tool Gateway 令牌。 */
     private final AgentToolTokenService toolTokenService;
     /** 提供数据库安全配置（含 Tavily Search API Key）；可选依赖，测试构造可缺省。 */
-    @Autowired
+    @Autowired(required = false)
     private SystemSecurityConfigService securityConfigService;
 
     /**
@@ -1698,12 +1698,16 @@ public class AgentClient {
         return response;
     }
 
-    /** 为 Java 到 Python 的每个请求附加服务间认证头。 */
+    /** 为 Java 到 Python 的每个请求附加服务间认证头，并透传统一 request_id。 */
     private void applyServiceAuth(HttpURLConnection conn) {
         String serviceApiKey = config.getServiceApiKey();
         if (serviceApiKey == null || serviceApiKey.trim().isEmpty()) {
             throw new IllegalStateException("agent.service-api-key is not configured");
         }
         conn.setRequestProperty("X-Agent-Service-Key", serviceApiKey);
+        String requestId = com.dkd.framework.web.filter.RequestIdFilter.current();
+        if (requestId != null) {
+            conn.setRequestProperty("X-Request-Id", requestId);
+        }
     }
 }

@@ -1,0 +1,56 @@
+name: Agent CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lingXi-agent/**'
+      - '.github/workflows/agent-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lingXi-agent/**'
+      - '.github/workflows/agent-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: agent-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python lint + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lingXi-agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: lingXi-agent/requirements*.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Check dependency integrity
+        run: python -m pip check
+
+      - name: Syntax check
+        run: python -m compileall -q app
+
+      - name: Run tests (offline, no real models)
+        run: python -m pytest -q
+
+      - name: Env template sanity
+        run: |
+          python - <<'EOF'
+          import os, pathlib
+          example = pathlib.Path('.env.example').read_text(encoding='utf-8')
+          assert 'AGENT_SERVICE_API_KEY' in example
+          assert 'replace-with-a-long-random-secret' in example
+          print('env example OK')
+          EOF

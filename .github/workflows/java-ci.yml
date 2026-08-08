@@ -1,0 +1,47 @@
+name: Java CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dkd-parent/**'
+      - '.github/workflows/java-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'dkd-parent/**'
+      - '.github/workflows/java-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: java-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Maven test + package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dkd-parent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Run tests (offline contract suite included)
+        run: mvn -pl lingXi-admin -am test -B -DskipTests=false
+
+      - name: Package
+        run: mvn -pl lingXi-admin -am package -B -DskipTests
+
+      - name: Upload admin jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: lingxi-admin-jar
+          path: dkd-parent/lingXi-admin/target/*.jar
+          retention-days: 7
