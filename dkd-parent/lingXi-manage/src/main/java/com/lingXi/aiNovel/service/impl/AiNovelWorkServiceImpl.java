@@ -54,7 +54,30 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
     public List<AiNovelWork> selectAiNovelWorkList(AiNovelWork work)
     {
         work.setOwnerUserId(SecurityUtils.getUserId());
-        return workMapper.selectAiNovelWorkList(work);
+        List<AiNovelWork> list = workMapper.selectAiNovelWorkList(work);
+        for (AiNovelWork item : list)
+        {
+            item.setWordCount(calculateWordCount(item));
+        }
+        return list;
+    }
+
+    /** 统计作品总字数：短篇取正文长度，长篇累加各章节正文字符数。 */
+    private long calculateWordCount(AiNovelWork work)
+    {
+        if ("novel".equals(work.getWorkType()))
+        {
+            long total = 0L;
+            for (AiNovelChapter chapter : chapterMapper.selectAiNovelChapterListByWorkId(work.getWorkId()))
+            {
+                if (chapter.getContent() != null)
+                {
+                    total += chapter.getContent().length();
+                }
+            }
+            return total;
+        }
+        return work.getManuscript() == null ? 0L : work.getManuscript().length();
     }
 
     /** 新增作品，设置默认值并校验参数。 */

@@ -451,7 +451,11 @@ def create_novel_agent_context(
     """构建小说创作调用上下文并解析任何有界的模型覆盖。"""
 
     model = (
-        create_llm(llm_config, profile="chat-request")
+        create_llm(
+            llm_config,
+            profile="chat-request",
+            streaming=True,
+        )
         if llm_config is not None
         else None
     )

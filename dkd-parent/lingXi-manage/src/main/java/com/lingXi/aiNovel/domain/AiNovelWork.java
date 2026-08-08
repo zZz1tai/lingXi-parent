@@ -36,4 +36,7 @@ public class AiNovelWork extends BaseEntity
 
     /** 创建者用户ID */
     private Long ownerUserId;
+
+    /** 总字数（非持久化，列表查询时按正文动态统计：长篇=章节之和，短篇=正文长度） */
+    private Long wordCount;
 }
