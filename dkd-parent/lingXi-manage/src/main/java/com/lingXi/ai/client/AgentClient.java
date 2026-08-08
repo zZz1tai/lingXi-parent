@@ -274,16 +274,24 @@ public class AgentClient {
             AgentUserContext userContext,
             List<AiChatAttachmentAgentDTO> attachments) {
         AgentToolAccess toolAccess = createToolAccess(userContext, sessionId);
+        long startedAt = System.currentTimeMillis();
         try {
             String requestBody = buildRequest(
                     message, sessionId, userId, mode, contextData,
                     userContext, toolAccess, attachments);
             JsonNode root = requestJson("POST", config.getChatInvokeUrl(), requestBody);
             requireSuccess(root, "AGENT_CHAT_FAILED", "Agent 对话请求失败");
-            return extractResponse(root);
+            String reply = extractResponse(root);
+            log.info("Agent 同步调用完成，mode={}，sessionIdLength={}，耗时={}ms，agentRequestId={}",
+                    mode, safeLength(sessionId),
+                    System.currentTimeMillis() - startedAt,
+                    requestIdOf(toolAccess));
+            return reply;
         } catch (Exception e) {
-            log.error("调用 Agent 服务失败，errorType={}",
-                    e.getClass().getSimpleName());
+            log.error("调用 Agent 服务失败，errorType={}，耗时={}ms，agentRequestId={}",
+                    e.getClass().getSimpleName(),
+                    System.currentTimeMillis() - startedAt,
+                    requestIdOf(toolAccess));
             throw new RuntimeException("调用 Agent 服务失败", e);
         } finally {
             toolTokenService.revoke(toolAccess);
@@ -827,6 +835,7 @@ public class AgentClient {
 
         Runnable streamTask = () -> {
             HttpURLConnection conn = null;
+            long startedAt = System.currentTimeMillis();
             try {
                 String streamPath = actionId == null
                         ? (structuredEvents
@@ -863,6 +872,8 @@ public class AgentClient {
                             statusCode,
                             "AGENT_STREAM_HTTP_ERROR",
                             "Agent 流式请求失败");
+                    reportFailed(
+                            outcomeListener, outcomeReported, "AGENT_STREAM_HTTP_ERROR");
                     throw remoteFailure(error, "AGENT_STREAM_HTTP_ERROR", "Agent 流式请求失败");
                 }
 
@@ -963,7 +974,8 @@ public class AgentClient {
                         && terminalReceived
                         && !approvalPending
                         && fullReply.length() > 0
-                        && replyDelivered.compareAndSet(false, true)) {
+                        && replyDelivered.compareAndSet(false, true)
+                        && completedReplyConsumer != null) {
                     completedReplyConsumer.accept(fullReply.toString());
                 }
                 if (!streamFailed && terminalReceived && !approvalPending
@@ -990,6 +1002,10 @@ public class AgentClient {
                 if (activeConnection != null) {
                     activeConnection.disconnect();
                 }
+                log.info("Agent 流式调用结束，mode={}，sessionIdLength={}，耗时={}ms，agentRequestId={}",
+                        mode, safeLength(sessionId),
+                        System.currentTimeMillis() - startedAt,
+                        toolAccess.getAgentRequestId());
                 toolTokenService.revoke(toolAccess);
             }
         };
@@ -1232,9 +1248,18 @@ public class AgentClient {
                 || "heartbeat".equals(eventType);
     }
 
+    /** 安全获取字符串长度（null 安全），仅用于日志脱敏统计。 */
+    private static int safeLength(String value) {
+        return value == null ? 0 : value.length();
+    }
+
+    /** 仅用于日志的请求标识，工具令牌不可用时返回空串。 */
+    private static String requestIdOf(AgentToolAccess toolAccess) {
+        return toolAccess == null ? "" : toolAccess.getAgentRequestId();
+    }
+
     /** 报告流式失败终态；同一流只报告一次。 */
-    private static void reportFailed(
-            StreamOutcomeListener listener,
+    private static void reportFailed(            StreamOutcomeListener listener,
             AtomicBoolean reported,
             String errorCode) {
         if (listener != null && reported.compareAndSet(false, true)) {

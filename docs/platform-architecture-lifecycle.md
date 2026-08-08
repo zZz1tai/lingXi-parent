@@ -348,19 +348,49 @@ sequenceDiagram
     J-->>UI: done/error + request_id
 ```
 
-执行规则：
+### 7.4 流式消息落库实现约定（阶段 1 已落地）
 
-1. Java 在调用 Agent 前持久化用户消息，保证用户输入可追溯；
-2. Agent 只接收由 Java 从登录态生成的用户、角色和区域上下文，不信任前端自报身份；
-3. Java 只转发约定白名单内的 SSE 事件，未知事件记录指标但不直接暴露；
-4. `done` 后助手消息最多落库一次，使用 `message_id/request_id` 唯一约束；
-5. 用户断开连接时取消下游流；若供应商不支持取消，停止转发并记录孤儿调用指标；
-6. Agent 超时、限流或失败时，把助手消息标记为 `FAILED`，保留稳定错误码，不伪造成功回答；
-7. 用户重试创建新 `message_id`，通过 `parent_message_id` 关联原失败请求；
-8. Checkpoint 写入失败不能影响已落库的业务历史，但必须明确降级为无续接模式或终止请求；
-9. 删除会话时，Java 先进入 `DELETING`，再调用 Agent 删除 Checkpoint，最后完成业务侧软删除。
+阶段 1 采用「终态一次性落库」方案，不使用 `STREAMING` 占位行：
 
-### 7.4 SSE 事件契约
+- 用户消息在调用 Agent 前写入，`status=ACCEPTED`，携带 `request_id`；
+- 同步回答：成功写 `SUCCEEDED`，Agent 抛错时写 `FAILED` 并记录从异常消息提取的 `error_code`；
+- 流式回答：由 Java 端终态回调统一落库，成功 `SUCCEEDED`、失败 `FAILED+error_code`、取消 `CANCELLED`；
+- 终态最多报告一次：Java 内部使用原子标记去重，`done` 后不再因连接关闭重复改写；
+- `approval_required` 流的成功终态由后续 `resume` 流报告，审批等待期间不落终态；
+- 失败消息不伪造回答内容，`error_code` 取 Agent 稳定码或 Java 兜底码（见契约文档第 5.2 节）。
+
+其他执行规则：
+
+1. Agent 只接收由 Java 从登录态生成的用户、角色和区域上下文，不信任前端自报身份；
+2. Java 只转发约定白名单内的 SSE 事件，未知事件记录指标但不直接暴露；
+3. 用户断开连接时取消下游流；若供应商不支持取消，停止转发并记录孤儿调用指标；
+4. Checkpoint 写入失败不能影响已落库的业务历史，但必须明确降级为无续接模式或终止请求。
+
+### 7.5 消息历史与 Checkpoint 清理策略
+
+```text
+删除会话入口
+   ├─ 1. 置会话 DELETING，拒绝新消息
+   ├─ 2. 调 Agent 删除 Checkpoint（deleteThreadMemory）
+   │     └─ 失败：阻塞删除并抛出，提示稍后重试；不落半删除状态
+   └─ 3. 事务内删除 MySQL 消息历史 + 会话记录
+         └─ 失败：整体回滚，历史与会话保持一致
+```
+
+| 数据 | 权威存储 | 触发时机 | 失败处理 |
+|---|---|---|---|
+| 消息历史 | MySQL `tb_model_history` | 用户删除会话时 | 与会话同事务回滚 |
+| 会话记录 | MySQL `tb_chat_session` | 用户删除会话时 | 同上 |
+| Agent Checkpoint | PostgreSQL/内存（Python） | 删除会话前、会话级联 | 失败阻塞删除并提示重试 |
+| 长期偏好 | Agent 命名空间 | 用户主动清空或删账号 | 失败告警，可重试 |
+
+重试判定（依据 `error_code`）：
+
+- 可重试：`AGENT_STREAM_TIMEOUT`、`AGENT_STREAM_HTTP_ERROR`、`AGENT_STREAM_INCOMPLETE`、`AGENT_CALL_FAILED`；
+- 不建议重试：`AGENT_STREAM_OVER_LIMIT`（缩小问题范围后重试）、`AGENT_STREAM_INVALID_EVENT`（升级前重试）；
+- 重试时创建新 `message_id`，通过 `parent_message_id` 关联原失败消息。
+
+### 7.6 SSE 事件契约
 
 建议固定事件集合并按版本演进：
 

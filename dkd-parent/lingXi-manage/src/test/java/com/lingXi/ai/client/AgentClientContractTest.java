@@ -99,6 +99,12 @@ class AgentClientContractTest {
                     "{\"success\":false,\"error\":{\"code\":\"DELETE_FAILED\","
                             + "\"message\":\"remote delete failed\"}}");
         });
+        server.createContext("/stream-http-failure", exchange -> {
+            streamRequest.set(readRequest(exchange));
+            send(exchange, 503,
+                    "{\"success\":false,\"error\":{\"code\":\"AGENT_STREAM_HTTP_ERROR\","
+                            + "\"message\":\"upstream busy\"}}");
+        });
         server.createContext("/questions", exchange -> {
             questionsRequest.set(readRequest(exchange));
             send(exchange, 200,
@@ -585,6 +591,119 @@ class AgentClientContractTest {
         assertTrue(emitted.contains("Agent 流式请求失败，请稍后重试"));
         assertFalse(emitted.contains(sentinel));
         assertFalse(logs.toString().contains(sentinel));
+    }
+
+    private AgentClient.StreamOutcomeListener outcomeListener(
+            AtomicInteger replies,
+            AtomicInteger failures,
+            AtomicInteger cancellations,
+            AtomicReference<String> failureCode,
+            CountDownLatch reported) {
+        return new AgentClient.StreamOutcomeListener() {
+            @Override
+            public void onReply(String reply) {
+                replies.incrementAndGet();
+                reported.countDown();
+            }
+
+            @Override
+            public void onFailed(String errorCode) {
+                failureCode.set(errorCode);
+                failures.incrementAndGet();
+                reported.countDown();
+            }
+
+            @Override
+            public void onCancelled() {
+                cancellations.incrementAndGet();
+                reported.countDown();
+            }
+        };
+    }
+
+    @Test
+    void streamingSuccessReportsOutcomeOnceAndSkipsCancellation() throws Exception {
+        CountDownLatch reported = new CountDownLatch(1);
+        AtomicInteger replies = new AtomicInteger();
+        AtomicInteger failures = new AtomicInteger();
+        AtomicInteger cancellations = new AtomicInteger();
+
+        SseEmitter emitter = client.streamChat(
+                "流式问题", "session-outcome-ok", AgentUserContext.minimal("user-outcome-ok", "用户"), null,
+                outcomeListener(replies, failures, cancellations,
+                        new AtomicReference<>(), reported));
+        awaitClientTasks();
+
+        assertTrue(reported.await(5, TimeUnit.SECONDS));
+        assertEquals(1, replies.get());
+        assertEquals(0, failures.get());
+        assertEquals(0, cancellations.get());
+    }
+
+    @Test
+    void upstreamErrorEventReportsFailedOutcomeWithStreamErrorCode() throws Exception {
+        String sentinel = "SENTINEL_UPSTREAM_STREAM_ERROR_MUST_NOT_ESCAPE";
+        streamResponse.set(
+                "data: {\"type\":\"error\",\"content\":\""
+                        + sentinel + "\"}\n\n");
+        CountDownLatch reported = new CountDownLatch(1);
+        AtomicReference<String> failureCode = new AtomicReference<>();
+        AtomicInteger replies = new AtomicInteger();
+        AtomicInteger failures = new AtomicInteger();
+        AtomicInteger cancellations = new AtomicInteger();
+
+        client.streamChat(
+                "错误流", "session-outcome-error", AgentUserContext.minimal("user-outcome-error", "用户"), null,
+                outcomeListener(replies, failures, cancellations,
+                        failureCode, reported));
+        assertTrue(reported.await(5, TimeUnit.SECONDS));
+        awaitClientTasks();
+
+        assertEquals(0, replies.get());
+        assertEquals(1, failures.get());
+        assertEquals(0, cancellations.get());
+        assertEquals("AGENT_STREAM_ERROR", failureCode.get());
+    }
+
+    @Test
+    void streamEofWithoutSentinelReportsIncompleteOutcome() throws Exception {
+        streamResponse.set(
+                "data: {\"type\":\"token\",\"content\":\"partial\"}\n\n");
+        CountDownLatch reported = new CountDownLatch(1);
+        AtomicReference<String> failureCode = new AtomicReference<>();
+        AtomicInteger failures = new AtomicInteger();
+        AtomicInteger cancellations = new AtomicInteger();
+
+        client.streamChat(
+                "不完整流", "session-outcome-eof", AgentUserContext.minimal("user-outcome-eof", "用户"), null,
+                outcomeListener(new AtomicInteger(), failures, cancellations,
+                        failureCode, reported));
+        assertTrue(reported.await(5, TimeUnit.SECONDS));
+        awaitClientTasks();
+
+        assertEquals(1, failures.get());
+        assertEquals(0, cancellations.get());
+        assertEquals("AGENT_STREAM_INCOMPLETE", failureCode.get());
+    }
+
+    @Test
+    void httpErrorResponseReportsFailedOutcomeWithHttpErrorCode() throws Exception {
+        config.setChatStreamUrl("/stream-http-failure");
+        CountDownLatch reported = new CountDownLatch(1);
+        AtomicReference<String> failureCode = new AtomicReference<>();
+        AtomicInteger failures = new AtomicInteger();
+        AtomicInteger cancellations = new AtomicInteger();
+
+        client.streamChat(
+                "故障流", "session-outcome-http", AgentUserContext.minimal("user-outcome-http", "用户"), null,
+                outcomeListener(new AtomicInteger(), failures, cancellations,
+                        failureCode, reported));
+        assertTrue(reported.await(5, TimeUnit.SECONDS));
+        awaitClientTasks();
+
+        assertEquals(1, failures.get());
+        assertEquals(0, cancellations.get());
+        assertEquals("AGENT_STREAM_HTTP_ERROR", failureCode.get());
     }
 
     @Test
