@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -116,10 +117,12 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
     /**
      * 由投递派发器调用，把排队中的视频任务提交给供应商。
      * <p>从任务表和请求 JSON 重建外呼参数，成功后进入等待回调状态；
-     * 提交被供应商明确拒绝时按确定性失败处理；网络等异常按指数退避自动重试。</p>
+     * 提交被供应商明确拒绝时按确定性失败处理；网络等异常按指数退避自动重试。
+     * 在独立异步线程执行外部提交，避免阻塞派发扫描。</p>
      *
      * @param taskId 视频生成任务ID
      */
+    @Async("aiVideoExecutor")
     public void submitQueuedVideoTask(Long taskId)
     {
         AiVideoGenerationTask task = taskMapper.selectAiVideoGenerationTaskByTaskId(taskId);

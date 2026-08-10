@@ -31,6 +31,7 @@ import com.lingXi.aiVedio.mapper.AiVideoAssetRelationMapper;
 import com.lingXi.aiVedio.mapper.AiVideoChapterMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.mapper.AiVideoShotMapper;
+import com.lingXi.aiVedio.outbox.AiVideoTaskOutboxPublisher;
 import com.lingXi.aiVedio.service.IAiVideoAssetService;
 import com.lingXi.aiVedio.service.IAiVideoProjectService;
 import com.lingXi.aiVedio.service.AiVideoGenerationService;
@@ -78,6 +79,8 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
 
     @Autowired
     private AiVideoModelConfigService modelConfigService;
+    @Autowired
+    private AiVideoTaskOutboxPublisher outboxPublisher;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -911,13 +914,14 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         task.setProviderCode("dashscope");
         task.setModelCode(modelConfigService.getRequiredConfig().getImageModel());
         task.setProgress(5);
-        task.setMaxRetry(0);
+        task.setMaxRetry(3);
         task.setRequestJson(buildImageRequestJson(asset, references.getAssetIds()));
         task.setCreateBy(username);
         if (taskMapper.insertAiVideoGenerationTask(task) != 1 || task.getTaskId() == null)
         {
             throw new ServiceException("图片生成任务创建失败");
         }
+        outboxPublisher.publish(task.getTaskId(), AiVideoTaskOutboxPublisher.EVENT_TASK_CREATED);
 
         return task.getTaskId();
     }

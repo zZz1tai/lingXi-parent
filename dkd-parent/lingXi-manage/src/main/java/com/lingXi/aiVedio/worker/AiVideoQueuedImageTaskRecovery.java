@@ -8,11 +8,19 @@ import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
-import com.lingXi.aiVedio.service.AiVideoQwenAssetService;
+import com.lingXi.aiVedio.outbox.AiVideoTaskOutboxPublisher;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
+import lombok.extern.slf4j.Slf4j;
 
-/** 串行领取用户确认过的图片任务；异常中断任务只转人工重试，不自动再次调用模型。 */
+/**
+ * 图片任务恢复扫描器。
+ * <p>图片生成经投递事件在异步线程执行，正常由派发器每 2 秒领取；
+ * 此扫描器只兜底处理派发器漏掉的任务：滞留超过 60 秒的 QUEUED/RETRYING
+ * 任务重新发布投递事件，运行中超过 5 分钟的任务判定为上次生成中断，
+ * 转人工重试而不自动再次调用模型，避免产生重复生成费用。</p>
+ */
 @Component
+@Slf4j
 public class AiVideoQueuedImageTaskRecovery
 {
     @Autowired
@@ -20,10 +28,10 @@ public class AiVideoQueuedImageTaskRecovery
     @Autowired
     private AiVideoAssetMapper assetMapper;
     @Autowired
-    private AiVideoQwenAssetService qwenAssetService;
+    private AiVideoTaskOutboxPublisher outboxPublisher;
 
     /**
-     * 定时恢复排队中的图片生成任务，处理异常中断的任务。
+     * 定时恢复滞留排队中的图片任务，处理异常中断的任务。
      */
     @Scheduled(fixedDelayString = "${aivideo.image.queued-recovery-interval-ms}")
     public void recover()
@@ -38,48 +46,25 @@ public class AiVideoQueuedImageTaskRecovery
                         "旧图片任务缺少人工确认凭证，请检查提示词后手动生成");
                 continue;
             }
-            if (!"QUEUED".equals(task.getStatus()))
+            if ("QUEUED".equals(task.getStatus()) || "RETRYING".equals(task.getStatus()))
+            {
+                outboxPublisher.publish(task.getTaskId(),
+                        AiVideoTaskOutboxPublisher.EVENT_TASK_RETRY);
+            }
+            else
             {
                 failWithoutGeneration(task, "IMAGE_MANUAL_RETRY_REQUIRED",
                         "上次图片生成未正常结束，请检查提示词后手动重试");
-                continue;
             }
-            if (taskMapper.claimImageTask(task.getTaskId(), "QUEUED") != 1)
-            {
-                continue;
-            }
-
-            AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
-            if (asset == null)
-            {
-                taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), "RUNNING",
-                        "IMAGE_ASSET_NOT_FOUND", "图片任务关联资产不存在");
-                continue;
-            }
-            if (!"GENERATING".equals(asset.getStatus()))
-            {
-                taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), "RUNNING",
-                        "IMAGE_ASSET_STATE_INVALID", "图片资产不在生成状态");
-                continue;
-            }
-            try
-            {
-                qwenAssetService.generateClaimedImage(task, asset, "ai-video-image-queue");
-            }
-            catch (Exception ex)
-            {
-                asset.setMetadataJson(AiVideoJsonMetadata.generationFailure(
-                        asset.getMetadataJson(), ex.getMessage()));
-                asset.setUpdateBy("ai-video-image-queue");
-                assetMapper.markAiVideoAssetFailed(asset);
-                taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), "RUNNING",
-                        "IMAGE_QUEUE_EXECUTION_FAILED", ex.getMessage());
-            }
+        }
+        if (!tasks.isEmpty())
+        {
+            log.info("AI视频图片任务恢复扫描完成，处理数量={}", tasks.size());
         }
     }
 
     /**
-     * 将无效的图片任务标记为失败，不触发模型重新生成。
+     * 将无效或中断的图片任务标记为失败，不触发模型重新生成。
      *
      * @param task     生成任务实体
      * @param errorCode 错误码

@@ -1,6 +1,8 @@
 package com.lingXi.aiVedio.service;
 
+import java.util.Date;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.lingXi.ai.client.VideoClient;
@@ -13,11 +15,13 @@ import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.util.AiVideoImageAspectRatioPolicy;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 import com.lingXi.aiVedio.service.AiVideoImageReferenceService.ResolvedImageReferences;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Qwen图片资产服务，创建图片资产草稿，并在用户确认后执行Qwen Image生成。
  */
 @Service
+@Slf4j
 public class AiVideoQwenAssetService
 {
     @Autowired
@@ -165,75 +169,170 @@ public class AiVideoQwenAssetService
     }
 
     /**
-     * 执行已经由队列原子领取的图片生成任务。
+     * 由投递派发器调用，在异步线程中领取并执行图片生成任务。
+     * <p>领取为条件更新防多实例重复执行；可重试错误按指数退避自动重试，
+     * 超过上限或确定性错误落为终态失败，由用户手动重试。</p>
      *
-     * @param task 生成任务
-     * @param asset 图片资产
-     * @param updateBy 操作人
+     * @param taskId 图片生成任务ID
      */
-    public void generateClaimedImage(AiVideoGenerationTask task, AiVideoAsset asset, String updateBy)
+    @Async("aiVideoExecutor")
+    public void generateQueuedImage(Long taskId)
     {
+        AiVideoGenerationTask task = taskMapper.selectAiVideoGenerationTaskByTaskId(taskId);
+        if (task == null || !"IMAGE".equals(task.getTaskType())
+                || !"dashscope".equals(task.getProviderCode()))
+        {
+            throw new IllegalStateException("图片任务不存在或类型无效，taskId=" + taskId);
+        }
+        if (!"QUEUED".equals(task.getStatus())
+                && taskMapper.claimImageTask(taskId, "QUEUED") != 1)
+        {
+            log.info("图片任务已被其他执行者领取或状态已变化，跳过生成，taskId={}", taskId);
+            return;
+        }
+        if (!AiVideoJsonMetadata.isUserConfirmedImageRequest(task.getRequestJson()))
+        {
+            markImageFailure(task, null, "ai-video-outbox",
+                    "IMAGE_CONFIRMATION_MISSING",
+                    "图片任务缺少人工确认凭证，请检查提示词后手动生成");
+            return;
+        }
+        AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
+        if (asset == null)
+        {
+            taskMapper.failImageTaskIfExpectedStatus(taskId, "RUNNING",
+                    "IMAGE_ASSET_NOT_FOUND", "图片任务关联资产不存在");
+            return;
+        }
+        if (!"GENERATING".equals(asset.getStatus()))
+        {
+            taskMapper.failImageTaskIfExpectedStatus(taskId, "RUNNING",
+                    "IMAGE_ASSET_STATE_INVALID", "图片资产不在生成状态");
+            return;
+        }
+
         try
         {
-            ResolvedImageReferences references = imageReferenceService.resolveAndValidate(asset);
-            AiVideoModelConfig runtimeConfig = modelConfigService.getRequiredConfig();
-            String aspectRatio = AiVideoImageAspectRatioPolicy.resolve(
-                    asset.getAssetType(), runtimeConfig.getVideoRatio());
-            String imageModel = runtimeConfig.getImageModel();
-            String generationPrompt = resolveGenerationPrompt(asset);
-            String generationNegativePrompt = resolveGenerationNegativePrompt(asset);
-            String requestJson = AiVideoJsonMetadata.imageGenerationRequest(generationPrompt,
-                    generationNegativePrompt, imageModel, asset.getAssetType(), aspectRatio,
-                    references.getAssetIds());
-            if (taskMapper.updateClaimedImageTaskRequest(
-                    task.getTaskId(), requestJson, imageModel) != 1)
-            {
-                throw new IllegalStateException("图片任务状态已变化，拒绝调用图片模型");
-            }
-            
-            // 统一通过 Python Agent 调用图片模型，Java 侧只负责业务参数和结果落库。
-            VideoClient.ImageResult result = videoClient.generateImage(
-                    runtimeConfig.getApiKey(),
-                    imageModel,
-                    runtimeConfig.getWorkspaceBaseUrl(),
-                    asset.getAssetType(),
-                    generationPrompt,
-                    generationNegativePrompt,
-                    aspectRatio,
-                    references.getImageUrls());
-            
-            if (!result.success())
-            {
-                String errorCode = result.errorCode() == null ? "IMAGE_GENERATION_FAILED"
-                        : result.errorCode();
-                String detail = result.error() == null ? "图片生成失败" : result.error();
-                String message = errorCode + "：" + detail;
-                if (result.retryable())
-                {
-                    message = "图片服务暂时不可用，请检查提示词后手动重试：" + message;
-                }
-                markImageFailure(task, asset, updateBy,
-                        result.retryable() ? "QWEN_IMAGE_MANUAL_RETRY_REQUIRED" : errorCode,
-                        message);
-                return;
-            }
-            
-            String imageUrl = result.imageUrl();
-            try
-            {
-                imageCompletionService.complete(task, asset, imageUrl, updateBy);
-            }
-            catch (Exception storageEx)
-            {
-                markImageFailure(task, asset, updateBy,
-                        "IMAGE_STORAGE_FAILED", storageEx.getMessage());
-            }
+            generateClaimedImageWithRequest(task, asset);
         }
         catch (Exception ex)
         {
-            markImageFailure(task, asset, updateBy,
-                    "QWEN_IMAGE_GENERATION_FAILED", ex.getMessage());
+            log.error("图片任务生成中断，taskId={}, errorType={}",
+                    taskId, ex.getClass().getSimpleName());
+            scheduleImageRetry(task, ex.getMessage());
         }
+    }
+
+    /**
+     * 执行已经由队列原子领取的图片生成任务。
+     * 统一通过 Python Agent 调用图片模型，Java 侧只负责业务参数和结果落库。
+     *
+     * @param task 生成任务
+     * @param asset 图片资产
+     */
+    private void generateClaimedImageWithRequest(AiVideoGenerationTask task, AiVideoAsset asset)
+    {
+        ResolvedImageReferences references = imageReferenceService.resolveAndValidate(asset);
+        AiVideoModelConfig runtimeConfig = modelConfigService.getRequiredConfig();
+        String aspectRatio = AiVideoImageAspectRatioPolicy.resolve(
+                asset.getAssetType(), runtimeConfig.getVideoRatio());
+        String imageModel = runtimeConfig.getImageModel();
+        String generationPrompt = resolveGenerationPrompt(asset);
+        String generationNegativePrompt = resolveGenerationNegativePrompt(asset);
+        String requestJson = AiVideoJsonMetadata.imageGenerationRequest(generationPrompt,
+                generationNegativePrompt, imageModel, asset.getAssetType(), aspectRatio,
+                references.getAssetIds());
+        if (taskMapper.updateClaimedImageTaskRequest(
+                task.getTaskId(), requestJson, imageModel) != 1)
+        {
+            throw new IllegalStateException("图片任务状态已变化，拒绝调用图片模型");
+        }
+
+        VideoClient.ImageResult result = videoClient.generateImage(
+                runtimeConfig.getApiKey(),
+                imageModel,
+                runtimeConfig.getWorkspaceBaseUrl(),
+                asset.getAssetType(),
+                generationPrompt,
+                generationNegativePrompt,
+                aspectRatio,
+                references.getImageUrls());
+
+        if (!result.success())
+        {
+            String errorCode = result.errorCode() == null ? "IMAGE_GENERATION_FAILED"
+                    : result.errorCode();
+            String detail = result.error() == null ? "图片生成失败" : result.error();
+            if (result.retryable())
+            {
+                scheduleImageRetry(task, errorCode + "：" + detail);
+                return;
+            }
+            markImageFailure(task, asset, "ai-video-outbox", errorCode, detail);
+            return;
+        }
+
+        String imageUrl = result.imageUrl();
+        try
+        {
+            imageCompletionService.complete(task, asset, imageUrl, "ai-video-outbox");
+        }
+        catch (Exception storageEx)
+        {
+            log.error("图片转存失败，taskId={}, errorType={}",
+                    task.getTaskId(), storageEx.getClass().getSimpleName());
+            markImageFailure(task, asset, "ai-video-outbox",
+                    "IMAGE_STORAGE_FAILED", storageEx.getMessage());
+        }
+    }
+
+    /**
+     * 按指数退避安排图片任务自动重试，超过上限后标记失败并解锁资产。
+     *
+     * @param task        图片生成任务
+     * @param errorMessage 失败原因
+     */
+    private void scheduleImageRetry(AiVideoGenerationTask task, String errorMessage)
+    {
+        int retryCount = task.getRetryCount() == null ? 0 : task.getRetryCount();
+        int maxRetry = task.getMaxRetry() == null ? 3 : task.getMaxRetry();
+        if (retryCount >= maxRetry)
+        {
+            AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
+            markImageFailure(task, asset, "ai-video-outbox",
+                    "QWEN_IMAGE_SUBMIT_FAILED",
+                    "自动重试次数超限，请检查提示词后手动重试：" + truncate(errorMessage));
+            return;
+        }
+        long delayMinutes = 1L << retryCount;
+        int updated = taskMapper.retryClaimedImageTask(task.getTaskId(), retryCount + 1,
+                new Date(System.currentTimeMillis() + delayMinutes * 60_000L),
+                "QWEN_IMAGE_SUBMIT_TRANSIENT", truncate(errorMessage));
+        if (updated != 1)
+        {
+            AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
+            markImageFailure(task, asset, "ai-video-outbox",
+                    "QWEN_IMAGE_LOCAL_STATE_UNCERTAIN",
+                    "图片任务自动重试状态更新失败，请人工核对");
+            return;
+        }
+        log.warn("图片任务将自动重试，taskId={}, retryCount={}, delayMinutes={}",
+                task.getTaskId(), retryCount + 1, delayMinutes);
+    }
+
+    /**
+     * 截断过长的错误信息，避免超出字段长度。
+     *
+     * @param message 错误信息
+     * @return 截断后的错误信息
+     */
+    private static String truncate(String message)
+    {
+        if (message == null)
+        {
+            return "image provider generate failed";
+        }
+        return message.length() > 500 ? message.substring(0, 500) : message;
     }
 
     /**
@@ -286,10 +385,13 @@ public class AiVideoQwenAssetService
             String updateBy, String errorCode, String message)
     {
         String detail = message == null || message.trim().isEmpty() ? "图片生成失败" : message;
-        asset.setMetadataJson(AiVideoJsonMetadata.generationFailure(
-                asset.getMetadataJson(), detail));
-        asset.setUpdateBy(updateBy);
-        assetMapper.markAiVideoAssetFailed(asset);
+        if (asset != null)
+        {
+            asset.setMetadataJson(AiVideoJsonMetadata.generationFailure(
+                    asset.getMetadataJson(), detail));
+            asset.setUpdateBy(updateBy);
+            assetMapper.markAiVideoAssetFailed(asset);
+        }
         taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), "RUNNING", errorCode, detail);
     }
 }

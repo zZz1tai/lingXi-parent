@@ -290,6 +290,7 @@
         update ai_video_generation_task
         set status = 'QUEUED', provider_task_id = null, progress = 5,
             model_code = #{modelCode}, request_json = #{requestJson},
+            retry_count = 0, next_retry_time = null,
             error_code = null, error_message = null, started_time = null, completed_time = null, update_time = now()
         where task_id = #{taskId} and task_type = 'IMAGE' and provider_code = 'dashscope'
           and status = 'FAILED' and (del_flag = '0' or del_flag is null)
@@ -321,7 +322,8 @@
         from ai_video_generation_task
         where (del_flag = '0' or del_flag is null) and task_type = 'IMAGE' and provider_code = 'dashscope'
           and (
-            status = 'QUEUED'
+            (status = 'QUEUED'
+              and coalesce(update_time, create_time) &lt; date_sub(now(), interval 60 second))
             or (status = 'RETRYING'
               and coalesce(update_time, create_time) &lt; date_sub(now(), interval 60 second))
             or (status = 'RUNNING'
@@ -410,6 +412,26 @@
         where (del_flag = '0' or del_flag is null) and task_type = 'STORY_BIBLE'
           and status = 'QUEUED'
           and coalesce(update_time, create_time) &lt; date_sub(now(), interval 60 second)
+        order by create_time asc
+        limit #{limit}
+    </select>
+
+    <update id="retryClaimedImageTask">
+        update ai_video_generation_task
+        set status = 'QUEUED', progress = 5, provider_task_id = null,
+            retry_count = #{retryCount}, next_retry_time = #{nextRetryTime},
+            error_code = #{errorCode}, error_message = #{errorMessage}, update_time = now()
+        where task_id = #{taskId} and task_type = 'IMAGE' and provider_code = 'dashscope'
+          and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <select id="selectQueuedImageTasksForRetry" resultMap="AiVideoGenerationTaskResult">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key,
+               provider_task_id, progress, request_json, error_code, error_message, create_time
+        from ai_video_generation_task
+        where (del_flag = '0' or del_flag is null) and task_type = 'IMAGE' and provider_code = 'dashscope'
+          and status = 'QUEUED' and retry_count > 0
+          and next_retry_time is not null and next_retry_time &lt;= now()
         order by create_time asc
         limit #{limit}
     </select>

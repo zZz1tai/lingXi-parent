@@ -420,4 +420,26 @@ public interface AiVideoGenerationTaskMapper
      * @return 排队中的故事圣经任务列表
      */
     List<AiVideoGenerationTask> selectQueuedStoryBibleTasksForRecovery(@Param("limit") int limit);
+
+    /**
+     * 将已领取的图片任务安排自动重试（回到排队状态并计算退避时间）。
+     *
+     * @param taskId          任务ID
+     * @param retryCount      已重试次数
+     * @param nextRetryTime   下次重试时间
+     * @param errorCode       错误码
+     * @param errorMessage    错误信息
+     * @return 影响的行数
+     */
+    int retryClaimedImageTask(@Param("taskId") Long taskId,
+            @Param("retryCount") int retryCount, @Param("nextRetryTime") Date nextRetryTime,
+            @Param("errorCode") String errorCode, @Param("errorMessage") String errorMessage);
+
+    /**
+     * 查询到达重试时间的排队图片任务（供恢复器重新投递）。
+     *
+     * @param limit 最大条数
+     * @return 待重试的图片任务列表
+     */
+    List<AiVideoGenerationTask> selectQueuedImageTasksForRetry(@Param("limit") int limit);
 }

@@ -11,13 +11,15 @@ import com.lingXi.aiVedio.domain.AiVideoTaskOutbox;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.mapper.AiVideoTaskOutboxMapper;
 import com.lingXi.aiVedio.service.AiVideoHappyHorseVideoService;
+import com.lingXi.aiVedio.service.AiVideoQwenAssetService;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * AI视频任务投递事件派发器。
  * <p>定时扫描 PENDING 投递事件（事务内悲观锁占用），按事件类型路由到任务处理器：
- * VIDEO 提交事件交给视频供应商适配器执行外部提交，STORY_BIBLE 事件交给章节分析
- * Worker 异步执行。投递失败按指数退避安排下次重试，超过上限后标记 FAILED 并告警。</p>
+ * VIDEO 提交事件交给视频供应商适配器执行外部提交，IMAGE 事件交给图片适配器，
+ * STORY_BIBLE 事件交给章节分析 Worker 异步执行。投递失败按指数退避安排下次重试，
+ * 超过上限后标记 FAILED 并告警。</p>
  */
 @Component
 @Slf4j
@@ -34,6 +36,8 @@ public class AiVideoTaskOutboxDispatcher
     private AiVideoGenerationTaskMapper taskMapper;
     @Autowired
     private AiVideoHappyHorseVideoService happyHorseVideoService;
+    @Autowired
+    private AiVideoQwenAssetService qwenAssetService;
     @Autowired
     private AiVideoChapterAnalysisWorker chapterAnalysisWorker;
 
@@ -85,6 +89,10 @@ public class AiVideoTaskOutboxDispatcher
         if ("VIDEO".equals(task.getTaskType()))
         {
             submitVideoToProvider(task);
+        }
+        else if ("IMAGE".equals(task.getTaskType()))
+        {
+            qwenAssetService.generateQueuedImage(task.getTaskId());
         }
         else if ("STORY_BIBLE".equals(task.getTaskType()))
         {
