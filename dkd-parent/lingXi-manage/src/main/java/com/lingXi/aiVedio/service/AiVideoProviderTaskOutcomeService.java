@@ -28,6 +28,8 @@ public class AiVideoProviderTaskOutcomeService
     private AiVideoLocalAssetStorage localAssetStorage;
     @Autowired
     private PlatformTransactionManager transactionManager;
+    @Autowired
+    private AiVideoTaskAttemptService attemptService;
 
     /**
      * 处理视频生成成功的结果，下载视频并更新资产状态。
@@ -65,6 +67,7 @@ public class AiVideoProviderTaskOutcomeService
             {
                 throw new IllegalStateException("视频任务完成状态更新失败");
             }
+            attemptService.succeedAttempt(task.getTaskId(), task.getProviderTaskId());
             return null;
         });
     }
@@ -99,6 +102,7 @@ public class AiVideoProviderTaskOutcomeService
             {
                 throw new IllegalStateException("视频供应商任务失败状态更新失败");
             }
+            attemptService.failAttempt(task.getTaskId(), "VIDEO_PROVIDER_TASK_FAILED", message);
             return null;
         });
     }

@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiVedio.mapper.AiVideoTaskAttemptMapper">
+
+    <resultMap id="AiVideoTaskAttemptResult" type="com.lingXi.aiVedio.domain.AiVideoTaskAttempt">
+        <id     property="attemptId"        column="attempt_id"/>
+        <result property="taskId"           column="task_id"/>
+        <result property="attemptNo"        column="attempt_no"/>
+        <result property="status"           column="status"/>
+        <result property="providerCode"     column="provider_code"/>
+        <result property="modelCode"        column="model_code"/>
+        <result property="providerRequestId" column="provider_request_id"/>
+        <result property="providerTaskId"   column="provider_task_id"/>
+        <result property="errorCode"        column="error_code"/>
+        <result property="errorMessage"     column="error_message"/>
+        <result property="startedTime"      column="started_time"/>
+        <result property="completedTime"    column="completed_time"/>
+        <result property="createTime"       column="create_time"/>
+    </resultMap>
+
+    <insert id="insertAiVideoTaskAttempt" parameterType="com.lingXi.aiVedio.domain.AiVideoTaskAttempt"
+            useGeneratedKeys="true" keyProperty="attemptId">
+        insert into ai_video_task_attempt
+            (task_id, attempt_no, status, provider_code, model_code,
+             provider_request_id, provider_task_id, error_code, error_message,
+             started_time, completed_time)
+        values
+            (#{taskId}, #{attemptNo}, #{status}, #{providerCode}, #{modelCode},
+             #{providerRequestId}, #{providerTaskId}, #{errorCode}, #{errorMessage},
+             #{startedTime}, #{completedTime})
+    </insert>
+
+    <select id="selectMaxAttemptNoByTaskId" resultType="java.lang.Integer">
+        select max(attempt_no)
+        from ai_video_task_attempt
+        where task_id = #{taskId}
+    </select>
+
+    <select id="selectAiVideoTaskAttemptsByTaskId" resultMap="AiVideoTaskAttemptResult">
+        select attempt_id, task_id, attempt_no, status, provider_code, model_code,
+               provider_request_id, provider_task_id, error_code, error_message,
+               started_time, completed_time, create_time
+        from ai_video_task_attempt
+        where task_id = #{taskId}
+        order by attempt_no asc
+    </select>
+
+    <update id="succeedLastActiveAttempt">
+        update ai_video_task_attempt
+        set status = 'SUCCEEDED',
+            provider_task_id = coalesce(#{providerTaskId}, provider_task_id),
+            error_code = null, error_message = null,
+            completed_time = now()
+        where task_id = #{taskId}
+          and status in ('SUBMITTED', 'RUNNING')
+          and attempt_no = (
+              select max(attempt_no) from (
+                  select attempt_no from ai_video_task_attempt
+                  where task_id = #{taskId} and status in ('SUBMITTED', 'RUNNING')
+              ) active_attempts
+          )
+    </update>
+
+    <update id="failLastActiveAttempt">
+        update ai_video_task_attempt
+        set status = 'FAILED',
+            error_code = #{errorCode}, error_message = #{errorMessage},
+            completed_time = now()
+        where task_id = #{taskId}
+          and status in ('SUBMITTED', 'RUNNING')
+          and attempt_no = (
+              select max(attempt_no) from (
+                  select attempt_no from ai_video_task_attempt
+                  where task_id = #{taskId} and status in ('SUBMITTED', 'RUNNING')
+              ) active_attempts
+          )
+    </update>
+
+    <update id="updateLastActiveAttemptProviderTaskId">
+        update ai_video_task_attempt
+        set provider_task_id = #{providerTaskId}
+        where task_id = #{taskId}
+          and status in ('SUBMITTED', 'RUNNING')
+          and attempt_no = (
+              select max(attempt_no) from (
+                  select attempt_no from ai_video_task_attempt
+                  where task_id = #{taskId} and status in ('SUBMITTED', 'RUNNING')
+              ) active_attempts
+          )
+    </update>
+
+    <delete id="deleteAiVideoTaskAttemptsByTaskId">
+        delete from ai_video_task_attempt where task_id = #{taskId}
+    </delete>
+
+</mapper>

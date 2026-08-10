@@ -44,6 +44,8 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
     @Autowired
     private AiVideoGenerationTaskMapper taskMapper;
     @Autowired
+    private AiVideoTaskAttemptService attemptService;
+    @Autowired
     private VideoClient videoClient;
     @Autowired
     private AiVideoPublicAssetUrlResolver publicAssetUrlResolver;
@@ -140,12 +142,14 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         AiVideoAsset video = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
         if (video == null)
         {
+            attemptService.failAttempt(taskId, "VIDEO_ASSET_NOT_FOUND", "视频任务关联资产不存在");
             taskMapper.failClaimedVideoTask(taskId, providerCode(),
                     "VIDEO_ASSET_NOT_FOUND", "视频任务关联资产不存在");
             return;
         }
         if (!"GENERATING".equals(video.getStatus()))
         {
+            attemptService.failAttempt(taskId, "VIDEO_ASSET_STATE_INVALID", "视频资产不在生成状态，请人工核对");
             taskMapper.markClaimedVideoTaskNeedsReview(taskId, providerCode(),
                     "VIDEO_ASSET_STATE_INVALID", "视频资产不在生成状态，请人工核对");
             return;
@@ -155,11 +159,13 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         {
             AiVideoModelConfig runtimeConfig = modelConfigService.getRequiredConfig();
             JsonNode request = objectMapper.readTree(task.getRequestJson());
+            String videoModel = firstNonBlank(request.path("model").asText(""), runtimeConfig.getVideoModel());
+            attemptService.startAttempt(task, providerCode(), videoModel, task.getIdempotencyKey());
             VideoClient.VideoSubmitResult result = videoClient.submitVideo(
                     runtimeConfig.getApiKey(),
                     providerCode(),
                     runtimeConfig.getWorkspaceBaseUrl(),
-                    firstNonBlank(request.path("model").asText(""), runtimeConfig.getVideoModel()),
+                    videoModel,
                     request.path("prompt").asText(""),
                     request.path("negativePrompt").asText(""),
                     blankToNull(request.path("keyframeImageUrl").asText("")),
@@ -195,6 +201,8 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
             String error = result.error() == null ? "视频提交失败" : result.error();
             if (result.submissionUncertain())
             {
+                attemptService.failAttempt(task.getTaskId(),
+                        "VIDEO_PROVIDER_SUBMISSION_UNCERTAIN", error);
                 taskMapper.markClaimedVideoTaskNeedsReview(task.getTaskId(), providerCode(),
                         "VIDEO_PROVIDER_SUBMISSION_UNCERTAIN", error);
                 log.warn("视频供应商提交结果不确定，转人工核对，taskId={}, error={}",
@@ -227,6 +235,9 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
             taskMapper.markClaimedVideoTaskNeedsReview(task.getTaskId(), providerCode(),
                     "VIDEO_PROVIDER_INVALID_AGENT_RESPONSE",
                     "Agent 未返回有效任务ID或归一化时长，请人工核对");
+            attemptService.failAttempt(task.getTaskId(),
+                    "VIDEO_PROVIDER_INVALID_AGENT_RESPONSE",
+                    "Agent 未返回有效任务ID或归一化时长，请人工核对");
             return;
         }
         if (!finalizeSuccessfulSubmission(video, task, providerTaskId,
@@ -235,7 +246,12 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
             taskMapper.markClaimedVideoTaskNeedsReview(task.getTaskId(), providerCode(),
                     "VIDEO_PROVIDER_LOCAL_STATE_UNCERTAIN",
                     "视频供应商已返回任务ID，但本地等待状态更新失败；请勿重复提交");
+            attemptService.failAttempt(task.getTaskId(),
+                    "VIDEO_PROVIDER_LOCAL_STATE_UNCERTAIN",
+                    "视频供应商已返回任务ID，但本地等待状态更新失败；请勿重复提交");
+            return;
         }
+        attemptService.updateProviderTaskId(task.getTaskId(), providerTaskId);
         video.setDurationMs(normalizedDurationMs);
     }
 
@@ -250,12 +266,16 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         int retryCount = task.getRetryCount() == null ? 0 : task.getRetryCount();
         if (retryCount >= MAX_SUBMIT_RETRY)
         {
+            attemptService.failAttempt(task.getTaskId(), "VIDEO_PROVIDER_SUBMIT_FAILED",
+                    "自动重试次数超限，请手动重试：" + truncate(errorMessage));
             taskMapper.markClaimedVideoTaskNeedsReview(task.getTaskId(), providerCode(),
                     "VIDEO_PROVIDER_SUBMIT_FAILED",
                     "自动重试次数超限，请手动重试：" + truncate(errorMessage));
             return;
         }
         long delayMinutes = 1L << retryCount;
+        attemptService.failAttempt(task.getTaskId(), "VIDEO_PROVIDER_SUBMIT_TRANSIENT",
+                truncate(errorMessage));
         int updated = taskMapper.retryClaimedVideoTask(task.getTaskId(), providerCode(),
                 retryCount + 1,
                 new java.util.Date(System.currentTimeMillis() + delayMinutes * 60_000L),
@@ -357,6 +377,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
             final AiVideoGenerationTask task, final String username,
             final String errorCode, final String message)
     {
+        attemptService.failAttempt(task.getTaskId(), errorCode, message);
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
         transaction.execute(status -> {
             video.setMetadataJson(AiVideoJsonMetadata.generationFailure(video.getMetadataJson(), message));

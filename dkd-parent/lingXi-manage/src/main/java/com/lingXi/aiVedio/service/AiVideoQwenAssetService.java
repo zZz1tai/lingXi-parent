@@ -37,6 +37,8 @@ public class AiVideoQwenAssetService
     private AiVideoImageReferenceService imageReferenceService;
     @Autowired
     private AiVideoModelConfigService modelConfigService;
+    @Autowired
+    private AiVideoTaskAttemptService attemptService;
 
     /**
      * 创建图片资产草稿（不含人物归属和上游参考资产）。
@@ -248,6 +250,7 @@ public class AiVideoQwenAssetService
         {
             throw new IllegalStateException("图片任务状态已变化，拒绝调用图片模型");
         }
+        attemptService.startAttempt(task, "dashscope", imageModel, task.getIdempotencyKey());
 
         VideoClient.ImageResult result = videoClient.generateImage(
                 runtimeConfig.getApiKey(),
@@ -277,6 +280,7 @@ public class AiVideoQwenAssetService
         try
         {
             imageCompletionService.complete(task, asset, imageUrl, "ai-video-outbox");
+            attemptService.succeedAttempt(task.getTaskId(), null);
         }
         catch (Exception storageEx)
         {
@@ -306,6 +310,7 @@ public class AiVideoQwenAssetService
             return;
         }
         long delayMinutes = 1L << retryCount;
+        attemptService.failAttempt(task.getTaskId(), "QWEN_IMAGE_SUBMIT_TRANSIENT", truncate(errorMessage));
         int updated = taskMapper.retryClaimedImageTask(task.getTaskId(), retryCount + 1,
                 new Date(System.currentTimeMillis() + delayMinutes * 60_000L),
                 "QWEN_IMAGE_SUBMIT_TRANSIENT", truncate(errorMessage));
@@ -393,6 +398,7 @@ public class AiVideoQwenAssetService
             asset.setUpdateBy(updateBy);
             assetMapper.markAiVideoAssetFailed(asset);
         }
+        attemptService.failAttempt(task.getTaskId(), errorCode, detail);
         taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), AiVideoTaskStatus.RUNNING.name(), errorCode, detail);
     }
 }

@@ -2732,6 +2732,25 @@ CREATE TABLE IF NOT EXISTS ai_video_task_outbox (
   KEY idx_outbox_task (task_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI视频任务可靠投递箱';
 
+CREATE TABLE IF NOT EXISTS ai_video_task_attempt (
+  attempt_id BIGINT NOT NULL AUTO_INCREMENT COMMENT '尝试ID',
+  task_id BIGINT NOT NULL COMMENT '任务ID',
+  attempt_no INT NOT NULL COMMENT '尝试序号，从1开始递增',
+  status VARCHAR(32) NOT NULL DEFAULT 'SUBMITTED' COMMENT 'SUBMITTED/SUCCEEDED/FAILED',
+  provider_code VARCHAR(64) DEFAULT NULL COMMENT '供应商',
+  model_code VARCHAR(128) DEFAULT NULL COMMENT '模型',
+  provider_request_id VARCHAR(255) DEFAULT NULL COMMENT '供应商请求标识（提交幂等键）',
+  provider_task_id VARCHAR(255) DEFAULT NULL COMMENT '供应商任务ID（异步查询/回调关联）',
+  error_code VARCHAR(128) DEFAULT NULL COMMENT '错误分类码',
+  error_message TEXT DEFAULT NULL COMMENT '错误信息',
+  started_time DATETIME DEFAULT NULL COMMENT '尝试开始时间',
+  completed_time DATETIME DEFAULT NULL COMMENT '尝试结束时间',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (attempt_id),
+  UNIQUE KEY uk_attempt_task_no (task_id, attempt_no),
+  KEY idx_attempt_provider (provider_code, provider_task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI视频生成任务尝试记录';
+
 -- ============================================================
 -- AI video chapter soft-delete migration
 -- ============================================================
