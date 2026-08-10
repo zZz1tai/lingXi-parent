@@ -203,6 +203,11 @@ aivideo:
   outbox:
     # 投递事件扫描间隔
     dispatch-interval-ms: 2000
+  callback:
+    # 供应商回调共享密钥（HMAC-SHA256 验签）；留空则拒绝所有回调
+    shared-secret: ${AIVIDEO_CALLBACK_SECRET:}
+    # 回调时间戳允许的最大时钟偏差（秒），防重放
+    clock-skew-seconds: 300
   story-bible:
     # 进程重启后恢复排队中章节任务的扫描间隔
     queued-recovery-interval-ms: 15000

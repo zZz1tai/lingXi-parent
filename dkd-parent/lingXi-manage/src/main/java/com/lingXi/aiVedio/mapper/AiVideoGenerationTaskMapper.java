@@ -442,4 +442,24 @@ public interface AiVideoGenerationTaskMapper
      * @return 待重试的图片任务列表
      */
     List<AiVideoGenerationTask> selectQueuedImageTasksForRetry(@Param("limit") int limit);
+
+    /**
+     * 根据供应商任务ID查询生成任务。
+     *
+     * @param providerTaskId 供应商任务ID
+     * @param providerCode   供应商编码
+     * @return 生成任务信息，不存在时返回null
+     */
+    AiVideoGenerationTask selectAiVideoGenerationTaskByProviderTaskId(
+            @Param("providerTaskId") String providerTaskId, @Param("providerCode") String providerCode);
+
+    /**
+     * 记录已处理的最新回调事件ID（用于供应商回调去重）。
+     *
+     * @param taskId     任务ID
+     * @param eventId    回调事件ID
+     * @return 影响的行数
+     */
+    int updateAiVideoGenerationTaskCallbackEventId(@Param("taskId") Long taskId,
+            @Param("eventId") String eventId);
 }

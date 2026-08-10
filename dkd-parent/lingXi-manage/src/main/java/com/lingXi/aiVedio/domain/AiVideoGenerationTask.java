@@ -70,4 +70,7 @@ public class AiVideoGenerationTask extends BaseEntity
 
     /** 错误信息，任务失败时填写 */
     private String errorMessage;
+
+    /** 最后回调事件ID，用于供应商回调去重 */
+    private String callbackEventId;
 }
