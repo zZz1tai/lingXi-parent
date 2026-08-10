@@ -77,6 +77,10 @@ public class AgentConfig implements EnvironmentAware {
     private boolean writeActionsEnabled = false;
     /** 待审批提案的最长有效时间（分钟），服务端强制不超过60分钟。 */
     private Integer writeActionProposalTtlMinutes = 15;
+    /** 熔断器连续失败阈值；Agent 连接层连续失败达到该次数后进入打开状态。 */
+    private Integer circuitFailureThreshold = 5;
+    /** 熔断器打开后尝试恢复前等待的时间（毫秒）。 */
+    private Long circuitOpenTimeoutMs = 30_000L;
 
     /** 保存 Spring 运行时环境，供认证密钥的配置回退逻辑使用。 */
     @Override

@@ -325,4 +325,87 @@ class QwenServiceImplTest {
                 .orElseThrow(AssertionError::new);
         assertEquals("ACCEPTED", userMessage.getStatus());
     }
+
+    @Test
+    void circuitOpenSyncChatReturnsDegradedReplyAndPersistsMarkedSuccess() {
+        AgentClient agentClient = mock(AgentClient.class);
+        IModelHistoryService historyService = mock(IModelHistoryService.class);
+        IDashBoardService dashboardService = mock(IDashBoardService.class);
+        when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
+        when(agentClient.isCircuitOpen()).thenReturn(true);
+        when(agentClient.chat(anyString(), anyString(), any(AgentUserContext.class)))
+                .thenThrow(new RuntimeException(
+                        "CODE:AGENT_CIRCUIT_OPEN: AI 服务暂不可用，请稍后重试"));
+
+        QwenServiceImpl service = new QwenServiceImpl(
+                agentClient, historyService, dashboardService);
+        String reply = service.chat("session-circuit", "user-9", "测试用户", "问题");
+
+        assertEquals("AI 服务暂时不可用，请稍后重试。", reply);
+        ArgumentCaptor<ModelHistory> captor = ArgumentCaptor.forClass(ModelHistory.class);
+        verify(historyService, org.mockito.Mockito.times(2))
+                .insertModelHistory(captor.capture());
+        ModelHistory degraded = captor.getAllValues().stream()
+                .filter(item -> "assistant".equals(item.getMessageType()))
+                .findFirst()
+                .orElseThrow(AssertionError::new);
+        assertEquals("SUCCEEDED", degraded.getStatus());
+        assertEquals("AGENT_DEGRADED", degraded.getErrorCode());
+        assertEquals("AI 服务暂时不可用，请稍后重试。", degraded.getContent());
+    }
+
+    @Test
+    void businessFailureStillFailsWhenCircuitClosed() {
+        AgentClient agentClient = mock(AgentClient.class);
+        IModelHistoryService historyService = mock(IModelHistoryService.class);
+        IDashBoardService dashboardService = mock(IDashBoardService.class);
+        when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
+        when(agentClient.isCircuitOpen()).thenReturn(false);
+        when(agentClient.chat(anyString(), anyString(), any(AgentUserContext.class)))
+                .thenThrow(new RuntimeException("Agent 调用失败 CODE:AGENT_CALL_OVER_LIMIT"));
+
+        QwenServiceImpl service = new QwenServiceImpl(
+                agentClient, historyService, dashboardService);
+        assertThrows(RuntimeException.class,
+                () -> service.chat("session-closed", "user-9", "测试用户", "问题"));
+
+        ArgumentCaptor<ModelHistory> captor = ArgumentCaptor.forClass(ModelHistory.class);
+        verify(historyService, org.mockito.Mockito.times(2))
+                .insertModelHistory(captor.capture());
+        ModelHistory assistant = captor.getAllValues().stream()
+                .filter(item -> "assistant".equals(item.getMessageType()))
+                .findFirst()
+                .orElseThrow(AssertionError::new);
+        assertEquals("FAILED", assistant.getStatus());
+        assertEquals("AGENT_CALL_OVER_LIMIT", assistant.getErrorCode());
+    }
+
+    @Test
+    void circuitOpenStreamChatDegradesWithoutTouchingAgent() {
+        AgentClient agentClient = mock(AgentClient.class);
+        IModelHistoryService historyService = mock(IModelHistoryService.class);
+        IDashBoardService dashboardService = mock(IDashBoardService.class);
+        when(historyService.insertModelHistory(any(ModelHistory.class))).thenReturn(1);
+        when(agentClient.isCircuitOpen()).thenReturn(true);
+
+        QwenServiceImpl service = new QwenServiceImpl(
+                agentClient, historyService, dashboardService);
+        SseEmitter emitter = service.streamChat(
+                "session-circuit-stream", "user-9", "测试用户", "问题");
+
+        org.junit.jupiter.api.Assertions.assertNotNull(emitter);
+        org.mockito.Mockito.verify(agentClient, org.mockito.Mockito.never())
+                .streamChat(anyString(), anyString(), any(AgentUserContext.class),
+                        any(java.util.function.Consumer.class),
+                        any(AgentClient.StreamOutcomeListener.class));
+        ArgumentCaptor<ModelHistory> captor = ArgumentCaptor.forClass(ModelHistory.class);
+        verify(historyService, org.mockito.Mockito.times(2))
+                .insertModelHistory(captor.capture());
+        ModelHistory degraded = captor.getAllValues().stream()
+                .filter(item -> "assistant".equals(item.getMessageType()))
+                .findFirst()
+                .orElseThrow(AssertionError::new);
+        assertEquals("SUCCEEDED", degraded.getStatus());
+        assertEquals("AGENT_DEGRADED", degraded.getErrorCode());
+    }
 }

@@ -65,6 +65,10 @@ class AgentClientContractTest {
     private final AtomicReference<String> ocrRequest = new AtomicReference<>();
     private final AtomicReference<String> memoryRequest = new AtomicReference<>();
     private final AtomicReference<String> memoryMethod = new AtomicReference<>();
+    private final AtomicReference<Integer> invokeCircuitStatus = new AtomicReference<>(200);
+    private final AtomicReference<String> invokeCircuitBody = new AtomicReference<>(
+            "{\"success\":true,\"data\":{\"response\":\"同步回复\"}}");
+    private final AtomicInteger invokeCircuitHits = new AtomicInteger();
     private HttpServer server;
     private ExecutorService serverExecutor;
     private ExecutorService clientExecutor;
@@ -134,6 +138,11 @@ class AgentClientContractTest {
             memoryRequest.set(readRequest(exchange));
             send(exchange, 200,
                     "{\"success\":true,\"data\":{\"enabled\":true,\"affected\":1}}");
+        });
+        server.createContext("/invoke-circuit", exchange -> {
+            invokeCircuitHits.incrementAndGet();
+            readRequest(exchange);
+            send(exchange, invokeCircuitStatus.get(), invokeCircuitBody.get());
         });
         server.start();
 
@@ -792,6 +801,91 @@ class AgentClientContractTest {
         assertEquals(expectedUserId, request.path("user_id").asText());
         assertTrue(!request.path("thread_id").asText()
                 .equals(request.path("user_id").asText()));
+    }
+
+    @Test
+    void serverFailuresOpenCircuitThenFastFail() {
+        config.setCircuitFailureThreshold(3);
+        config.setCircuitOpenTimeoutMs(1000L);
+        client = new AgentClient(config, toolTokenService, clientExecutor);
+        config.setChatInvokeUrl("/invoke-circuit");
+        invokeCircuitStatus.set(500);
+        invokeCircuitBody.set(
+                "{\"success\":false,\"error\":{\"code\":\"AGENT_HTTP_ERROR\","
+                        + "\"message\":\"upstream busy\"}}");
+
+        for (int i = 0; i < 3; i++) {
+            final int questionIndex = i;
+            assertThrows(RuntimeException.class,
+                    () -> client.chat("问题" + questionIndex, "session-circuit", "user-circuit"));
+        }
+        assertTrue(client.isCircuitOpen());
+
+        RuntimeException fastFail = assertThrows(RuntimeException.class,
+                () -> client.chat("熔断后", "session-circuit", "user-circuit"));
+        assertTrue(fastFail.getMessage().contains("AGENT_CIRCUIT_OPEN"));
+
+        assertEquals(3, invokeCircuitHits.get());
+    }
+
+    @Test
+    void circuitRecoversAfterOpenWindow() throws Exception {
+        config.setCircuitFailureThreshold(3);
+        config.setCircuitOpenTimeoutMs(1000L);
+        client = new AgentClient(config, toolTokenService, clientExecutor);
+        config.setChatInvokeUrl("/invoke-circuit");
+        invokeCircuitStatus.set(500);
+        invokeCircuitBody.set(
+                "{\"success\":false,\"error\":{\"code\":\"AGENT_HTTP_ERROR\","
+                        + "\"message\":\"upstream busy\"}}");
+        for (int i = 0; i < 3; i++) {
+            final int questionIndex = i;
+            assertThrows(RuntimeException.class,
+                    () -> client.chat("问题" + questionIndex, "session-recover", "user-recover"));
+        }
+        assertTrue(client.isCircuitOpen());
+
+        Thread.sleep(1200L);
+        invokeCircuitStatus.set(200);
+        invokeCircuitBody.set("{\"success\":true,\"data\":{\"response\":\"同步回复\"}}");
+        String reply = client.chat("恢复后", "session-recover", "user-recover");
+        assertEquals("同步回复", reply);
+        assertFalse(client.isCircuitOpen());
+    }
+
+    @Test
+    void circuitOpenFastFailsStreamingWithCircuitCode() throws Exception {
+        config.setCircuitFailureThreshold(3);
+        config.setCircuitOpenTimeoutMs(1000L);
+        client = new AgentClient(config, toolTokenService, clientExecutor);
+        config.setChatInvokeUrl("/invoke-circuit");
+        invokeCircuitStatus.set(500);
+        invokeCircuitBody.set(
+                "{\"success\":false,\"error\":{\"code\":\"AGENT_HTTP_ERROR\","
+                        + "\"message\":\"upstream busy\"}}");
+        for (int i = 0; i < 3; i++) {
+            final int questionIndex = i;
+            assertThrows(RuntimeException.class,
+                    () -> client.chat("问题" + questionIndex, "session-stream-circuit", "user-stream-circuit"));
+        }
+        assertTrue(client.isCircuitOpen());
+
+        CountDownLatch reported = new CountDownLatch(1);
+        AtomicReference<String> failureCode = new AtomicReference<>();
+        AtomicInteger replies = new AtomicInteger();
+        AtomicInteger failures = new AtomicInteger();
+        SseEmitter emitter = client.streamChat(
+                "流式问题", "session-stream-circuit",
+                AgentUserContext.minimal("user-stream-circuit", "用户"), null,
+                outcomeListener(replies, failures, new AtomicInteger(),
+                        failureCode, reported));
+        awaitClientTasks();
+
+        assertTrue(reported.await(5, TimeUnit.SECONDS));
+        assertEquals(0, replies.get());
+        assertEquals(1, failures.get());
+        assertEquals("AGENT_CIRCUIT_OPEN", failureCode.get());
+        assertTrue(emittedData(emitter).contains("AI 服务暂不可用，请稍后重试"));
     }
 
     private static void assertHistoryEntry(

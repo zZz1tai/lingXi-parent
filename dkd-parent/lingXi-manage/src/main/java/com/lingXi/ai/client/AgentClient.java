@@ -80,9 +80,30 @@ public class AgentClient {
     private final AiVideoModelConfigService modelConfigService;
     /** 签发与对话生命周期绑定的短期 Java Tool Gateway 令牌。 */
     private final AgentToolTokenService toolTokenService;
+    /** Agent 连接层熔断器：连续连接故障快速失败，避免每个请求等待超时并加剧雪崩。 */
+    private final AgentCircuitBreaker circuitBreaker;
     /** 提供数据库安全配置（含 Tavily Search API Key）；可选依赖，测试构造可缺省。 */
     @Autowired(required = false)
     private SystemSecurityConfigService securityConfigService;
+
+    /**
+     * 当前是否处于熔断快速失败窗口。
+     *
+     * @return 熔断打开返回 true
+     */
+    public boolean isCircuitOpen() {
+        return circuitBreaker.isOpen();
+    }
+
+    /** 判断异常链中是否包含连接层故障（连接失败/读取超时/网络中断）。 */
+    private static boolean isConnectivityFailure(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof java.io.IOException) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /**
      * 创建生产环境使用的 Agent 客户端。
@@ -127,6 +148,9 @@ public class AgentClient {
         this.modelConfigService = modelConfigService;
         this.toolTokenService = toolTokenService;
         this.executorService = executorService;
+        this.circuitBreaker = new AgentCircuitBreaker(
+                positiveOrDefault(config.getCircuitFailureThreshold(), 5),
+                positiveOrDefault(config.getCircuitOpenTimeoutMs(), 30_000L));
     }
 
     /** 应用关闭时中断仍在运行的流式转发任务并释放线程。 */
@@ -163,6 +187,11 @@ public class AgentClient {
     /** 配置值为空或非正数时使用安全默认值。 */
     private static int positiveOrDefault(Integer value, int fallback) {
         return value == null || value.intValue() <= 0 ? fallback : value.intValue();
+    }
+
+    /** 配置值为空或非正数时使用安全默认值（毫秒级 long）。 */
+    private static long positiveOrDefault(Long value, long fallback) {
+        return value == null || value.longValue() <= 0L ? fallback : value.longValue();
     }
 
     /**
@@ -276,6 +305,12 @@ public class AgentClient {
         AgentToolAccess toolAccess = createToolAccess(userContext, sessionId);
         long startedAt = System.currentTimeMillis();
         try {
+            if (!circuitBreaker.tryAcquire()) {
+                log.warn("Agent 熔断打开，同步对话快速失败，sessionIdLength={}",
+                        safeLength(sessionId));
+                throw new RuntimeException(
+                        "CODE:AGENT_CIRCUIT_OPEN: AI 服务暂不可用，请稍后重试");
+            }
             String requestBody = buildRequest(
                     message, sessionId, userId, mode, contextData,
                     userContext, toolAccess, attachments);
@@ -292,6 +327,11 @@ public class AgentClient {
                     e.getClass().getSimpleName(),
                     System.currentTimeMillis() - startedAt,
                     requestIdOf(toolAccess));
+            // 错误码化异常（含 CODE:xxx 的熔断快速失败等）保持原样，便于上层提取稳定错误码。
+            if (e instanceof RuntimeException && e.getMessage() != null
+                    && e.getMessage().contains("CODE:")) {
+                throw (RuntimeException) e;
+            }
             throw new RuntimeException("调用 Agent 服务失败", e);
         } finally {
             toolTokenService.revoke(toolAccess);
@@ -613,6 +653,12 @@ public class AgentClient {
         Runnable streamTask = () -> {
             HttpURLConnection conn = null;
             try {
+                if (!circuitBreaker.tryAcquire()) {
+                    log.warn("Agent 熔断打开，梗概流快速失败，workNameLength={}",
+                            safeLength(workName));
+                    sendSafeStreamError(emitter, true, "AI 服务暂不可用，请稍后重试");
+                    return;
+                }
                 ObjectNode root = objectMapper.createObjectNode();
                 root.put("work_name", workName == null ? "" : workName.trim());
                 root.put("work_type", workType == null ? "novel" : workType.trim());
@@ -644,12 +690,18 @@ public class AgentClient {
                             statusCode,
                             "AGENT_STREAM_HTTP_ERROR",
                             "Agent 流式请求失败");
+                    if (statusCode >= 500) {
+                        circuitBreaker.recordFailure();
+                        log.warn("Agent 流式服务端故障，status={}，熔断状态={}",
+                                statusCode, circuitBreaker.describe());
+                    }
                     throw remoteFailure(error, "AGENT_STREAM_HTTP_ERROR", "Agent 流式请求失败");
                 }
 
                 try (BufferedReader br = new BufferedReader(
                         new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
                     String line;
+                    boolean streamFailed = false;
                     while ((line = readBoundedLine(br, MAX_STREAM_EVENT_CHARS)) != null) {
                         line = line.trim();
                         if (!line.startsWith("data:")) {
@@ -664,6 +716,7 @@ public class AgentClient {
                             String eventType = node.path("type").asText("");
                             String content = node.path("content").asText("");
                             if ("error".equals(eventType)) {
+                                streamFailed = true;
                                 emitter.send(SseEmitter.event().data(data));
                                 break;
                             }
@@ -674,6 +727,7 @@ public class AgentClient {
                                 break;
                             }
                         } catch (IOException parseError) {
+                            streamFailed = true;
                             log.warn("解析梗概流式事件失败，errorType={}",
                                     parseError.getClass().getSimpleName());
                             emitter.send(SseEmitter.event().data(
@@ -681,11 +735,19 @@ public class AgentClient {
                             break;
                         }
                     }
+                    if (!streamFailed) {
+                        circuitBreaker.recordSuccess();
+                    }
                 }
                 emitter.complete();
             } catch (Exception e) {
                 log.error("AI 拟写梗概流式调用失败，errorType={}",
                         e.getClass().getSimpleName());
+                if (isConnectivityFailure(e)) {
+                    circuitBreaker.recordFailure();
+                    log.warn("Agent 流式连接层故障，熔断状态={}",
+                            circuitBreaker.describe());
+                }
                 try {
                     emitter.send(SseEmitter.event().data(
                             "{\"type\":\"error\",\"content\":\"AI 拟写梗概失败，请稍后重试\"}"));
@@ -837,6 +899,15 @@ public class AgentClient {
             HttpURLConnection conn = null;
             long startedAt = System.currentTimeMillis();
             try {
+                if (!circuitBreaker.tryAcquire()) {
+                    log.warn("Agent 熔断打开，流式请求快速失败，sessionIdLength={}",
+                            safeLength(sessionId));
+                    reportFailed(
+                            outcomeListener, outcomeReported, "AGENT_CIRCUIT_OPEN");
+                    sendSafeStreamError(emitter, structuredEvents,
+                            "AI 服务暂不可用，请稍后重试");
+                    return;
+                }
                 String streamPath = actionId == null
                         ? (structuredEvents
                                 ? config.getChatStreamV2Url() : config.getChatStreamUrl())
@@ -872,6 +943,11 @@ public class AgentClient {
                             statusCode,
                             "AGENT_STREAM_HTTP_ERROR",
                             "Agent 流式请求失败");
+                    if (statusCode >= 500) {
+                        circuitBreaker.recordFailure();
+                        log.warn("Agent 流式服务端故障，status={}，熔断状态={}",
+                                statusCode, circuitBreaker.describe());
+                    }
                     reportFailed(
                             outcomeListener, outcomeReported, "AGENT_STREAM_HTTP_ERROR");
                     throw remoteFailure(error, "AGENT_STREAM_HTTP_ERROR", "Agent 流式请求失败");
@@ -978,10 +1054,12 @@ public class AgentClient {
                         && completedReplyConsumer != null) {
                     completedReplyConsumer.accept(fullReply.toString());
                 }
-                if (!streamFailed && terminalReceived && !approvalPending
-                        && outcomeListener != null
-                        && outcomeReported.compareAndSet(false, true)) {
-                    outcomeListener.onReply(fullReply.toString());
+                if (!streamFailed && terminalReceived && !approvalPending) {
+                    circuitBreaker.recordSuccess();
+                    if (outcomeListener != null
+                            && outcomeReported.compareAndSet(false, true)) {
+                        outcomeListener.onReply(fullReply.toString());
+                    }
                 }
                 if (streamFailed) {
                     reportFailed(outcomeListener, outcomeReported, failureCode.get());
@@ -990,6 +1068,11 @@ public class AgentClient {
             } catch (Exception e) {
                 log.error("Agent 流式调用失败，errorType={}",
                         e.getClass().getSimpleName());
+                if (isConnectivityFailure(e)) {
+                    circuitBreaker.recordFailure();
+                    log.warn("Agent 流式连接层故障，熔断状态={}",
+                            circuitBreaker.describe());
+                }
                 try {
                     sendSafeStreamError(emitter, structuredEvents,
                             "Agent 流式调用失败，请稍后重试");
@@ -1065,6 +1148,12 @@ public class AgentClient {
         Runnable streamTask = () -> {
             HttpURLConnection conn = null;
             try {
+                if (!circuitBreaker.tryAcquire()) {
+                    log.warn("Agent 熔断打开，小说创作流快速失败，sessionIdLength={}",
+                            safeLength(sessionId));
+                    sendSafeStreamError(emitter, true, "AI 服务暂不可用，请稍后重试");
+                    return;
+                }
                 URL url = new URL(config.getBaseUrl() + config.getNovelStreamUrl());
                 conn = (HttpURLConnection) url.openConnection();
                 connectionRef.set(conn);
@@ -1090,6 +1179,11 @@ public class AgentClient {
                             statusCode,
                             "AGENT_STREAM_HTTP_ERROR",
                             "Agent 流式请求失败");
+                    if (statusCode >= 500) {
+                        circuitBreaker.recordFailure();
+                        log.warn("Agent 流式服务端故障，status={}，熔断状态={}",
+                                statusCode, circuitBreaker.describe());
+                    }
                     throw remoteFailure(error, "AGENT_STREAM_HTTP_ERROR", "Agent 流式请求失败");
                 }
 
@@ -1173,10 +1267,18 @@ public class AgentClient {
                         && replyDelivered.compareAndSet(false, true)) {
                     completedReplyConsumer.accept(fullReply.toString());
                 }
+                if (!streamFailed && terminalReceived) {
+                    circuitBreaker.recordSuccess();
+                }
                 emitter.complete();
             } catch (Exception e) {
                 log.error("Agent 流式调用失败，errorType={}",
                         e.getClass().getSimpleName());
+                if (isConnectivityFailure(e)) {
+                    circuitBreaker.recordFailure();
+                    log.warn("Agent 流式连接层故障，熔断状态={}",
+                            circuitBreaker.describe());
+                }
                 try {
                     sendSafeStreamError(emitter, true, "Agent 流式调用失败，请稍后重试");
                     emitter.complete();
@@ -1840,6 +1942,17 @@ public class AgentClient {
 
             int statusCode = conn.getResponseCode();
             String responseBody = AgentResponseUtil.readResponseBody(conn, statusCode);
+            if (statusCode >= 500) {
+                circuitBreaker.recordFailure();
+                log.warn("Agent 服务端故障，method={}, status={}，熔断状态={}",
+                        method, statusCode, circuitBreaker.describe());
+                return AgentResponseUtil.normalizeError(
+                        objectMapper,
+                        responseBody,
+                        statusCode,
+                        "AGENT_HTTP_ERROR",
+                        "Python Agent 请求失败");
+            }
             if (statusCode < 200 || statusCode >= 300) {
                 log.warn("Python Agent HTTP error, method={}, status={}",
                         method, statusCode);
@@ -1850,7 +1963,14 @@ public class AgentClient {
                         "AGENT_HTTP_ERROR",
                         "Python Agent 请求失败");
             }
+            circuitBreaker.recordSuccess();
             return AgentResponseUtil.parseSuccess(objectMapper, responseBody);
+        } catch (IOException connectionFailure) {
+            circuitBreaker.recordFailure();
+            log.warn("Agent 连接层故障，method={}, errorType={}，熔断状态={}",
+                    method, connectionFailure.getClass().getSimpleName(),
+                    circuitBreaker.describe());
+            throw connectionFailure;
         } finally {
             if (conn != null) {
                 conn.disconnect();

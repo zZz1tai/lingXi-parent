@@ -44,6 +44,11 @@ public class QwenServiceImpl implements IQwenService {
     private static final Pattern ERROR_CODE_PATTERN =
             Pattern.compile("CODE:\\s*([A-Z0-9_]+)");
 
+    /** Agent 熔断打开时的固定兜底回复；降级消息以 SUCCEEDED + AGENT_DEGRADED 标记落库。 */
+    private static final String DEGRADED_REPLY = "AI 服务暂时不可用，请稍后重试。";
+    /** 降级回复落库使用的错误码，供监控识别降级消息。 */
+    private static final String DEGRADED_ERROR_CODE = "AGENT_DEGRADED";
+
     /** 负责与 Python Agent 通信。 */
     private final AgentClient agentClient;
     /** 负责持久化用户消息和助手回答。 */
@@ -117,6 +122,16 @@ public class QwenServiceImpl implements IQwenService {
                     : agentClient.chat(
                             normalizedMessage, normalizedSessionId, trustedContext, attachments);
         } catch (RuntimeException agentFailure) {
+            if (agentClient.isCircuitOpen()) {
+                // 熔断打开：Agent 或网络不可用，返回固定兜底回复保持对话可用。
+                log.warn("Agent 熔断降级回复，sessionIdLength={}，错误={}",
+                        safeLength(normalizedSessionId), agentFailure.getMessage());
+                saveDegradedAssistantReply(
+                        normalizedSessionId,
+                        trustedContext.getUserId(),
+                        trustedContext.getUserName());
+                return DEGRADED_REPLY;
+            }
             saveFailedAssistantMessage(
                     normalizedSessionId,
                     trustedContext.getUserId(),
@@ -163,6 +178,15 @@ public class QwenServiceImpl implements IQwenService {
             reply = agentClient.chatWithContext(
                     normalizedMessage, contextData, normalizedSessionId, trustedContext);
         } catch (RuntimeException agentFailure) {
+            if (agentClient.isCircuitOpen()) {
+                log.warn("Agent 熔断降级回复（上下文分析），sessionIdLength={}，错误={}",
+                        safeLength(normalizedSessionId), agentFailure.getMessage());
+                saveDegradedAssistantReply(
+                        normalizedSessionId,
+                        trustedContext.getUserId(),
+                        trustedContext.getUserName());
+                return DEGRADED_REPLY;
+            }
             saveFailedAssistantMessage(
                     normalizedSessionId,
                     trustedContext.getUserId(),
@@ -209,6 +233,15 @@ public class QwenServiceImpl implements IQwenService {
         bindAttachments(
                 attachmentIds, normalizedSessionId,
                 trustedContext.getUserId(), userHistory.getId());
+        if (agentClient.isCircuitOpen()) {
+            log.warn("Agent 熔断，流式对话降级回复，sessionIdLength={}",
+                    safeLength(normalizedSessionId));
+            saveDegradedAssistantReply(
+                    normalizedSessionId,
+                    trustedContext.getUserId(),
+                    trustedContext.getUserName());
+            return degradedStreamEmitter(false);
+        }
         // 终态统一由 outcome 回调落库：成功/失败/取消各一次，且只报告一次。
         StreamOutcomeListener outcome = createStreamOutcome(
                 normalizedSessionId,
@@ -251,6 +284,15 @@ public class QwenServiceImpl implements IQwenService {
         bindAttachments(
                 attachmentIds, normalizedSessionId,
                 trustedContext.getUserId(), userHistory.getId());
+        if (agentClient.isCircuitOpen()) {
+            log.warn("Agent 熔断，V2 流式对话降级回复，sessionIdLength={}",
+                    safeLength(normalizedSessionId));
+            saveDegradedAssistantReply(
+                    normalizedSessionId,
+                    trustedContext.getUserId(),
+                    trustedContext.getUserName());
+            return degradedStreamEmitter(true);
+        }
         StreamOutcomeListener outcome = createStreamOutcome(
                 normalizedSessionId,
                 trustedContext.getUserId(),
@@ -277,6 +319,15 @@ public class QwenServiceImpl implements IQwenService {
         String normalizedSessionId = requireValidSessionId(sessionId);
         String normalizedActionId = requireActionId(actionId);
         String normalizedDecision = requireDecision(decision);
+        if (agentClient.isCircuitOpen()) {
+            log.warn("Agent 熔断，受控动作恢复降级回复，sessionIdLength={}",
+                    safeLength(normalizedSessionId));
+            saveDegradedAssistantReply(
+                    normalizedSessionId,
+                    trustedContext.getUserId(),
+                    trustedContext.getUserName());
+            return degradedStreamEmitter(true);
+        }
         StreamOutcomeListener outcome = createStreamOutcome(
                 normalizedSessionId,
                 trustedContext.getUserId(),
@@ -317,6 +368,15 @@ public class QwenServiceImpl implements IQwenService {
                 trustedContext.getUserId(),
                 trustedContext.getUserName(),
                 normalizedMessage);
+        if (agentClient.isCircuitOpen()) {
+            log.warn("Agent 熔断，流式上下文分析降级回复，sessionIdLength={}",
+                    safeLength(normalizedSessionId));
+            saveDegradedAssistantReply(
+                    normalizedSessionId,
+                    trustedContext.getUserId(),
+                    trustedContext.getUserName());
+            return degradedStreamEmitter(false);
+        }
         // 终态统一由 outcome 回调落库：成功/失败/取消各一次，且只报告一次。
         StreamOutcomeListener outcome = createStreamOutcome(
                 normalizedSessionId,
@@ -574,6 +634,54 @@ public class QwenServiceImpl implements IQwenService {
     private void saveCancelledAssistantMessage(
             String sessionId, String userId, String userName) {
         saveTerminalAssistantMessage(sessionId, userId, userName, "CANCELLED", null);
+    }
+
+    /**
+     * 保存降级回复到对话历史（终态：成功，携带降级错误码供监控识别）。
+     *
+     * @param sessionId 会话唯一标识
+     * @param userId    用户唯一标识
+     * @param userName  用户名称
+     */
+    private void saveDegradedAssistantReply(
+            String sessionId, String userId, String userName) {
+        ModelHistory history = new ModelHistory();
+        history.setSessionId(sessionId);
+        history.setUserId(userId);
+        history.setUserName(userName);
+        history.setContent(DEGRADED_REPLY);
+        history.setMessageType("assistant");
+        history.setModelName("agent");
+        history.setStatus("SUCCEEDED");
+        history.setErrorCode(DEGRADED_ERROR_CODE);
+        history.setRequestId(RequestIdFilter.current());
+        history.setCompletedAt(new Date());
+        if (modelHistoryService.insertModelHistory(history) != 1) {
+            throw new IllegalStateException("降级助手回复持久化失败");
+        }
+    }
+
+    /**
+     * 构造熔断降级用的流式响应：立即推送固定兜底文本并结束。
+     *
+     * @param structuredEvents V2 结构化事件使用 {@code type:token} 格式
+     * @return 已推送兜底回复的 SseEmitter
+     */
+    private SseEmitter degradedStreamEmitter(boolean structuredEvents) {
+        SseEmitter emitter = new SseEmitter(30_000L);
+        try {
+            if (structuredEvents) {
+                emitter.send(SseEmitter.event().name("token")
+                        .data("{\"type\":\"token\",\"content\":\"" + DEGRADED_REPLY + "\"}"));
+                emitter.send(SseEmitter.event().name("done").data("{\"type\":\"done\"}"));
+            } else {
+                emitter.send(SseEmitter.event().data(DEGRADED_REPLY));
+            }
+            emitter.complete();
+        } catch (Exception ex) {
+            emitter.completeWithError(ex);
+        }
+        return emitter;
     }
 
     /**
