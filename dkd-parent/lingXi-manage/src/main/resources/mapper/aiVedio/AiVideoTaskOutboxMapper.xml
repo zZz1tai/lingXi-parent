@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiVedio.mapper.AiVideoTaskOutboxMapper">
+    <resultMap id="AiVideoTaskOutboxResult" type="AiVideoTaskOutbox">
+        <id property="outboxId" column="outbox_id"/>
+        <result property="taskId" column="task_id"/>
+        <result property="eventType" column="event_type"/>
+        <result property="payloadJson" column="payload_json"/>
+        <result property="status" column="status"/>
+        <result property="retryCount" column="retry_count"/>
+        <result property="nextRetryTime" column="next_retry_time"/>
+        <result property="sentTime" column="sent_time"/>
+        <result property="createTime" column="create_time"/>
+    </resultMap>
+
+    <insert id="insertAiVideoTaskOutbox" parameterType="AiVideoTaskOutbox" useGeneratedKeys="true" keyProperty="outboxId">
+        insert into ai_video_task_outbox
+        (task_id, event_type, payload_json, status, retry_count, next_retry_time, create_time)
+        values
+        (#{taskId}, #{eventType}, #{payloadJson}, 'PENDING', 0, null, now())
+    </insert>
+
+    <select id="selectPendingForDispatch" resultMap="AiVideoTaskOutboxResult">
+        select outbox_id, task_id, event_type, payload_json, status, retry_count,
+               next_retry_time, sent_time, create_time
+        from ai_video_task_outbox
+        where status = 'PENDING'
+          and (next_retry_time is null or next_retry_time &lt;= now())
+        order by outbox_id asc
+        limit #{limit}
+        for update
+    </select>
+
+    <update id="markAiVideoTaskOutboxSent">
+        update ai_video_task_outbox
+        set status = 'SENT', sent_time = now(), update_time = now()
+        where outbox_id = #{outboxId} and status = 'PENDING'
+    </update>
+
+    <update id="markAiVideoTaskOutboxFailed">
+        update ai_video_task_outbox
+        set status = 'FAILED', retry_count = #{retryCount},
+            next_retry_time = #{nextRetryTime}, update_time = now()
+        where outbox_id = #{outboxId} and status = 'PENDING'
+    </update>
+</mapper>

@@ -12,6 +12,9 @@
         <result property="idempotencyKey" column="idempotency_key"/>
         <result property="providerTaskId" column="provider_task_id"/>
         <result property="progress" column="progress"/>
+        <result property="maxRetry" column="max_retry"/>
+        <result property="retryCount" column="retry_count"/>
+        <result property="nextRetryTime" column="next_retry_time"/>
         <result property="requestJson" column="request_json"/>
         <result property="errorCode" column="error_code"/>
         <result property="errorMessage" column="error_message"/>
@@ -20,8 +23,8 @@
 
     <sql id="selectAiVideoGenerationTaskVo">
         select task_id, project_id, chapter_id, asset_id, task_type, task_name, status,
-               idempotency_key, provider_task_id, progress, request_json,
-               error_code, error_message, create_time
+               idempotency_key, provider_task_id, progress, max_retry, retry_count, next_retry_time,
+               request_json, error_code, error_message, create_time
         from ai_video_generation_task
     </sql>
 
@@ -211,6 +214,7 @@
             update_time = now()
         where task_type = 'VIDEO' and provider_code = #{providerCode} and status = 'QUEUED'
           and provider_task_id is null
+          and (retry_count = 0 or retry_count is null)
           and coalesce(update_time, create_time) &lt; date_sub(now(), interval 2 minute)
           and (del_flag = '0' or del_flag is null)
     </update>
@@ -343,5 +347,70 @@
         from ai_video_generation_task
         where project_id = #{projectId} and (del_flag = '0' or del_flag is null)
         order by task_id desc
+    </select>
+
+    <update id="claimQueuedVideoTaskForSubmission">
+        update ai_video_generation_task
+        set status = 'RUNNING', progress = 5, error_code = null, error_message = null,
+            started_time = coalesce(started_time, now()), update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
+          and status = 'QUEUED' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="markClaimedVideoTaskWaiting">
+        update ai_video_generation_task
+        set provider_task_id = #{providerTaskId}, status = 'WAITING_CALLBACK', progress = 20,
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.normalizedDurationMs', #{normalizedDurationMs}),
+            error_code = null, error_message = null, update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
+          and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="markClaimedVideoTaskNeedsReview">
+        update ai_video_generation_task
+        set status = 'NEEDS_REVIEW', progress = 20,
+            error_code = #{errorCode}, error_message = #{errorMessage}, update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
+          and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="failClaimedVideoTask">
+        update ai_video_generation_task
+        set status = 'FAILED', progress = 100, error_code = #{errorCode}, error_message = #{errorMessage},
+            completed_time = now(), update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
+          and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="retryClaimedVideoTask">
+        update ai_video_generation_task
+        set status = 'QUEUED', progress = 5, provider_task_id = null,
+            retry_count = #{retryCount}, next_retry_time = #{nextRetryTime},
+            error_code = #{errorCode}, error_message = #{errorMessage}, update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
+          and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <select id="selectQueuedVideoTasksForRetry" resultMap="AiVideoGenerationTaskResult">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key,
+               provider_task_id, progress, request_json, error_code, error_message, create_time
+        from ai_video_generation_task
+        where (del_flag = '0' or del_flag is null) and task_type = 'VIDEO'
+          and status = 'QUEUED' and retry_count > 0
+          and next_retry_time is not null and next_retry_time &lt;= now()
+        order by create_time asc
+        limit #{limit}
+    </select>
+
+    <select id="selectQueuedStoryBibleTasksForRecovery" resultMap="AiVideoGenerationTaskResult">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key,
+               provider_task_id, progress, request_json, error_code, error_message, create_time
+        from ai_video_generation_task
+        where (del_flag = '0' or del_flag is null) and task_type = 'STORY_BIBLE'
+          and status = 'QUEUED'
+          and coalesce(update_time, create_time) &lt; date_sub(now(), interval 60 second)
+        order by create_time asc
+        limit #{limit}
     </select>
 </mapper>

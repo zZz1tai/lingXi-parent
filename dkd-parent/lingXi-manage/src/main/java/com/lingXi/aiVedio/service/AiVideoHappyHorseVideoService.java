@@ -18,19 +18,25 @@ import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
+import com.lingXi.aiVedio.outbox.AiVideoTaskOutboxPublisher;
 import com.lingXi.aiVedio.storage.AiVideoPublicAssetUrlResolver;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 import com.lingXi.aiVedio.util.AiVideoReferenceImagePolicy;
 import com.lingXi.common.exception.ServiceException;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * HappyHorse多参考图视频供应商适配器。
  */
 @Service
+@Slf4j
 @ConditionalOnProperty(prefix = "aivideo.video", name = "provider",
         havingValue = "happyhorse", matchIfMissing = true)
 public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
 {
+    /** 外部提交失败后的最大自动重试次数。 */
+    private static final int MAX_SUBMIT_RETRY = 3;
+
     @Autowired
     private AiVideoAssetMapper assetMapper;
     @Autowired
@@ -45,6 +51,8 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
     private ObjectMapper objectMapper;
     @Autowired
     private PlatformTransactionManager transactionManager;
+    @Autowired
+    private AiVideoTaskOutboxPublisher outboxPublisher;
 
     /**
      * 获取供应商编码。
@@ -64,8 +72,8 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
 
     /**
      * 提交视频生成任务。
-     * 先在一个短事务内原子完成草稿状态迁移和任务创建，事务提交后才调用外部服务。
-     * 这样并发确认不会重复提交，外部请求失败时任务和草稿也能落为可重试状态。
+     * 事务内完成资产状态迁移、任务创建和投递事件写入后立即返回；
+     * 供应商外呼由派发器在任务线程中执行，HTTP 请求线程不再阻塞最长 60 秒。
      *
      * @param video 视频资产
      * @param keyframe 可选关键帧资产；文生视频时为空
@@ -90,78 +98,184 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
                 referenceUrl, referenceUrls, runtimeConfig.getVideoModel());
 
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
-        AiVideoGenerationTask task = transaction.execute(status -> prepareTask(
-                video, username, taskRequestJson, runtimeConfig.getVideoModel()));
+        AiVideoGenerationTask task = transaction.execute(status -> {
+            AiVideoGenerationTask created = prepareTask(
+                    video, username, taskRequestJson, runtimeConfig.getVideoModel());
+            outboxPublisher.publish(created.getTaskId(),
+                    AiVideoTaskOutboxPublisher.EVENT_TASK_CREATED);
+            return created;
+        });
         if (task == null || task.getTaskId() == null)
         {
             throw new ServiceException("视频生成任务创建失败");
         }
         video.setStatus("GENERATING");
+        return task.getTaskId();
+    }
 
-        // 通过 Python Agent 提交视频任务，隔离具体模型提供方的协议差异。
-        VideoClient.VideoSubmitResult result = videoClient.submitVideo(
-                runtimeConfig.getApiKey(),
-                providerCode(),
-                runtimeConfig.getWorkspaceBaseUrl(),
-                runtimeConfig.getVideoModel(),
-                video.getPromptText(),
-                video.getNegativePromptText(),
-                referenceUrl,
-                referenceUrls.getCharacterUrls(),
-                referenceUrls.getSceneUrl(),
-                runtimeConfig.getVideoResolution(),
-                runtimeConfig.getVideoRatio(),
-                Boolean.TRUE.equals(runtimeConfig.getVideoWatermark()),
-                video.getDurationMs(),
-                task.getIdempotencyKey());
-        
+    /**
+     * 由投递派发器调用，把排队中的视频任务提交给供应商。
+     * <p>从任务表和请求 JSON 重建外呼参数，成功后进入等待回调状态；
+     * 提交被供应商明确拒绝时按确定性失败处理；网络等异常按指数退避自动重试。</p>
+     *
+     * @param taskId 视频生成任务ID
+     */
+    public void submitQueuedVideoTask(Long taskId)
+    {
+        AiVideoGenerationTask task = taskMapper.selectAiVideoGenerationTaskByTaskId(taskId);
+        if (task == null || !"VIDEO".equals(task.getTaskType()))
+        {
+            throw new IllegalStateException("视频任务不存在或类型无效，taskId=" + taskId);
+        }
+        if (!"QUEUED".equals(task.getStatus())
+                && taskMapper.claimQueuedVideoTaskForSubmission(taskId, providerCode()) != 1)
+        {
+            log.info("视频任务已被其他执行者领取或状态已变化，跳过提交，taskId={}", taskId);
+            return;
+        }
+        AiVideoAsset video = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
+        if (video == null)
+        {
+            taskMapper.failClaimedVideoTask(taskId, providerCode(),
+                    "VIDEO_ASSET_NOT_FOUND", "视频任务关联资产不存在");
+            return;
+        }
+        if (!"GENERATING".equals(video.getStatus()))
+        {
+            taskMapper.markClaimedVideoTaskNeedsReview(taskId, providerCode(),
+                    "VIDEO_ASSET_STATE_INVALID", "视频资产不在生成状态，请人工核对");
+            return;
+        }
+
+        try
+        {
+            AiVideoModelConfig runtimeConfig = modelConfigService.getRequiredConfig();
+            JsonNode request = objectMapper.readTree(task.getRequestJson());
+            VideoClient.VideoSubmitResult result = videoClient.submitVideo(
+                    runtimeConfig.getApiKey(),
+                    providerCode(),
+                    runtimeConfig.getWorkspaceBaseUrl(),
+                    firstNonBlank(request.path("model").asText(""), runtimeConfig.getVideoModel()),
+                    request.path("prompt").asText(""),
+                    request.path("negativePrompt").asText(""),
+                    blankToNull(request.path("keyframeImageUrl").asText("")),
+                    stringArray(request.path("characterReferenceImageUrls")),
+                    blankToNull(request.path("sceneReferenceImageUrl").asText("")),
+                    runtimeConfig.getVideoResolution(),
+                    runtimeConfig.getVideoRatio(),
+                    Boolean.TRUE.equals(runtimeConfig.getVideoWatermark()),
+                    request.path("durationMs").asInt(),
+                    task.getIdempotencyKey());
+            handleSubmissionResult(task, video, result);
+        }
+        catch (Exception ex)
+        {
+            log.error("视频任务外部提交失败，taskId={}, errorType={}",
+                    taskId, ex.getClass().getSimpleName());
+            scheduleAutomaticRetry(task, ex.getMessage());
+        }
+    }
+
+    /**
+     * 按提交结果推进任务状态：成功进入等待回调，不确定转人工核对，明确失败则终态失败。
+     *
+     * @param task   视频生成任务
+     * @param video  视频资产
+     * @param result 供应商提交结果
+     */
+    private void handleSubmissionResult(final AiVideoGenerationTask task,
+            final AiVideoAsset video, final VideoClient.VideoSubmitResult result)
+    {
         if (!result.success())
         {
             String error = result.error() == null ? "视频提交失败" : result.error();
             if (result.submissionUncertain())
             {
-                taskMapper.updateAiVideoGenerationTaskStatus(task.getTaskId(), "NEEDS_REVIEW", 20,
+                taskMapper.markClaimedVideoTaskNeedsReview(task.getTaskId(), providerCode(),
                         "VIDEO_PROVIDER_SUBMISSION_UNCERTAIN", error);
-                throw new ServiceException("视频供应商提交结果不确定，请勿重复生成，等待人工核对")
-                        .setDetailMessage(error);
+                log.warn("视频供应商提交结果不确定，转人工核对，taskId={}, error={}",
+                        task.getTaskId(), error);
+                return;
             }
-
             String agentErrorCode = result.errorCode() == null
                     || result.errorCode().trim().isEmpty()
                             ? "VIDEO_PROVIDER_SUBMIT_FAILED" : result.errorCode().trim();
+            if (result.retryable() && isRetryAllowed(task))
+            {
+                scheduleAutomaticRetry(task, agentErrorCode + "：" + error);
+                return;
+            }
             String taskErrorCode = result.retryable()
                     ? "VIDEO_PROVIDER_MANUAL_RETRY_REQUIRED" : agentErrorCode;
-            String failureMessage = result.retryable()
-                    ? "视频服务暂时不可用，请手动重试：" + agentErrorCode + "：" + error
-                    : agentErrorCode + "：" + error;
-            markDefinitiveSubmissionFailure(video, task, username,
-                    taskErrorCode, failureMessage);
-            throw new ServiceException(result.retryable()
-                    ? "视频生成提交失败，可手动重试" : "视频生成提交失败")
-                            .setDetailMessage(failureMessage);
+            markDefinitiveSubmissionFailure(video, task,
+                    "ai-video-outbox", taskErrorCode,
+                    (result.retryable()
+                            ? "视频服务暂时不可用，请手动重试：" : "")
+                            + agentErrorCode + "：" + error);
+            return;
         }
-        
+
         String providerTaskId = result.taskId();
         Integer normalizedDurationMs = result.normalizedDurationMs();
         if (providerTaskId == null || providerTaskId.trim().isEmpty()
                 || normalizedDurationMs == null || normalizedDurationMs.intValue() <= 0)
         {
-            taskMapper.updateAiVideoGenerationTaskStatus(task.getTaskId(), "NEEDS_REVIEW", 20,
+            taskMapper.markClaimedVideoTaskNeedsReview(task.getTaskId(), providerCode(),
                     "VIDEO_PROVIDER_INVALID_AGENT_RESPONSE",
                     "Agent 未返回有效任务ID或归一化时长，请人工核对");
-            throw new ServiceException("视频供应商已返回结果，但实际时长或任务ID无效，请人工核对");
+            return;
         }
         if (!finalizeSuccessfulSubmission(video, task, providerTaskId,
-                normalizedDurationMs, runtimeConfig.getVideoModel(), username))
+                normalizedDurationMs, firstNonBlank(task.getModelCode(), "video"), "ai-video-outbox"))
         {
-            taskMapper.markVideoProviderTaskNeedsReviewWithProviderId(
-                    task.getTaskId(), providerCode(), providerTaskId,
+            taskMapper.markClaimedVideoTaskNeedsReview(task.getTaskId(), providerCode(),
                     "VIDEO_PROVIDER_LOCAL_STATE_UNCERTAIN",
                     "视频供应商已返回任务ID，但本地等待状态更新失败；请勿重复提交");
-            throw new ServiceException("视频供应商已接收任务，但本地状态待核对，请勿重复生成");
         }
         video.setDurationMs(normalizedDurationMs);
-        return task.getTaskId();
+    }
+
+    /**
+     * 按指数退避安排任务自动重试，超过上限后标记待人工处理。
+     *
+     * @param task        视频生成任务
+     * @param errorMessage 失败原因
+     */
+    private void scheduleAutomaticRetry(AiVideoGenerationTask task, String errorMessage)
+    {
+        int retryCount = task.getRetryCount() == null ? 0 : task.getRetryCount();
+        if (retryCount >= MAX_SUBMIT_RETRY)
+        {
+            taskMapper.markClaimedVideoTaskNeedsReview(task.getTaskId(), providerCode(),
+                    "VIDEO_PROVIDER_SUBMIT_FAILED",
+                    "自动重试次数超限，请手动重试：" + truncate(errorMessage));
+            return;
+        }
+        long delayMinutes = 1L << retryCount;
+        int updated = taskMapper.retryClaimedVideoTask(task.getTaskId(), providerCode(),
+                retryCount + 1,
+                new java.util.Date(System.currentTimeMillis() + delayMinutes * 60_000L),
+                "VIDEO_PROVIDER_SUBMIT_TRANSIENT", truncate(errorMessage));
+        if (updated != 1)
+        {
+            taskMapper.markClaimedVideoTaskNeedsReview(task.getTaskId(), providerCode(),
+                    "VIDEO_PROVIDER_LOCAL_STATE_UNCERTAIN",
+                    "视频任务自动重试状态更新失败，请人工核对");
+        }
+        log.warn("视频任务将自动重试，taskId={}, retryCount={}, delayMinutes={}",
+                task.getTaskId(), retryCount + 1, delayMinutes);
+    }
+
+    /**
+     * 判断任务是否允许自动重试。
+     *
+     * @param task 视频生成任务
+     * @return 是否允许
+     */
+    private boolean isRetryAllowed(AiVideoGenerationTask task)
+    {
+        int retryCount = task.getRetryCount() == null ? 0 : task.getRetryCount();
+        return retryCount < MAX_SUBMIT_RETRY;
     }
 
     /** 在产生外部任务费用前校验 HappyHorse 所有参考图的最低分辨率。 */
@@ -214,7 +328,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
                 status.setRollbackOnly();
                 return Boolean.FALSE;
             }
-            if (taskMapper.markVideoProviderTaskWaiting(
+            if (taskMapper.markClaimedVideoTaskWaiting(
                     task.getTaskId(), providerCode(), providerTaskId,
                     normalizedDurationMs) != 1)
             {
@@ -247,7 +361,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
             {
                 throw new IllegalStateException("视频资产失败状态更新失败");
             }
-            if (taskMapper.failQueuedVideoProviderTask(
+            if (taskMapper.failClaimedVideoTask(
                     task.getTaskId(), providerCode(), errorCode, message) != 1)
             {
                 throw new IllegalStateException("视频任务失败状态更新失败");
@@ -428,5 +542,72 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         {
             node.put(field, value.longValue());
         }
+    }
+
+    /**
+     * 返回第一个非空字符串；全部为空时返回默认值。
+     *
+     * @param values 候选值
+     * @return 选中的值
+     */
+    private static String firstNonBlank(String... values)
+    {
+        for (String value : values)
+        {
+            if (value != null && !value.trim().isEmpty())
+            {
+                return value;
+            }
+        }
+        return values.length == 0 ? "" : values[values.length - 1];
+    }
+
+    /**
+     * 空白字符串转为 null。
+     *
+     * @param value 原始值
+     * @return 转换后的值
+     */
+    private static String blankToNull(String value)
+    {
+        return value == null || value.trim().isEmpty() ? null : value;
+    }
+
+    /**
+     * 把 JSON 数组节点转为字符串列表。
+     *
+     * @param node JSON数组节点
+     * @return 字符串列表，节点缺失或为空时返回空列表
+     */
+    private static List<String> stringArray(JsonNode node)
+    {
+        List<String> values = new ArrayList<>();
+        if (node != null && node.isArray())
+        {
+            for (JsonNode item : node)
+            {
+                String value = blankToNull(item.asText(""));
+                if (value != null)
+                {
+                    values.add(value);
+                }
+            }
+        }
+        return values;
+    }
+
+    /**
+     * 截断过长的错误信息，避免超出字段长度。
+     *
+     * @param message 错误信息
+     * @return 截断后的错误信息
+     */
+    private static String truncate(String message)
+    {
+        if (message == null)
+        {
+            return "video provider submit failed";
+        }
+        return message.length() > 500 ? message.substring(0, 500) : message;
     }
 }

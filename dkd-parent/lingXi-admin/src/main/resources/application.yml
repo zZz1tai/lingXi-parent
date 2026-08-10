@@ -198,6 +198,14 @@ aivideo:
   video:
     provider: happyhorse
     poll-interval-ms: 15000
+    # 到达重试时间的视频任务重新投递扫描间隔
+    retry-recovery-interval-ms: 10000
+  outbox:
+    # 投递事件扫描间隔
+    dispatch-interval-ms: 2000
+  story-bible:
+    # 进程重启后恢复排队中章节任务的扫描间隔
+    queued-recovery-interval-ms: 15000
   scheduler:
     # 图片同步生成不会阻塞视频供应商任务轮询
     pool-size: 2

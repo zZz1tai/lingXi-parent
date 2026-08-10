@@ -1,5 +1,6 @@
 package com.lingXi.aiVedio.domain;
 
+import java.util.Date;
 import com.lingXi.common.core.domain.BaseEntity;
 import lombok.Data;
 
@@ -54,6 +55,12 @@ public class AiVideoGenerationTask extends BaseEntity
 
     /** 最大重试次数 */
     private Integer maxRetry;
+
+    /** 已重试次数 */
+    private Integer retryCount;
+
+    /** 下次重试时间 */
+    private Date nextRetryTime;
 
     /** 请求参数，JSON格式存储 */
     private String requestJson;

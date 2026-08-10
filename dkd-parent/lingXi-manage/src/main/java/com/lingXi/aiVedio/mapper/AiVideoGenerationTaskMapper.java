@@ -1,6 +1,7 @@
 package com.lingXi.aiVedio.mapper;
 
 import org.apache.ibatis.annotations.Param;
+import java.util.Date;
 import java.util.List;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 
@@ -337,4 +338,86 @@ public interface AiVideoGenerationTaskMapper
      * @return 生成任务列表
      */
     List<AiVideoGenerationTask> selectAiVideoGenerationTaskList(Long projectId);
+
+    /**
+     * 领取排队中的视频任务用于外部提交（条件更新，防多实例重复提交）。
+     *
+     * @param taskId       任务ID
+     * @param providerCode 供应商编码
+     * @return 影响的行数
+     */
+    int claimQueuedVideoTaskForSubmission(@Param("taskId") Long taskId,
+            @Param("providerCode") String providerCode);
+
+    /**
+     * 将已领取的视频任务标记为等待回调（供应商已受理）。
+     *
+     * @param taskId              任务ID
+     * @param providerCode        供应商编码
+     * @param providerTaskId      供应商任务ID
+     * @param normalizedDurationMs 归一化视频时长
+     * @return 影响的行数
+     */
+    int markClaimedVideoTaskWaiting(@Param("taskId") Long taskId,
+            @Param("providerCode") String providerCode,
+            @Param("providerTaskId") String providerTaskId,
+            @Param("normalizedDurationMs") Integer normalizedDurationMs);
+
+    /**
+     * 将已领取的视频任务标记为待人工审核。
+     *
+     * @param taskId       任务ID
+     * @param providerCode 供应商编码
+     * @param errorCode    错误码
+     * @param errorMessage 错误信息
+     * @return 影响的行数
+     */
+    int markClaimedVideoTaskNeedsReview(@Param("taskId") Long taskId,
+            @Param("providerCode") String providerCode,
+            @Param("errorCode") String errorCode, @Param("errorMessage") String errorMessage);
+
+    /**
+     * 将已领取的视频任务标记为最终失败。
+     *
+     * @param taskId       任务ID
+     * @param providerCode 供应商编码
+     * @param errorCode    错误码
+     * @param errorMessage 错误信息
+     * @return 影响的行数
+     */
+    int failClaimedVideoTask(@Param("taskId") Long taskId,
+            @Param("providerCode") String providerCode,
+            @Param("errorCode") String errorCode, @Param("errorMessage") String errorMessage);
+
+    /**
+     * 将已领取的视频任务安排自动重试（回到排队状态并计算退避时间）。
+     *
+     * @param taskId          任务ID
+     * @param providerCode    供应商编码
+     * @param retryCount      已重试次数
+     * @param nextRetryTime   下次重试时间
+     * @param errorCode       错误码
+     * @param errorMessage    错误信息
+     * @return 影响的行数
+     */
+    int retryClaimedVideoTask(@Param("taskId") Long taskId,
+            @Param("providerCode") String providerCode, @Param("retryCount") int retryCount,
+            @Param("nextRetryTime") Date nextRetryTime,
+            @Param("errorCode") String errorCode, @Param("errorMessage") String errorMessage);
+
+    /**
+     * 查询到达重试时间的排队视频任务（供恢复器重新投递）。
+     *
+     * @param limit 最大条数
+     * @return 待重试的视频任务列表
+     */
+    List<AiVideoGenerationTask> selectQueuedVideoTasksForRetry(@Param("limit") int limit);
+
+    /**
+     * 查询排队中的故事圣经任务（供进程重启后的恢复扫描）。
+     *
+     * @param limit 最大条数
+     * @return 排队中的故事圣经任务列表
+     */
+    List<AiVideoGenerationTask> selectQueuedStoryBibleTasksForRecovery(@Param("limit") int limit);
 }
