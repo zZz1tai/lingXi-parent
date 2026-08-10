@@ -2800,12 +2800,22 @@ WHERE NOT EXISTS (
     SELECT 1 FROM sys_menu existing_menu WHERE existing_menu.perms = x.perms
 );
 
+SET @ai_vedio_task_menu_id := (
+    SELECT menu_id FROM sys_menu WHERE parent_id = @ai_vedio_parent_id AND path = 'task' LIMIT 1
+);
+
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, component, query, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time, remark)
+SELECT '生成队列', @ai_vedio_parent_id, 2, 'task', 'aiVedio/task/index', '', 1, 0, 'C', '0', '0', 'aivideo:task:list', 'list', 'admin', NOW(), 'AI视频生成任务队列'
+WHERE @ai_vedio_task_menu_id IS NULL;
+
 INSERT INTO sys_role_menu (role_id, menu_id)
 SELECT 1, menu_id
 FROM sys_menu
 WHERE menu_id = @ai_vedio_parent_id
    OR parent_id = @ai_vedio_parent_id
    OR parent_id = @ai_vedio_project_menu_id
+   OR parent_id = @ai_vedio_task_menu_id
 ON DUPLICATE KEY UPDATE menu_id = VALUES(menu_id);
 
 -- AI 聊天会话附件元数据。文件本体保存在配置的 x-file-storage 平台（生产为阿里云 OSS）。

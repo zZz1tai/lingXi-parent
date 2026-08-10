@@ -453,4 +453,20 @@
           and (callback_event_id is null or callback_event_id = #{eventId})
           and (del_flag = '0' or del_flag is null)
     </update>
+
+    <select id="selectAiVideoGenerationTaskPage" parameterType="AiVideoGenerationTask"
+            resultMap="AiVideoGenerationTaskResult">
+        select task_id, project_id, chapter_id, asset_id, task_type, task_name, status,
+               idempotency_key, provider_code, model_code, provider_task_id, progress,
+               max_retry, retry_count, next_retry_time, request_json,
+               error_code, error_message, callback_event_id, create_time
+        from ai_video_generation_task
+        <where>
+            (del_flag = '0' or del_flag is null)
+            <if test="projectId != null">and project_id = #{projectId}</if>
+            <if test="taskType != null and taskType != ''">and task_type = #{taskType}</if>
+            <if test="status != null and status != ''">and status = #{status}</if>
+        </where>
+        order by task_id desc
+    </select>
 </mapper>

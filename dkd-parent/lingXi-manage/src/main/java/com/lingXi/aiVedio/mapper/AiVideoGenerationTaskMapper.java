@@ -462,4 +462,12 @@ public interface AiVideoGenerationTaskMapper
      */
     int updateAiVideoGenerationTaskCallbackEventId(@Param("taskId") Long taskId,
             @Param("eventId") String eventId);
+
+    /**
+     * 分页查询生成任务列表（支持按项目、类型、状态筛选）。
+     *
+     * @param query 筛选条件
+     * @return 生成任务列表
+     */
+    List<AiVideoGenerationTask> selectAiVideoGenerationTaskPage(AiVideoGenerationTask query);
 }
