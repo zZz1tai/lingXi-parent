@@ -3,6 +3,7 @@ package com.lingXi.aiVedio.storage;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -22,6 +23,9 @@ public class AiVideoLocalAssetStorage
 {
     private static final int MAX_UPLOAD_DIMENSION = 8192;
     private static final int MAX_NORMALIZED_IMAGE_BYTES = 32 * 1024 * 1024;
+    private static final int MAX_REMOTE_IMAGE_BYTES = 32 * 1024 * 1024;
+    private static final int MIN_REMOTE_VIDEO_BYTES = 1024;
+    private static final long MAX_REMOTE_VIDEO_BYTES = 1024L * 1024 * 1024;
 
     @Autowired
     private FileStorageService fileStorageService;
@@ -40,7 +44,8 @@ public class AiVideoLocalAssetStorage
     public StoredImage store(Long projectId, Long assetId, Integer versionNo,
             String assetCode, String remoteUrl) throws Exception
     {
-        byte[] bytes = download(remoteUrl, 60000);
+        byte[] bytes = download(remoteUrl, 60000, MAX_REMOTE_IMAGE_BYTES);
+        validateRemoteImage(bytes);
         String filename = versionedFilename(assetCode, assetId, versionNo, ".png");
         FileInfo fileInfo = fileStorageService.of(bytes, filename, "image/png")
                 .setPath("aivideo/" + projectId + "/images/")
@@ -48,8 +53,8 @@ public class AiVideoLocalAssetStorage
                 .upload();
         if (fileInfo == null || fileInfo.getUrl() == null) throw new IllegalStateException("OSS 图片上传失败");
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
-        return new StoredImage(fileInfo.getUrl(), fileInfo.getSize(), sha256(bytes), image == null ? null : image.getWidth(),
-                image == null ? null : image.getHeight(), fileInfo.getPlatform());
+        return new StoredImage(fileInfo.getUrl(), fileInfo.getSize(), sha256(bytes), image.getWidth(),
+                image.getHeight(), fileInfo.getPlatform());
     }
 
     /**
@@ -153,7 +158,8 @@ public class AiVideoLocalAssetStorage
     public StoredFile storeVideo(Long projectId, Long assetId, Integer versionNo,
             String assetCode, String remoteUrl) throws Exception
     {
-        byte[] bytes = download(remoteUrl, 120000);
+        byte[] bytes = download(remoteUrl, 120000, MAX_REMOTE_VIDEO_BYTES);
+        validateRemoteVideo(bytes);
         String filename = versionedFilename(assetCode, assetId, versionNo, ".mp4");
         FileInfo fileInfo = fileStorageService.of(bytes, filename, "video/mp4")
                 .setPath("aivideo/" + projectId + "/videos/")
@@ -194,14 +200,84 @@ public class AiVideoLocalAssetStorage
     }
 
     /**
-     * 从远程URL下载文件内容到字节数组。
+     * 校验供应商远程图片内容：必须可解码为有效图片且尺寸在允许范围内，
+     * 防止供应商错误页或垃圾内容被转存为正式资产。
+     *
+     * @param bytes 远程下载的图片字节
+     * @throws IllegalArgumentException 内容为空、无法解码或尺寸非法时抛出
+     */
+    private void validateRemoteImage(byte[] bytes)
+    {
+        if (bytes == null || bytes.length == 0)
+        {
+            throw new IllegalArgumentException("供应商图片内容为空");
+        }
+        BufferedImage image;
+        try
+        {
+            image = ImageIO.read(new ByteArrayInputStream(bytes));
+        }
+        catch (IOException ex)
+        {
+            throw new IllegalArgumentException("供应商图片内容无法解码为有效图片", ex);
+        }
+        if (image == null)
+        {
+            throw new IllegalArgumentException("供应商图片内容无法解码为有效图片");
+        }
+        int width = image.getWidth();
+        int height = image.getHeight();
+        if (width < 1 || height < 1 || width > MAX_UPLOAD_DIMENSION || height > MAX_UPLOAD_DIMENSION)
+        {
+            throw new IllegalArgumentException("供应商图片尺寸非法：" + width + "x" + height);
+        }
+    }
+
+    /**
+     * 校验供应商远程视频内容：大小在允许范围内且为已知视频容器格式，
+     * 防止供应商错误页或空文件被转存为正式资产。
+     *
+     * @param bytes 远程下载的视频字节
+     * @throws IllegalArgumentException 内容过小或容器格式不识别时抛出
+     */
+    private void validateRemoteVideo(byte[] bytes)
+    {
+        if (bytes == null || bytes.length < MIN_REMOTE_VIDEO_BYTES)
+        {
+            throw new IllegalArgumentException("供应商视频内容为空或过小");
+        }
+        if (!isPlausibleVideoContainer(bytes))
+        {
+            throw new IllegalArgumentException("供应商视频内容不是有效的视频文件（容器格式不识别）");
+        }
+    }
+
+    /**
+     * 判断字节内容是否为已知视频容器（MP4/QuickTime、WebM/Matroska、FLV）。
+     *
+     * @param bytes 文件字节
+     * @return 是已知视频容器返回 true
+     */
+    private static boolean isPlausibleVideoContainer(byte[] bytes)
+    {
+        if (bytes.length < 12) return false;
+        if (bytes[4] == 'f' && bytes[5] == 't' && bytes[6] == 'y' && bytes[7] == 'p') return true;
+        if ((bytes[0] & 0xFF) == 0x1A && (bytes[1] & 0xFF) == 0x45
+                && (bytes[2] & 0xFF) == 0xDF && (bytes[3] & 0xFF) == 0xA3) return true;
+        if (bytes[0] == 'F' && bytes[1] == 'L' && bytes[2] == 'V') return true;
+        return false;
+    }
+
+    /**
+     * 从远程URL下载文件内容到字节数组，超过大小上限即中止。
      *
      * @param remoteUrl    远程地址
      * @param readTimeout  读取超时时间（毫秒）
+     * @param maxBytes     下载大小上限（字节）
      * @return 文件字节数组
-     * @throws Exception 下载失败时抛出异常
+     * @throws Exception 下载失败或超过大小上限时抛出异常
      */
-    private byte[] download(String remoteUrl, int readTimeout) throws Exception
+    private byte[] download(String remoteUrl, int readTimeout, long maxBytes) throws Exception
     {
         HttpURLConnection connection = (HttpURLConnection) new URL(remoteUrl).openConnection();
         connection.setConnectTimeout(10000);
@@ -212,6 +288,10 @@ public class AiVideoLocalAssetStorage
             int read;
             while ((read = input.read(buffer)) != -1)
             {
+                if (output.size() + read > maxBytes)
+                {
+                    throw new IllegalStateException("远程文件超过大小上限");
+                }
                 output.write(buffer, 0, read);
             }
             return output.toByteArray();
