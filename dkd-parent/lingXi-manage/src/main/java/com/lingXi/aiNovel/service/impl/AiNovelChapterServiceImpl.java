@@ -12,6 +12,7 @@ import com.lingXi.aiNovel.domain.AiNovelWork;
 import com.lingXi.aiNovel.mapper.AiNovelChapterMapper;
 import com.lingXi.aiNovel.service.IAiNovelChapterService;
 import com.lingXi.aiNovel.service.IAiNovelWorkService;
+import com.lingXi.aiNovel.util.NovelWordCounter;
 
 /**
  * AI 小说章节服务实现类，所有操作按当前用户作品归属校验。
@@ -30,7 +31,9 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
     public List<AiNovelChapter> selectAiNovelChapterList(Long workId)
     {
         workService.checkWorkOwner(workId);
-        return chapterMapper.selectAiNovelChapterListByWorkId(workId);
+        List<AiNovelChapter> chapters = chapterMapper.selectAiNovelChapterListByWorkId(workId);
+        chapters.forEach(this::refreshWordCount);
+        return chapters;
     }
 
     /** 查询章节详情，校验章节归属。 */
@@ -43,6 +46,7 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
         {
             throw new ServiceException("章节不存在或无权访问");
         }
+        refreshWordCount(chapter);
         return chapter;
     }
 
@@ -63,10 +67,7 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
         {
             chapter.setStatus("draft");
         }
-        if (chapter.getWordCount() == null)
-        {
-            chapter.setWordCount(0);
-        }
+        chapter.setWordCount(NovelWordCounter.count(chapter.getContent()));
         chapter.setChapterId(null);
         chapter.setWorkId(workId);
         chapter.setCreateBy(SecurityUtils.getUsername());
@@ -90,10 +91,7 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
         if (chapter.getContent() != null)
         {
             existing.setContent(chapter.getContent());
-        }
-        if (chapter.getWordCount() != null)
-        {
-            existing.setWordCount(chapter.getWordCount());
+            existing.setWordCount(NovelWordCounter.count(chapter.getContent()));
         }
         if (chapter.getStatus() != null)
         {
@@ -147,5 +145,10 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
             throw new ServiceException("章节不存在或无权访问");
         }
         return chapter;
+    }
+
+    private void refreshWordCount(AiNovelChapter chapter)
+    {
+        chapter.setWordCount(NovelWordCounter.count(chapter.getContent()));
     }
 }

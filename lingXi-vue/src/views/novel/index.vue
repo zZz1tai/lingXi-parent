@@ -302,6 +302,7 @@ import ChatComposer from './components/ChatComposer.vue'
 import ManuscriptEditor from './components/ManuscriptEditor.vue'
 import ChapterTree from './components/ChapterTree.vue'
 import SettingNotebook from './components/SettingNotebook.vue'
+import { countNovelCharacters } from './novelWordCount'
 import './novel-kraft.scss'
 
 defineOptions({ name: 'NovelWriting' })
@@ -470,17 +471,32 @@ const currentChapter = ref(null)
 const chapters = ref([])
 
 const manuscriptWordCount = computed(() =>
-  (manuscript.value || '').replace(/\s/g, '').length
+  countNovelCharacters(manuscript.value)
 )
 
 const totalWordCount = computed(() => {
   if (selectedWork.value?.workType === 'short') return manuscriptWordCount.value
-  return chapters.value.reduce((sum, chapter) => sum + (chapter.wordCount || 0), 0)
+  return chapters.value.reduce((sum, chapter) => {
+    const isCurrent = chapter.chapterId === currentChapter.value?.chapterId
+    const wordCount = isCurrent
+      ? manuscriptWordCount.value
+      : (chapter.content == null ? (chapter.wordCount || 0) : countNovelCharacters(chapter.content))
+    return sum + wordCount
+  }, 0)
 })
 
 const currentChapterWordCount = computed(() =>
-  (currentChapter.value?.content || '').replace(/\s/g, '').length
+  currentChapter.value ? manuscriptWordCount.value : 0
 )
+
+function syncSelectedWorkWordCount() {
+  const work = selectedWork.value
+  if (!work) return
+  const wordCount = totalWordCount.value
+  work.wordCount = wordCount
+  const workInList = works.value.find(item => item.workId === work.workId)
+  if (workInList) workInList.wordCount = wordCount
+}
 
 async function loadManuscript(workId) {
   try {
@@ -489,6 +505,7 @@ async function loadManuscript(workId) {
   } catch {
     manuscript.value = ''
   }
+  syncSelectedWorkWordCount()
 }
 
 async function loadChapters(workId) {
@@ -717,9 +734,8 @@ async function saveCurrent() {
       })
       currentChapter.value.content = manuscript.value
       currentChapter.value.wordCount = wordCount
-      const workInList = works.value.find(item => item.workId === work.workId)
-      if (workInList) workInList.wordCount = totalWordCount.value
     }
+    syncSelectedWorkWordCount()
     saveState.value = 'saved'
   } catch {
     saveState.value = 'dirty'
@@ -728,7 +744,10 @@ async function saveCurrent() {
 }
 
 watch(manuscript, () => {
-  if (selectedWork.value) markDirty()
+  if (selectedWork.value) {
+    syncSelectedWorkWordCount()
+    markDirty()
+  }
 })
 
 // ── 导出 ────────────────────────────────────────────

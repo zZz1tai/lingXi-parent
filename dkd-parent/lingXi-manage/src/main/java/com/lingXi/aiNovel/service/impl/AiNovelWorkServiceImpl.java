@@ -18,6 +18,7 @@ import com.lingXi.aiNovel.mapper.AiNovelChapterMapper;
 import com.lingXi.aiNovel.mapper.AiNovelSettingMapper;
 import com.lingXi.aiNovel.mapper.AiNovelWorkMapper;
 import com.lingXi.aiNovel.service.IAiNovelWorkService;
+import com.lingXi.aiNovel.util.NovelWordCounter;
 
 /**
  * AI 小说作品服务实现类。
@@ -62,7 +63,7 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         return list;
     }
 
-    /** 统计作品总字数：短篇取正文长度，长篇累加各章节正文字符数。 */
+    /** 统计作品总字数：短篇取正文非空白字符数，长篇累加各章节正文非空白字符数。 */
     private long calculateWordCount(AiNovelWork work)
     {
         if ("novel".equals(work.getWorkType()))
@@ -72,12 +73,12 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
             {
                 if (chapter.getContent() != null)
                 {
-                    total += chapter.getContent().length();
+                    total += NovelWordCounter.count(chapter.getContent());
                 }
             }
             return total;
         }
-        return work.getManuscript() == null ? 0L : work.getManuscript().length();
+        return NovelWordCounter.count(work.getManuscript());
     }
 
     /** 新增作品，设置默认值并校验参数。 */

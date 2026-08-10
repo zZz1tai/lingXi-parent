@@ -45,6 +45,7 @@ import { ref, watch } from 'vue'
 import { Document, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { joinMarkdownHeading, splitLeadingMarkdownHeading } from '../novelMarkdown'
+import { countNovelCharacters } from '../novelWordCount'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -106,7 +107,7 @@ function handleClear() {
 }
 
 function handleCount() {
-  const chars = (draft.value || '').replace(/\s/g, '').length
+  const chars = countNovelCharacters(draft.value)
   ElMessage.success(`当前正文 ${chars} 字（不含空白）`)
 }
 </script>
