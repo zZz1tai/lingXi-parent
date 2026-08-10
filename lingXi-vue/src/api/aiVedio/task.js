@@ -17,3 +17,11 @@ export function pageAiVideoTask(query) {
     params: query
   })
 }
+
+/** 取消生成任务（排队/重试中直接取消，视频等待回调中取消为终态）。 */
+export function cancelAiVideoTask(taskId) {
+  return request({
+    url: '/aivideo/task/' + taskId + '/cancel',
+    method: 'post'
+  })
+}

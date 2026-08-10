@@ -470,4 +470,25 @@ public interface AiVideoGenerationTaskMapper
      * @return 生成任务列表
      */
     List<AiVideoGenerationTask> selectAiVideoGenerationTaskPage(AiVideoGenerationTask query);
+
+    /**
+     * 取消排队或等待重试中的任务（QUEUED/RETRYING → CANCELLED）。
+     * <p>任务未被任何执行者领取，取消即为终态，无需通知供应商。</p>
+     *
+     * @param taskId   任务ID
+     * @param updateBy 操作人
+     * @return 影响的行数
+     */
+    int cancelQueuedTask(@Param("taskId") Long taskId, @Param("updateBy") String updateBy);
+
+    /**
+     * 取消正在等待回调或轮询执行中的视频任务（WAITING_CALLBACK/RUNNING → CANCELLED）。
+     * <p>取消后为终态；供应商晚到的回调或查询结果会因状态条件更新失败而被忽略，
+     * 生成产物不会转存为正式资产。</p>
+     *
+     * @param taskId   任务ID
+     * @param updateBy 操作人
+     * @return 影响的行数
+     */
+    int cancelActiveVideoTask(@Param("taskId") Long taskId, @Param("updateBy") String updateBy);
 }

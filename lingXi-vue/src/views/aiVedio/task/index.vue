@@ -98,9 +98,17 @@
             <span class="muted">{{ parseTime(row.createTime, '{y}-{m}-{d} {h}:{i}:{s}') }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right" align="center">
+        <el-table-column label="操作" width="190" fixed="right" align="center">
           <template #default="{ row }">
             <el-button size="small" type="primary" plain @click="openDetail(row)">详情</el-button>
+            <el-button
+              v-if="canCancel(row)"
+              size="small"
+              type="warning"
+              plain
+              :loading="cancelingTaskId === row.taskId"
+              @click="cancelTask(row)"
+            >取消</el-button>
             <el-button
               v-if="canRetry(row)"
               size="small"
@@ -168,7 +176,7 @@
 
 <script setup name="AiVedioTaskQueue">
 import { Refresh, RefreshLeft, Search, List } from '@element-plus/icons-vue'
-import { pageAiVideoTask } from '@/api/aiVedio/task'
+import { pageAiVideoTask, cancelAiVideoTask } from '@/api/aiVedio/task'
 import { listAiVideoProject, retryAiVideoAssetImage } from '@/api/aiVedio/project'
 
 const { proxy } = getCurrentInstance()
@@ -177,6 +185,7 @@ const taskList = ref([])
 const total = ref(0)
 const autoRefresh = ref(true)
 const retryingTaskId = ref(null)
+const cancelingTaskId = ref(null)
 const projectOptions = ref([])
 const detailDialog = reactive({ open: false, task: null, requestText: '' })
 
@@ -252,6 +261,24 @@ function isActiveStatus(status) {
 
 function canRetry(row) {
   return row.taskType === 'IMAGE' && row.status === 'FAILED' && row.assetId
+}
+
+function canCancel(row) {
+  const queued = row.status === 'QUEUED' || row.status === 'RETRYING'
+  const videoWaiting = row.taskType === 'VIDEO' && (row.status === 'WAITING_CALLBACK' || row.status === 'RUNNING')
+  return queued || videoWaiting
+}
+
+function cancelTask(row) {
+  proxy.$modal.confirm(`确认取消任务“${row.taskName}”吗？取消后该次生成将终止，已产生的费用无法退还。`).then(() => {
+    cancelingTaskId.value = row.taskId
+    return cancelAiVideoTask(row.taskId)
+  }).then(() => {
+    proxy.$modal.msgSuccess('任务已取消')
+    handleQuery()
+  }).catch(() => {}).finally(() => {
+    cancelingTaskId.value = null
+  })
 }
 
 function hasActiveTask() {

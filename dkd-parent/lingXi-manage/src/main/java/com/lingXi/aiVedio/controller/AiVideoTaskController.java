@@ -4,6 +4,8 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -12,7 +14,9 @@ import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.common.core.page.TableDataInfo;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
+import com.lingXi.aiVedio.service.AiVideoTaskCancellationService;
 import com.lingXi.aiVedio.service.IAiVideoProjectService;
+import com.lingXi.common.utils.SecurityUtils;
 
 /**
  * AI视频生成任务控制器
@@ -32,6 +36,9 @@ public class AiVideoTaskController extends BaseController
 
     @Autowired
     private IAiVideoProjectService projectService;
+
+    @Autowired
+    private AiVideoTaskCancellationService cancellationService;
 
     /**
      * 获取项目的生成任务列表
@@ -72,5 +79,28 @@ public class AiVideoTaskController extends BaseController
         }
         startPage();
         return getDataTable(taskMapper.selectAiVideoGenerationTaskPage(query));
+    }
+
+    /**
+     * 取消生成任务。
+     * <p>
+     * 排队/重试中的任务直接取消；等待回调或轮询中的视频任务取消后为终态，
+     * 供应商晚到结果会被忽略。需校验用户对任务所属项目的访问权限。
+     * </p>
+     *
+     * @param taskId 任务ID
+     * @return 操作结果
+     */
+    @PreAuthorize("@ss.hasPermi('aivideo:project:edit')")
+    @PostMapping("/{taskId}/cancel")
+    public AjaxResult cancel(@PathVariable Long taskId)
+    {
+        AiVideoGenerationTask task = taskMapper.selectAiVideoGenerationTaskByTaskId(taskId);
+        if (task != null)
+        {
+            projectService.checkProjectOwner(task.getProjectId());
+        }
+        cancellationService.cancel(taskId, SecurityUtils.getUsername());
+        return success();
     }
 }

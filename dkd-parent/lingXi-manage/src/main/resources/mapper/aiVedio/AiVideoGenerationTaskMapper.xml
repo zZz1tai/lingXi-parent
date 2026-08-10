@@ -469,4 +469,22 @@
         </where>
         order by task_id desc
     </select>
+
+    <update id="cancelQueuedTask">
+        update ai_video_generation_task
+        set status = 'CANCELLED', progress = 100, completed_time = now(),
+            update_by = #{updateBy}, update_time = now()
+        where task_id = #{taskId} and status in ('QUEUED', 'RETRYING')
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="cancelActiveVideoTask">
+        update ai_video_generation_task
+        set status = 'CANCELLED', progress = 100, completed_time = now(),
+            update_by = #{updateBy}, update_time = now()
+        where task_id = #{taskId} and task_type = 'VIDEO'
+          and status in ('WAITING_CALLBACK', 'RUNNING')
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
 </mapper>
