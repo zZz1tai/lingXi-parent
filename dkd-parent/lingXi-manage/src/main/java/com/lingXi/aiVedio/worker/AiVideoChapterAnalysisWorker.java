@@ -31,6 +31,7 @@ import com.lingXi.aiVedio.domain.AiVideoScene;
 import com.lingXi.aiVedio.domain.AiVideoShot;
 import com.lingXi.aiVedio.domain.AiVideoStoryBible;
 import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoChapterMapper;
 import com.lingXi.aiVedio.mapper.AiVideoAssetRelationMapper;
 import com.lingXi.aiVedio.mapper.AiVideoCharacterMapper;
@@ -166,7 +167,7 @@ public class AiVideoChapterAnalysisWorker
                 log.warn("AI视频章节解析被 Python 拒绝，taskId={}, chapterId={}, errorCode={}, retryable={}, error={}",
                         taskId, chapterId, errorCode, result.isRetryable(), message);
                 updateTaskStatusWithLockRetry(
-                        taskId, "FAILED", 100, errorCode, abbreviate(persistedMessage));
+                        taskId, AiVideoTaskStatus.FAILED.name(), 100, errorCode, abbreviate(persistedMessage));
                 chapterMapper.updateAiVideoChapterAnalysisStatus(chapterId, "FAILED", "FAILED", null, 0);
                 return;
             }
@@ -185,7 +186,7 @@ public class AiVideoChapterAnalysisWorker
             log.error("AI视频章节解析失败，taskId={}, chapterId={}, errorType={}",
                     taskId, chapterId, ex.getClass().getSimpleName());
             String message = ex.getMessage() == null ? "章节解析失败" : ex.getMessage();
-            updateTaskStatusWithLockRetry(taskId, "FAILED", 100, "CHAPTER_ANALYSIS_FAILED", abbreviate(message));
+            updateTaskStatusWithLockRetry(taskId, AiVideoTaskStatus.FAILED.name(), 100, "CHAPTER_ANALYSIS_FAILED", abbreviate(message));
             chapterMapper.updateAiVideoChapterAnalysisStatus(chapterId, "FAILED", "FAILED", null, 0);
         }
     }
@@ -289,7 +290,7 @@ public class AiVideoChapterAnalysisWorker
     private boolean isStoryBibleTaskPaused(Long taskId)
     {
         AiVideoGenerationTask task = taskMapper.selectAiVideoGenerationTaskByTaskId(taskId);
-        return task != null && "PAUSED".equals(task.getStatus());
+        return task != null && AiVideoTaskStatus.PAUSED.is(task.getStatus());
     }
 
     /**
@@ -342,7 +343,7 @@ public class AiVideoChapterAnalysisWorker
                 }
                 persistResultInTransaction(chapter, document, textModel);
                 if (taskMapper.updateStoryBibleTaskStatusIfRunning(
-                        taskId, "SUCCEEDED", 100, null, null) != 1)
+                        taskId, AiVideoTaskStatus.SUCCEEDED.name(), 100, null, null) != 1)
                 {
                     throw new IllegalStateException("章节解析完成状态保存失败，taskId=" + taskId);
                 }
@@ -398,7 +399,7 @@ public class AiVideoChapterAnalysisWorker
         bible.setCreateBy("ai-video-worker");
         storyBibleMapper.insertAiVideoStoryBible(bible);
         materializeScenePackage(chapter, document, versionNo);
-        chapterMapper.updateAiVideoChapterAnalysisStatus(chapter.getChapterId(), "SUCCEEDED", "SCRIPT_READY",
+        chapterMapper.updateAiVideoChapterAnalysisStatus(chapter.getChapterId(), AiVideoTaskStatus.SUCCEEDED.name(), "SCRIPT_READY",
                 document.path("summary").asText(), versionNo);
     }
 

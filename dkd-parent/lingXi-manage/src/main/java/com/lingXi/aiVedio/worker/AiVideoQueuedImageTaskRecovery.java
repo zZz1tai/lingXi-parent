@@ -6,6 +6,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.outbox.AiVideoTaskOutboxPublisher;
@@ -46,7 +47,8 @@ public class AiVideoQueuedImageTaskRecovery
                         "旧图片任务缺少人工确认凭证，请检查提示词后手动生成");
                 continue;
             }
-            if ("QUEUED".equals(task.getStatus()) || "RETRYING".equals(task.getStatus()))
+            if (AiVideoTaskStatus.QUEUED.is(task.getStatus())
+                    || AiVideoTaskStatus.RETRYING.is(task.getStatus()))
             {
                 outboxPublisher.publish(task.getTaskId(),
                         AiVideoTaskOutboxPublisher.EVENT_TASK_RETRY);

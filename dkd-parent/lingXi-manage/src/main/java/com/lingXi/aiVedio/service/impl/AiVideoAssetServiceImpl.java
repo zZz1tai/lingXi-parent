@@ -22,6 +22,7 @@ import com.lingXi.aiVedio.domain.AiVideoAssetRelation;
 import com.lingXi.aiVedio.domain.AiVideoChapter;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.AiVideoShot;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.domain.dto.AiVideoAssetRegenerationDraftRequest;
 import com.lingXi.aiVedio.domain.dto.AiVideoKeyframeReferenceBindingRequest;
 import com.lingXi.aiVedio.domain.dto.AiVideoVideoSourceBindingRequest;
@@ -908,7 +909,7 @@ public class AiVideoAssetServiceImpl implements IAiVideoAssetService
         task.setAssetId(asset.getAssetId());
         task.setTaskType("IMAGE");
         task.setTaskName("Qwen Image图片生成：" + asset.getAssetName());
-        task.setStatus("QUEUED");
+        task.setStatus(AiVideoTaskStatus.QUEUED.name());
         task.setPriority(100);
         task.setIdempotencyKey("qwen-image-" + asset.getAssetCode() + "-" + asset.getVersionNo());
         task.setProviderCode("dashscope");

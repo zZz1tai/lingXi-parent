@@ -10,6 +10,7 @@ import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.util.AiVideoImageAspectRatioPolicy;
@@ -184,8 +185,8 @@ public class AiVideoQwenAssetService
         {
             throw new IllegalStateException("图片任务不存在或类型无效，taskId=" + taskId);
         }
-        if (!"QUEUED".equals(task.getStatus())
-                && taskMapper.claimImageTask(taskId, "QUEUED") != 1)
+        if (!AiVideoTaskStatus.QUEUED.is(task.getStatus())
+                && taskMapper.claimImageTask(taskId, AiVideoTaskStatus.QUEUED.name()) != 1)
         {
             log.info("图片任务已被其他执行者领取或状态已变化，跳过生成，taskId={}", taskId);
             return;
@@ -200,13 +201,13 @@ public class AiVideoQwenAssetService
         AiVideoAsset asset = assetMapper.selectAiVideoAssetByAssetId(task.getAssetId());
         if (asset == null)
         {
-            taskMapper.failImageTaskIfExpectedStatus(taskId, "RUNNING",
+            taskMapper.failImageTaskIfExpectedStatus(taskId, AiVideoTaskStatus.RUNNING.name(),
                     "IMAGE_ASSET_NOT_FOUND", "图片任务关联资产不存在");
             return;
         }
         if (!"GENERATING".equals(asset.getStatus()))
         {
-            taskMapper.failImageTaskIfExpectedStatus(taskId, "RUNNING",
+            taskMapper.failImageTaskIfExpectedStatus(taskId, AiVideoTaskStatus.RUNNING.name(),
                     "IMAGE_ASSET_STATE_INVALID", "图片资产不在生成状态");
             return;
         }
@@ -392,6 +393,6 @@ public class AiVideoQwenAssetService
             asset.setUpdateBy(updateBy);
             assetMapper.markAiVideoAssetFailed(asset);
         }
-        taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), "RUNNING", errorCode, detail);
+        taskMapper.failImageTaskIfExpectedStatus(task.getTaskId(), AiVideoTaskStatus.RUNNING.name(), errorCode, detail);
     }
 }

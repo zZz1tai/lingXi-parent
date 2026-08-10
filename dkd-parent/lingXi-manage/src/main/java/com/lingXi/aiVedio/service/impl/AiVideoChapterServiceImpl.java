@@ -21,6 +21,7 @@ import com.lingXi.aiVedio.domain.AiVideoChapter;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.AiVideoStoryBible;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoChapterArchiveMapper;
 import com.lingXi.aiVedio.mapper.AiVideoChapterMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
@@ -185,15 +186,16 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         }
         String key = "chapter-analysis-" + chapterId + "-" + chapter.getSourceHash();
         AiVideoGenerationTask existing = taskMapper.selectLatestStoryBibleTaskByKeyPrefix(key);
-        if (existing != null && ("QUEUED".equals(existing.getStatus()) || "RUNNING".equals(existing.getStatus())))
+        if (existing != null && (AiVideoTaskStatus.QUEUED.is(existing.getStatus())
+                || AiVideoTaskStatus.RUNNING.is(existing.getStatus())))
         {
-            if ("QUEUED".equals(existing.getStatus()))
+            if (AiVideoTaskStatus.QUEUED.is(existing.getStatus()))
             {
                 startAnalysisAfterCommit(existing.getTaskId(), chapterId);
             }
             return existing.getTaskId();
         }
-        if (existing != null && "PAUSED".equals(existing.getStatus()))
+        if (existing != null && AiVideoTaskStatus.PAUSED.is(existing.getStatus()))
         {
             String username = SecurityUtils.getUsername();
             if (taskMapper.resumeStoryBibleTask(existing.getTaskId(), username) != 1)
@@ -215,7 +217,7 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         task.setChapterId(chapterId);
         task.setTaskType("STORY_BIBLE");
         task.setTaskName("章节故事圣经解析");
-        task.setStatus("QUEUED");
+        task.setStatus(AiVideoTaskStatus.QUEUED.name());
         task.setPriority(100);
         task.setIdempotencyKey(existing == null ? key : key + "-" + System.currentTimeMillis());
         task.setProviderCode("qwen");
@@ -249,7 +251,8 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
         }
         String key = "chapter-analysis-" + chapterId + "-" + chapter.getSourceHash();
         AiVideoGenerationTask task = taskMapper.selectLatestStoryBibleTaskByKeyPrefix(key);
-        if (task == null || !("QUEUED".equals(task.getStatus()) || "RUNNING".equals(task.getStatus())))
+        if (task == null || !(AiVideoTaskStatus.QUEUED.is(task.getStatus())
+                || AiVideoTaskStatus.RUNNING.is(task.getStatus())))
         {
             throw new ServiceException("当前没有可暂停的章节解析任务");
         }
@@ -363,11 +366,7 @@ public class AiVideoChapterServiceImpl implements IAiVideoChapterService
      */
     private boolean isActiveTaskStatus(String status)
     {
-        return "PENDING".equals(status) || "QUEUED".equals(status) || "RUNNING".equals(status)
-                || "WAITING_CALLBACK".equals(status) || "QUALITY_CHECK".equals(status)
-                || "RETRYING".equals(status) || "NEEDS_REVIEW".equals(status)
-                || "SUBMITTED".equals(status) || "PROCESSING".equals(status)
-                || "VALIDATING".equals(status);
+        return AiVideoTaskStatus.isActive(status);
     }
 
     /**

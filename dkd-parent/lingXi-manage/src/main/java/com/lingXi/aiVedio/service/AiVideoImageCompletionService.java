@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage;
@@ -51,7 +52,7 @@ public class AiVideoImageCompletionService
         {
             throw new IllegalStateException("图片资产状态已变化，拒绝覆盖生成结果");
         }
-        if (taskMapper.updateAiVideoGenerationTaskStatus(task.getTaskId(), "SUCCEEDED", 100, null, null) != 1)
+        if (taskMapper.updateAiVideoGenerationTaskStatus(task.getTaskId(), AiVideoTaskStatus.SUCCEEDED.name(), 100, null, null) != 1)
         {
             throw new IllegalStateException("图片任务状态更新失败，拒绝提交资产结果");
         }

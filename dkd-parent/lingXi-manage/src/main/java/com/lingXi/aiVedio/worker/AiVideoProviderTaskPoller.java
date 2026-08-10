@@ -9,6 +9,7 @@ import com.lingXi.ai.client.VideoClient.VideoQueryResult;
 import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.service.AiVideoProviderTaskOutcomeService;
 import com.lingXi.common.exception.ServiceException;
@@ -68,7 +69,7 @@ public class AiVideoProviderTaskPoller
                 
                 String status = result.status() != null ? result.status() : "UNKNOWN";
                 
-                if ("SUCCEEDED".equals(status))
+                if (AiVideoTaskStatus.SUCCEEDED.is(status))
                 {
                     if (result.videoUrl() == null || result.videoUrl().trim().isEmpty())
                     {
@@ -76,20 +77,20 @@ public class AiVideoProviderTaskPoller
                     }
                     outcomeService.complete(task, result.videoUrl(), providerCode, "ai-video-poller");
                 }
-                else if ("FAILED".equals(status) || "CANCELED".equals(status))
+                else if (AiVideoTaskStatus.FAILED.is(status) || AiVideoTaskStatus.CANCELED.is(status))
                 {
                     outcomeService.fail(task, result.error(), providerCode, "ai-video-poller");
                 }
                 else
                 {
                     taskMapper.updateClaimedVideoProviderTaskStatus(
-                            task.getTaskId(), providerCode, "WAITING_CALLBACK", 40, null, null);
+                            task.getTaskId(), providerCode, AiVideoTaskStatus.WAITING_CALLBACK.name(), 40, null, null);
                 }
             }
             catch (Exception ex)
             {
                 taskMapper.updateClaimedVideoProviderTaskStatus(
-                        task.getTaskId(), providerCode, "WAITING_CALLBACK", 40,
+                        task.getTaskId(), providerCode, AiVideoTaskStatus.WAITING_CALLBACK.name(), 40,
                         "VIDEO_PROVIDER_POLL_ERROR", ex.getMessage());
             }
         }

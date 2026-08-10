@@ -13,6 +13,7 @@ import tools.jackson.databind.node.ObjectNode;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.AiVideoProject;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.domain.dto.AiVideoQuickGenerationRequest;
 import com.lingXi.aiVedio.domain.dto.AiVideoQuickGenerationResult;
 import com.lingXi.aiVedio.domain.dto.AiVideoQuickGenerationStatus;
@@ -128,7 +129,7 @@ public class AiVideoQuickGenerationService
         {
             if (videoAssetId.equals(task.getAssetId())
                     && "VIDEO".equals(task.getTaskType())
-                    && "NEEDS_REVIEW".equals(task.getStatus()))
+                    && AiVideoTaskStatus.NEEDS_REVIEW.is(task.getStatus()))
             {
                 return task;
             }

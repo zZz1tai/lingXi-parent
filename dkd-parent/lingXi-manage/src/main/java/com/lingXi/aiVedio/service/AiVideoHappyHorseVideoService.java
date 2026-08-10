@@ -17,6 +17,7 @@ import com.lingXi.aiVedio.config.AiVideoModelConfigService;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.outbox.AiVideoTaskOutboxPublisher;
@@ -130,7 +131,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         {
             throw new IllegalStateException("视频任务不存在或类型无效，taskId=" + taskId);
         }
-        if (!"QUEUED".equals(task.getStatus())
+        if (!AiVideoTaskStatus.QUEUED.is(task.getStatus())
                 && taskMapper.claimQueuedVideoTaskForSubmission(taskId, providerCode()) != 1)
         {
             log.info("视频任务已被其他执行者领取或状态已变化，跳过提交，taskId={}", taskId);
@@ -399,7 +400,7 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
         task.setAssetId(video.getAssetId());
         task.setTaskType("VIDEO");
         task.setTaskName("视频生成：" + video.getAssetName());
-        task.setStatus("QUEUED");
+        task.setStatus(AiVideoTaskStatus.QUEUED.name());
         task.setPriority(100);
         task.setIdempotencyKey(providerCode() + "-video-" + video.getAssetId()
                 + "-" + System.currentTimeMillis());

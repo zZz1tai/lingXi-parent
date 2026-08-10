@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.service.AiVideoProviderTaskOutcomeService;
 import lombok.extern.slf4j.Slf4j;
@@ -84,12 +85,14 @@ public class AiVideoProviderCallbackService
         {
             throw new IllegalArgumentException("回调缺少 eventId/providerTaskId/status 字段");
         }
-        if (!"SUCCEEDED".equals(status) && !"FAILED".equals(status) && !"CANCELED".equals(status))
+        if (!AiVideoTaskStatus.SUCCEEDED.is(status)
+                && !AiVideoTaskStatus.FAILED.is(status)
+                && !AiVideoTaskStatus.CANCELED.is(status))
         {
             throw new IllegalArgumentException("不支持的视频任务状态：" + status);
         }
         String videoUrl = text(payload, "videoUrl");
-        if ("SUCCEEDED".equals(status) && (videoUrl == null || videoUrl.trim().isEmpty()))
+        if (AiVideoTaskStatus.SUCCEEDED.is(status) && (videoUrl == null || videoUrl.trim().isEmpty()))
         {
             throw new IllegalArgumentException("成功回调缺少视频地址");
         }
@@ -107,7 +110,7 @@ public class AiVideoProviderCallbackService
             return;
         }
 
-        if ("WAITING_CALLBACK".equals(task.getStatus()))
+        if (AiVideoTaskStatus.WAITING_CALLBACK.is(task.getStatus()))
         {
             if (taskMapper.claimVideoProviderTask(task.getTaskId(), providerCode) != 1)
             {
@@ -121,7 +124,7 @@ public class AiVideoProviderCallbackService
             catch (Exception ex)
             {
                 taskMapper.updateClaimedVideoProviderTaskStatus(
-                        task.getTaskId(), providerCode, "WAITING_CALLBACK", 40,
+                        task.getTaskId(), providerCode, AiVideoTaskStatus.WAITING_CALLBACK.name(), 40,
                         "VIDEO_PROVIDER_CALLBACK_ERROR", ex.getMessage());
                 throw new IllegalStateException("回调结果处理失败：" + ex.getMessage());
             }
@@ -129,7 +132,7 @@ public class AiVideoProviderCallbackService
             log.info("视频供应商回调处理完成，taskId={}, status={}", task.getTaskId(), status);
             return;
         }
-        if ("RUNNING".equals(task.getStatus()))
+        if (AiVideoTaskStatus.RUNNING.is(task.getStatus()))
         {
             log.info("视频任务正在轮询处理中，忽略回调，taskId={}", task.getTaskId());
             return;
@@ -151,7 +154,7 @@ public class AiVideoProviderCallbackService
     private void applyOutcome(AiVideoGenerationTask task, String status,
             String videoUrl, String error, String providerCode) throws Exception
     {
-        if ("SUCCEEDED".equals(status))
+        if (AiVideoTaskStatus.SUCCEEDED.is(status))
         {
             outcomeService.complete(task, videoUrl, providerCode, "ai-video-callback");
         }

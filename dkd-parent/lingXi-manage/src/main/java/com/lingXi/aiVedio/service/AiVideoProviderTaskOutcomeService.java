@@ -6,6 +6,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import com.lingXi.aiVedio.domain.AiVideoAsset;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
+import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.storage.AiVideoLocalAssetStorage;
@@ -60,7 +61,7 @@ public class AiVideoProviderTaskOutcomeService
             }
             if (taskMapper.updateClaimedVideoProviderTaskStatus(
                     task.getTaskId(), providerCode,
-                    "SUCCEEDED", 100, null, null) != 1)
+                    AiVideoTaskStatus.SUCCEEDED.name(), 100, null, null) != 1)
             {
                 throw new IllegalStateException("视频任务完成状态更新失败");
             }
@@ -93,7 +94,7 @@ public class AiVideoProviderTaskOutcomeService
                 throw new IllegalStateException("视频资产状态已变化，无法登记供应商失败结果");
             }
             if (taskMapper.updateClaimedVideoProviderTaskStatus(
-                    task.getTaskId(), providerCode, "FAILED", 100,
+                    task.getTaskId(), providerCode, AiVideoTaskStatus.FAILED.name(), 100,
                     "VIDEO_PROVIDER_TASK_FAILED", message) != 1)
             {
                 throw new IllegalStateException("视频供应商任务失败状态更新失败");
