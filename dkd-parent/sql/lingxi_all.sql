@@ -1,4 +1,4 @@
--- LingXi/DKD complete database initialization script
+﻿-- LingXi/DKD complete database initialization script
 -- Target: MySQL 8.0+
 -- Generated from the repository SQL files plus schemas required by current mappers.
 -- This script creates database `dkd` and can be imported directly on a fresh MySQL server.
@@ -2661,6 +2661,7 @@ CREATE TABLE IF NOT EXISTS ai_video_generation_task (
   progress TINYINT NOT NULL DEFAULT 0 COMMENT '进度0-100',
   retry_count INT NOT NULL DEFAULT 0 COMMENT '已重试次数',
   max_retry INT NOT NULL DEFAULT 3 COMMENT '最大重试次数',
+  recover_count INT NOT NULL DEFAULT 0 COMMENT '恢复重投递累计次数，达到上限后终止任务',
   next_retry_time DATETIME DEFAULT NULL COMMENT '下次重试时间',
   error_code VARCHAR(128) DEFAULT NULL COMMENT '错误码',
   error_message TEXT DEFAULT NULL COMMENT '错误信息',
@@ -2763,6 +2764,89 @@ CREATE TABLE IF NOT EXISTS ai_video_task_attempt (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI视频生成任务尝试记录';
 
 -- ============================================================
+-- AI novel workflow schema (from ai_novel_workflow.sql)
+-- ============================================================
+
+-- AI 小说创作模块（MySQL 8.0 / utf8mb4）
+-- 作品为顶层容器；长篇小说按章节存储正文，短篇小说正文直接放在作品表。
+-- 逻辑关联使用索引，未使用数据库外键。
+
+CREATE TABLE IF NOT EXISTS ai_novel_work (
+  work_id BIGINT NOT NULL AUTO_INCREMENT COMMENT '作品ID',
+  work_name VARCHAR(128) NOT NULL COMMENT '作品名称',
+  work_type VARCHAR(16) NOT NULL DEFAULT 'novel' COMMENT '作品类型:short-短篇, novel-长篇小说',
+  genre VARCHAR(64) DEFAULT '' COMMENT '题材类型，如东方玄幻',
+  synopsis TEXT DEFAULT NULL COMMENT '作品梗概',
+  manuscript LONGTEXT DEFAULT NULL COMMENT '短篇正文（长篇按章节存储）',
+  status VARCHAR(16) NOT NULL DEFAULT 'draft' COMMENT '状态:draft-草稿, writing-写作中, finished-已完成',
+  owner_user_id BIGINT NOT NULL COMMENT '所属用户ID',
+  create_by VARCHAR(64) DEFAULT '' COMMENT '创建者',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_by VARCHAR(64) DEFAULT '' COMMENT '更新者',
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  del_flag CHAR(1) NOT NULL DEFAULT '0' COMMENT '删除标志:0存在 2删除',
+  remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (work_id),
+  KEY idx_novel_work_owner (owner_user_id),
+  KEY idx_novel_work_update (update_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI小说作品';
+
+CREATE TABLE IF NOT EXISTS ai_novel_chapter (
+  chapter_id BIGINT NOT NULL AUTO_INCREMENT COMMENT '章节ID',
+  work_id BIGINT NOT NULL COMMENT '作品ID',
+  chapter_no INT NOT NULL DEFAULT 1 COMMENT '章节序号',
+  chapter_title VARCHAR(128) DEFAULT NULL COMMENT '章节标题',
+  chapter_brief TEXT DEFAULT NULL COMMENT '本章梗概',
+  content LONGTEXT DEFAULT NULL COMMENT '章节正文',
+  word_count INT NOT NULL DEFAULT 0 COMMENT '正文字数',
+  status VARCHAR(16) NOT NULL DEFAULT 'draft' COMMENT '状态:draft-草稿, published-已发布',
+  create_by VARCHAR(64) DEFAULT '',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_by VARCHAR(64) DEFAULT '',
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  del_flag CHAR(1) NOT NULL DEFAULT '0' COMMENT '删除标志:0存在 2删除',
+  remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (chapter_id),
+  UNIQUE KEY uk_novel_chapter_work_no (work_id, chapter_no, del_flag),
+  KEY idx_novel_chapter_work (work_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI小说章节';
+
+CREATE TABLE IF NOT EXISTS ai_novel_setting (
+  setting_id BIGINT NOT NULL AUTO_INCREMENT COMMENT '设定ID',
+  work_id BIGINT NOT NULL COMMENT '作品ID',
+  setting_type VARCHAR(32) NOT NULL COMMENT '设定类型:character-人物, world-世界观, outline-大纲, item-物品, organization-组织, event-事件, style-文风, other-其他',
+  title VARCHAR(128) NOT NULL COMMENT '设定标题',
+  content TEXT DEFAULT NULL COMMENT '设定内容',
+  create_by VARCHAR(64) DEFAULT '',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_by VARCHAR(64) DEFAULT '',
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  del_flag CHAR(1) NOT NULL DEFAULT '0' COMMENT '删除标志:0存在 2删除',
+  remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (setting_id),
+  KEY idx_novel_setting_work (work_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI小说设定卡';
+
+CREATE TABLE IF NOT EXISTS ai_novel_foreshadow (
+  foreshadow_id BIGINT NOT NULL AUTO_INCREMENT COMMENT '伏笔ID',
+  work_id BIGINT NOT NULL COMMENT '作品ID',
+  title VARCHAR(128) NOT NULL COMMENT '伏笔名称',
+  description TEXT DEFAULT NULL COMMENT '伏笔详情（埋设内容与预期效果）',
+  status VARCHAR(16) NOT NULL DEFAULT 'buried' COMMENT '状态:buried-已埋, pending-待解, resolved-已解',
+  priority VARCHAR(8) NOT NULL DEFAULT 'medium' COMMENT '重要等级:high-高, medium-中, low-低',
+  keyword VARCHAR(128) DEFAULT NULL COMMENT '伏笔关键词，用于索引与检索',
+  resolve_chapter_no INT DEFAULT NULL COMMENT '计划回收章节号',
+  create_by VARCHAR(64) DEFAULT '',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_by VARCHAR(64) DEFAULT '',
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  del_flag CHAR(1) NOT NULL DEFAULT '0' COMMENT '删除标志:0存在 2删除',
+  remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (foreshadow_id),
+  KEY idx_novel_foreshadow_work (work_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI小说伏笔';
+
+-- ============================================================
 -- AI video chapter soft-delete migration
 -- ============================================================
 
@@ -2846,6 +2930,60 @@ WHERE menu_id = @ai_vedio_parent_id
    OR parent_id = @ai_vedio_parent_id
    OR parent_id = @ai_vedio_project_menu_id
    OR parent_id = @ai_vedio_task_menu_id
+ON DUPLICATE KEY UPDATE menu_id = VALUES(menu_id);
+
+-- ============================================================
+-- AI novel menus and permissions (from ai_novel_menu.sql)
+-- ============================================================
+
+-- AI 小说创作模块菜单与权限。
+-- 该脚本仅向管理员角色（role_id = 1）授权；其他角色请在“角色管理”中按需分配。
+
+SET @novel_parent_id := (
+    SELECT menu_id FROM sys_menu WHERE parent_id = 0 AND path = 'novel' LIMIT 1
+);
+
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, component, query, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time, remark)
+SELECT 'AI小说创作', 0, 16, 'novel', NULL, '', 1, 0, 'M', '0', '0', '', 'edit', 'admin', NOW(), 'AI小说创作目录'
+WHERE @novel_parent_id IS NULL;
+
+SET @novel_parent_id := (
+    SELECT menu_id FROM sys_menu WHERE parent_id = 0 AND path = 'novel' LIMIT 1
+);
+
+SET @novel_writing_menu_id := (
+    SELECT menu_id FROM sys_menu WHERE parent_id = @novel_parent_id AND path = 'writing' LIMIT 1
+);
+
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, component, query, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time, remark)
+SELECT '小说写作台', @novel_parent_id, 1, 'writing', 'novel/index', '', 1, 0, 'C', '0', '0', 'novel:writing:list', 'edit', 'admin', NOW(), 'AI小说创作工作台（短篇/长篇）'
+WHERE @novel_writing_menu_id IS NULL;
+
+SET @novel_writing_menu_id := (
+    SELECT menu_id FROM sys_menu WHERE parent_id = @novel_parent_id AND path = 'writing' LIMIT 1
+);
+
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, component, query, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time, remark)
+SELECT x.menu_name, @novel_writing_menu_id, x.order_num, '', '', '', 1, 0, 'F', '0', '0', x.perms, '#', 'admin', NOW(), x.remark
+FROM (
+    SELECT '作品查询' AS menu_name, 1 AS order_num, 'novel:work:list' AS perms, '查看作品列表' AS remark
+    UNION ALL SELECT '作品新增', 2, 'novel:work:add', '新建作品'
+    UNION ALL SELECT '作品修改', 3, 'novel:work:edit', '编辑作品信息与正文'
+    UNION ALL SELECT '作品删除', 4, 'novel:work:remove', '删除作品'
+) x
+WHERE NOT EXISTS (
+    SELECT 1 FROM sys_menu existing_menu WHERE existing_menu.perms = x.perms
+);
+
+INSERT INTO sys_role_menu (role_id, menu_id)
+SELECT 1, menu_id
+FROM sys_menu
+WHERE menu_id = @novel_parent_id
+   OR parent_id = @novel_parent_id
+   OR parent_id = @novel_writing_menu_id
 ON DUPLICATE KEY UPDATE menu_id = VALUES(menu_id);
 
 -- AI 聊天会话附件元数据。文件本体保存在配置的 x-file-storage 平台（生产为阿里云 OSS）。

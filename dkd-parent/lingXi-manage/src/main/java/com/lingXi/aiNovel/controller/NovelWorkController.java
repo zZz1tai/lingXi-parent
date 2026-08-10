@@ -19,9 +19,11 @@ import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.common.core.page.TableDataInfo;
 import com.lingXi.common.enums.BusinessType;
 import com.lingXi.aiNovel.domain.AiNovelChapter;
+import com.lingXi.aiNovel.domain.AiNovelForeshadow;
 import com.lingXi.aiNovel.domain.AiNovelSetting;
 import com.lingXi.aiNovel.domain.AiNovelWork;
 import com.lingXi.aiNovel.service.IAiNovelChapterService;
+import com.lingXi.aiNovel.service.IAiNovelForeshadowService;
 import com.lingXi.aiNovel.service.IAiNovelSettingService;
 import com.lingXi.aiNovel.service.IAiNovelWorkService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -45,6 +47,9 @@ public class NovelWorkController extends BaseController
 
     @Autowired
     private IAiNovelSettingService settingService;
+
+    @Autowired
+    private IAiNovelForeshadowService foreshadowService;
 
     // ── 作品 ──────────────────────────────────────────
 
@@ -204,6 +209,55 @@ public class NovelWorkController extends BaseController
     public AjaxResult removeSetting(@PathVariable Long workId, @PathVariable Long settingId)
     {
         return toAjax(settingService.deleteAiNovelSetting(workId, settingId));
+    }
+
+    // ── 伏笔 ────────────────────────────────────────
+
+    /** 获取作品伏笔列表，可按状态过滤。 */
+    @Operation(summary = "获取小说伏笔列表")
+    @PreAuthorize("@ss.hasPermi('novel:work:list')")
+    @GetMapping("/{workId}/foreshadow/list")
+    public TableDataInfo foreshadowList(
+            @PathVariable Long workId,
+            @RequestParam(value = "status", required = false) String status)
+    {
+        startPage();
+        List<AiNovelForeshadow> list =
+                foreshadowService.selectAiNovelForeshadowList(workId, status);
+        return getDataTable(list);
+    }
+
+    /** 新增伏笔。 */
+    @Operation(summary = "新增小说伏笔")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @Log(title = "AI小说伏笔", businessType = BusinessType.INSERT)
+    @PostMapping("/{workId}/foreshadow")
+    public AjaxResult addForeshadow(
+            @PathVariable Long workId, @RequestBody AiNovelForeshadow foreshadow)
+    {
+        return toAjax(foreshadowService.insertAiNovelForeshadow(workId, foreshadow));
+    }
+
+    /** 更新伏笔（含状态流转与回收）。 */
+    @Operation(summary = "更新小说伏笔")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @Log(title = "AI小说伏笔", businessType = BusinessType.UPDATE)
+    @PutMapping("/{workId}/foreshadow")
+    public AjaxResult editForeshadow(
+            @PathVariable Long workId, @RequestBody AiNovelForeshadow foreshadow)
+    {
+        return toAjax(foreshadowService.updateAiNovelForeshadow(workId, foreshadow));
+    }
+
+    /** 删除伏笔。 */
+    @Operation(summary = "删除小说伏笔")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @Log(title = "AI小说伏笔", businessType = BusinessType.DELETE)
+    @DeleteMapping("/{workId}/foreshadow/{foreshadowId}")
+    public AjaxResult removeForeshadow(
+            @PathVariable Long workId, @PathVariable Long foreshadowId)
+    {
+        return toAjax(foreshadowService.deleteAiNovelForeshadow(workId, foreshadowId));
     }
 
     // ── 短篇正文 ──────────────────────────────────────

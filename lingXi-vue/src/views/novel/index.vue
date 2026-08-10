@@ -108,6 +108,14 @@
                 >
                   设定集
                 </button>
+                <button
+                  type="button"
+                  class="nk-drawer-tab"
+                  :class="{ 'is-active': drawerTab === 'foreshadows' }"
+                  @click="drawerTab = 'foreshadows'"
+                >
+                  伏笔
+                </button>
               </div>
 
               <div class="nk-drawer-body">
@@ -131,7 +139,7 @@
                   />
                 </template>
 
-                <template v-else>
+                <template v-else-if="drawerTab === 'settings'">
                   <div class="nk-settings-group">
                     <p class="nk-settings-label">人物</p>
                     <SettingNotebook
@@ -160,6 +168,19 @@
                       @add="openSettingDialog"
                       @edit="openSettingDialog"
                       @delete="handleDeleteSetting"
+                    />
+                  </div>
+                </template>
+
+                <template v-else-if="drawerTab === 'foreshadows'">
+                  <div class="nk-settings-group">
+                    <p class="nk-settings-label">伏笔</p>
+                    <ForeshadowBoard
+                      :cards="foreshadows"
+                      @add="openForeshadowDialog()"
+                      @edit="openForeshadowDialog"
+                      @delete="handleDeleteForeshadow"
+                      @resolve="handleResolveForeshadow"
                     />
                   </div>
                 </template>
@@ -280,6 +301,59 @@
         <el-button type="primary" :loading="settingDialog.submitting" @click="submitSetting">保存卡片</el-button>
       </template>
     </el-dialog>
+
+    <!-- 伏笔编辑 -->
+    <el-dialog
+      v-model="foreshadowDialog.open"
+      :title="foreshadowDialog.isEdit ? '修改伏笔' : '埋一条新伏笔'"
+      width="520px"
+      append-to-body
+      class="nk-dialog-paper"
+    >
+      <el-form label-position="top">
+        <el-form-item label="伏笔名称">
+          <el-input v-model="foreshadowForm.title" maxlength="32" placeholder="例如：林家祠堂里那只断手镯" />
+        </el-form-item>
+        <el-form-item label="伏笔详情">
+          <el-input
+            v-model="foreshadowForm.description"
+            type="textarea"
+            :rows="4"
+            maxlength="1000"
+            show-word-limit
+            placeholder="埋了什么、打算怎么收、读者会留意到什么…"
+          />
+        </el-form-item>
+        <div class="nk-foreshadow-row">
+          <el-form-item label="状态">
+            <el-select v-model="foreshadowForm.status" class="nk-foreshadow-col">
+              <el-option label="已埋" value="buried" />
+              <el-option label="待解" value="pending" />
+              <el-option label="已解" value="resolved" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="重要等级">
+            <el-select v-model="foreshadowForm.priority" class="nk-foreshadow-col">
+              <el-option label="高" value="high" />
+              <el-option label="中" value="medium" />
+              <el-option label="低" value="low" />
+            </el-select>
+          </el-form-item>
+        </div>
+        <div class="nk-foreshadow-row">
+          <el-form-item label="关键词">
+            <el-input v-model="foreshadowForm.keyword" maxlength="32" placeholder="便于检索，如：断手镯" />
+          </el-form-item>
+          <el-form-item label="计划回收章节">
+            <el-input-number v-model="foreshadowForm.resolveChapterNo" :min="1" :max="100000" class="nk-foreshadow-col" placeholder="可留空" />
+          </el-form-item>
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="foreshadowDialog.open = false">取消</el-button>
+        <el-button type="primary" :loading="foreshadowDialog.submitting" @click="submitForeshadow">保存伏笔</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -292,16 +366,18 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { saveAs } from 'file-saver'
 import useUserStore from '@/store/modules/user'
 import {
-  addNovelChapter, addNovelSetting, addNovelWork, delNovelChapter, delNovelSetting,
-  delNovelWork, getNovelWork, listNovelChapter, listNovelSetting,
+  addNovelChapter, addNovelForeshadow, addNovelSetting, addNovelWork, delNovelChapter,
+  delNovelForeshadow, delNovelSetting,
+  delNovelWork, getNovelWork, listNovelChapter, listNovelForeshadow, listNovelSetting,
   listNovelWork, saveNovelManuscript, streamNovelSynopsis,
-  updateNovelChapter, updateNovelSetting, updateNovelWork
+  updateNovelChapter, updateNovelForeshadow, updateNovelSetting, updateNovelWork
 } from '@/api/novel/novel'
 import WorksRail from './components/WorksRail.vue'
 import ChatComposer from './components/ChatComposer.vue'
 import ManuscriptEditor from './components/ManuscriptEditor.vue'
 import ChapterTree from './components/ChapterTree.vue'
 import SettingNotebook from './components/SettingNotebook.vue'
+import ForeshadowBoard from './components/ForeshadowBoard.vue'
 import { countNovelCharacters } from './novelWordCount'
 import './novel-kraft.scss'
 
@@ -347,6 +423,7 @@ function selectWork(work) {
   chapters.value = []
   currentChapter.value = null
   settings.value = { character: [], world: [], outline: [] }
+  foreshadows.value = []
   if (work.workType === 'novel') {
     loadChapters(work.workId)
   } else {
@@ -698,6 +775,109 @@ async function handleDeleteSetting(type, card) {
   }
 }
 
+// ── 伏笔 ────────────────────────────────────────────
+const foreshadows = ref([])
+
+const foreshadowDialog = reactive({ open: false, isEdit: false, submitting: false, foreshadowId: null })
+const foreshadowForm = reactive({
+  title: '',
+  description: '',
+  status: 'buried',
+  priority: 'medium',
+  keyword: '',
+  resolveChapterNo: null
+})
+
+async function loadForeshadows(workId) {
+  try {
+    const result = await listNovelForeshadow(workId)
+    foreshadows.value = result?.rows || []
+  } catch {
+    foreshadows.value = []
+  }
+}
+
+function openForeshadowDialog(card = null) {
+  if (card) {
+    foreshadowDialog.isEdit = true
+    foreshadowDialog.foreshadowId = card.foreshadowId
+    Object.assign(foreshadowForm, {
+      title: card.title || '',
+      description: card.description || '',
+      status: card.status || 'buried',
+      priority: card.priority || 'medium',
+      keyword: card.keyword || '',
+      resolveChapterNo: card.resolveChapterNo ?? null
+    })
+  } else {
+    foreshadowDialog.isEdit = false
+    foreshadowDialog.foreshadowId = null
+    Object.assign(foreshadowForm, {
+      title: '',
+      description: '',
+      status: 'buried',
+      priority: 'medium',
+      keyword: '',
+      resolveChapterNo: null
+    })
+  }
+  foreshadowDialog.open = true
+}
+
+async function submitForeshadow() {
+  if (!foreshadowForm.title.trim()) {
+    ElMessage.warning('请填写伏笔名称')
+    return
+  }
+  foreshadowDialog.submitting = true
+  try {
+    const payload = {
+      title: foreshadowForm.title.trim(),
+      description: foreshadowForm.description,
+      status: foreshadowForm.status,
+      priority: foreshadowForm.priority,
+      keyword: foreshadowForm.keyword?.trim() || null,
+      resolveChapterNo: foreshadowForm.resolveChapterNo || null
+    }
+    if (foreshadowDialog.isEdit) {
+      await updateNovelForeshadow(selectedWork.value.workId, { ...payload, foreshadowId: foreshadowDialog.foreshadowId })
+      ElMessage.success('伏笔已更新')
+    } else {
+      await addNovelForeshadow(selectedWork.value.workId, payload)
+      ElMessage.success('伏笔已埋下')
+    }
+    foreshadowDialog.open = false
+    await loadForeshadows(selectedWork.value.workId)
+  } catch (error) {
+    ElMessage.error(error?.message || '保存失败，请检查后端服务')
+  } finally {
+    foreshadowDialog.submitting = false
+  }
+}
+
+async function handleDeleteForeshadow(card) {
+  try {
+    await delNovelForeshadow(selectedWork.value.workId, card.foreshadowId)
+    ElMessage.success('伏笔已删除')
+    await loadForeshadows(selectedWork.value.workId)
+  } catch (error) {
+    ElMessage.error(error?.message || '删除失败')
+  }
+}
+
+async function handleResolveForeshadow(card) {
+  try {
+    await updateNovelForeshadow(selectedWork.value.workId, {
+      ...card,
+      status: 'resolved'
+    })
+    ElMessage.success('伏笔已回收，线头收好了')
+    await loadForeshadows(selectedWork.value.workId)
+  } catch (error) {
+    ElMessage.error(error?.message || '标记失败')
+  }
+}
+
 // ── 自动保存 ────────────────────────────────────────
 const saveState = ref('saved') // dirty | saving | saved
 const saveIcon = computed(() => {
@@ -791,6 +971,7 @@ watch(
     drawerTab.value = 'chapters'
     if (selectedWork.value?.workType === 'novel') {
       await loadSettings(selectedWork.value.workId)
+      await loadForeshadows(selectedWork.value.workId)
     }
   }
 )
@@ -851,5 +1032,19 @@ onBeforeUnmount(() => clearTimeout(saveTimer))
       font-size: 13px;
     }
   }
+}
+
+.nk-foreshadow-row {
+  display: flex;
+  gap: 14px;
+
+  .el-form-item {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.nk-foreshadow-col {
+  width: 100%;
 }
 </style>

@@ -10,11 +10,14 @@ import com.lingXi.common.utils.DateUtils;
 import com.lingXi.common.utils.SecurityUtils;
 import com.lingXi.common.utils.StringUtils;
 import com.lingXi.aiNovel.domain.AiNovelChapter;
+import com.lingXi.aiNovel.domain.AiNovelForeshadow;
 import com.lingXi.aiNovel.domain.AiNovelSetting;
 import com.lingXi.aiNovel.domain.AiNovelWork;
+import com.lingXi.aiNovel.domain.dto.NovelForeshadowItemDTO;
 import com.lingXi.aiNovel.domain.dto.NovelSettingItemDTO;
 import com.lingXi.aiNovel.domain.dto.NovelWorkContextDTO;
 import com.lingXi.aiNovel.mapper.AiNovelChapterMapper;
+import com.lingXi.aiNovel.mapper.AiNovelForeshadowMapper;
 import com.lingXi.aiNovel.mapper.AiNovelSettingMapper;
 import com.lingXi.aiNovel.mapper.AiNovelWorkMapper;
 import com.lingXi.aiNovel.service.IAiNovelWorkService;
@@ -29,10 +32,14 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
 {
     /** 注入智能体的设定卡数量上限（与 Python NovelWorkContext 契约一致）。 */
     private static final int CONTEXT_SETTING_LIMIT = 40;
+    /** 注入智能体的未解伏笔数量上限（与 Python NovelWorkContext 契约一致）。 */
+    private static final int CONTEXT_FORESHADOW_LIMIT = 40;
     /** 注入智能体的正文末尾片段长度上限（字符）。 */
     private static final int CONTEXT_MANUSCRIPT_TAIL_CHARS = 3_000;
     /** 单条设定卡内容长度上限（与 Python 契约一致）。 */
     private static final int SETTING_CONTENT_MAX_CHARS = 4_000;
+    /** 单条伏笔详情长度上限（与 Python 契约一致）。 */
+    private static final int FORESHADOW_DESCRIPTION_MAX_CHARS = 1_000;
 
     @Autowired
     private AiNovelWorkMapper workMapper;
@@ -42,6 +49,9 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
 
     @Autowired
     private AiNovelSettingMapper settingMapper;
+
+    @Autowired
+    private AiNovelForeshadowMapper foreshadowMapper;
 
     /** 根据作品ID查询作品，并校验当前用户为作品所有者。 */
     @Override
@@ -152,6 +162,7 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         }
         chapterMapper.deleteAiNovelChapterByWorkIds(owned);
         settingMapper.deleteAiNovelSettingByWorkIds(owned);
+        foreshadowMapper.deleteAiNovelForeshadowByWorkIds(owned);
         return workMapper.deleteAiNovelWorkByWorkIds(owned, SecurityUtils.getUserId());
     }
 
@@ -216,6 +227,22 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
             settings.add(item);
         }
         context.setSettings(settings);
+
+        List<NovelForeshadowItemDTO> foreshadows = new ArrayList<>();
+        for (AiNovelForeshadow foreshadow : foreshadowMapper.selectAiNovelForeshadowContext(
+                workId, CONTEXT_FORESHADOW_LIMIT))
+        {
+            NovelForeshadowItemDTO item = new NovelForeshadowItemDTO();
+            item.setTitle(foreshadow.getTitle());
+            item.setDescription(truncate(foreshadow.getDescription(),
+                    FORESHADOW_DESCRIPTION_MAX_CHARS));
+            item.setStatus(foreshadow.getStatus());
+            item.setPriority(foreshadow.getPriority());
+            item.setKeyword(foreshadow.getKeyword());
+            item.setResolveChapterNo(foreshadow.getResolveChapterNo());
+            foreshadows.add(item);
+        }
+        context.setForeshadows(foreshadows);
         return context;
     }
 

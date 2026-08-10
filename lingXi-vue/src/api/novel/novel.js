@@ -153,6 +153,39 @@ export function delNovelSetting(workId, settingId) {
   })
 }
 
+// ── 伏笔（长篇：埋设/待解/已解追踪） ────────────────
+
+export function listNovelForeshadow(workId, status) {
+  return request({
+    url: '/novel/work/' + workId + '/foreshadow/list',
+    method: 'get',
+    params: { status }
+  })
+}
+
+export function addNovelForeshadow(workId, data) {
+  return request({
+    url: '/novel/work/' + workId + '/foreshadow',
+    method: 'post',
+    data: data
+  })
+}
+
+export function updateNovelForeshadow(workId, data) {
+  return request({
+    url: '/novel/work/' + workId + '/foreshadow',
+    method: 'put',
+    data: data
+  })
+}
+
+export function delNovelForeshadow(workId, foreshadowId) {
+  return request({
+    url: '/novel/work/' + workId + '/foreshadow/' + foreshadowId,
+    method: 'delete'
+  })
+}
+
 // ── 短篇正文 ──────────────────────────────────────────
 
 export function saveNovelManuscript(workId, data) {

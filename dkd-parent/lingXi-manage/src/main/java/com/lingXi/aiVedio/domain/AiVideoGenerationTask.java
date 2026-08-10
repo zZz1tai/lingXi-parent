@@ -59,6 +59,9 @@ public class AiVideoGenerationTask extends BaseEntity
     /** 已重试次数 */
     private Integer retryCount;
 
+    /** 恢复重投递累计次数，达到上限后终止任务，防止无限循环消耗资源 */
+    private Integer recoverCount;
+
     /** 下次重试时间 */
     private Date nextRetryTime;
 

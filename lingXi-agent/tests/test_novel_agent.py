@@ -17,6 +17,7 @@ from app.agents.state import AgentContext
 from app.api.dependencies import create_novel_agent_context
 from app.main import app
 from app.schemas.request import (
+    NovelForeshadowItem,
     NovelSettingItem,
     NovelSynopsisRequest,
     NovelWorkContext,
@@ -194,6 +195,69 @@ def test_novel_work_context_accepts_camel_case_java_payload() -> None:
     assert context.chapter_title == "第三章 雾中来客"
     assert context.manuscript_tail == "门开了。"
     assert context.settings[0].setting_type == "character"
+
+
+def test_novel_work_context_validates_foreshadow_items() -> None:
+    context = NovelWorkContext(
+        work_name="拾遗录",
+        foreshadows=[
+            NovelForeshadowItem(
+                title="青铜城下的密道",
+                description="城东枯井通往城主府密室。",
+                status="pending",
+                priority="high",
+                keyword="枯井",
+                resolve_chapter_no=12,
+            )
+        ],
+    )
+
+    assert context.foreshadows[0].title == "青铜城下的密道"
+    assert context.foreshadows[0].status == "pending"
+    assert context.foreshadows[0].resolve_chapter_no == 12
+    with pytest.raises(ValidationError):
+        NovelWorkContext(
+            work_name="拾遗录",
+            foreshadows=[NovelForeshadowItem(title="x", status="forged")],
+        )
+    with pytest.raises(ValidationError):
+        NovelWorkContext(
+            work_name="拾遗录",
+            foreshadows=[NovelForeshadowItem(title="x", resolve_chapter_no=0)],
+        )
+
+
+def test_novel_work_context_accepts_camel_case_foreshadow_payload() -> None:
+    """Java 端 NovelForeshadowItemDTO 以 camelCase 序列化，应被等价接受。"""
+    context = NovelWorkContext.model_validate(
+        {
+            "workName": "拾遗录",
+            "foreshadows": [
+                {
+                    "title": "断手镯",
+                    "status": "buried",
+                    "priority": "low",
+                    "resolveChapterNo": 30,
+                }
+            ],
+        }
+    )
+
+    assert context.foreshadows[0].title == "断手镯"
+    assert context.foreshadows[0].resolve_chapter_no == 30
+
+
+def test_novel_prompt_declares_foreshadow_behavior() -> None:
+    prompt = compose_novel_system_prompt(
+        AgentContext(style="professional"),
+        search_available=True,
+        general_tools_available=True,
+    )
+
+    assert "## 伏笔管理" in prompt
+    assert "未解伏笔" in prompt
+    assert "重要等级" in prompt
+    assert "不得把伏笔列表本身写进正文" in prompt
 
 
 def test_create_novel_agent_context_carries_work_data_only() -> None:

@@ -269,6 +269,8 @@ class ChatRequest(StrictRequestModel):
 
 MAX_NOVEL_SETTINGS = 60
 MAX_NOVEL_SETTING_CHARS = 4_000
+MAX_NOVEL_FORESHADOWS = 40
+MAX_NOVEL_FORESHADOW_DESCRIPTION_CHARS = 1_000
 MAX_NOVEL_WORK_CONTEXT_JSON_BYTES = 256 * 1024
 
 
@@ -284,6 +286,34 @@ class NovelSettingItem(StrictRequestModel):
     )
     title: str = Field(..., min_length=1, max_length=128)
     content: str = Field(..., min_length=1, max_length=MAX_NOVEL_SETTING_CHARS)
+
+
+class NovelForeshadowItem(StrictRequestModel):
+    """作品伏笔条目，由 Java 从伏笔表加载后提交，仅含未解（已埋/待解）伏笔。"""
+
+    title: str = Field(..., min_length=1, max_length=128)
+    description: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_NOVEL_FORESHADOW_DESCRIPTION_CHARS,
+    )
+    status: str = Field(
+        default="buried",
+        pattern=r"^(buried|pending|resolved)$",
+        description="buried-已埋, pending-待解, resolved-已解",
+    )
+    priority: str = Field(
+        default="medium",
+        pattern=r"^(high|medium|low)$",
+        description="high-高, medium-中, low-低",
+    )
+    keyword: str | None = Field(default=None, min_length=1, max_length=128)
+    resolve_chapter_no: int | None = Field(
+        default=None,
+        ge=1,
+        description="计划回收章节号",
+        validation_alias=AliasChoices("resolve_chapter_no", "resolveChapterNo"),
+    )
 
 
 class NovelWorkContext(StrictRequestModel):
@@ -326,6 +356,11 @@ class NovelWorkContext(StrictRequestModel):
         default_factory=list,
         max_length=MAX_NOVEL_SETTINGS,
     )
+    foreshadows: list[NovelForeshadowItem] = Field(
+        default_factory=list,
+        max_length=MAX_NOVEL_FORESHADOWS,
+        description="未解伏笔（已埋/待解），用于保持情节线索连续",
+    )
 
     @model_validator(mode="after")
     def validate_total_bytes(self) -> "NovelWorkContext":
@@ -333,6 +368,8 @@ class NovelWorkContext(StrictRequestModel):
         payload = self.model_dump(mode="json", exclude_none=True)
         if not payload.get("settings"):
             payload.pop("settings", None)
+        if not payload.get("foreshadows"):
+            payload.pop("foreshadows", None)
         substantive = set(payload) - {"work_id", "work_type", "work_name"}
         if not substantive:
             raise ValueError("work_context must carry at least one piece of work data")

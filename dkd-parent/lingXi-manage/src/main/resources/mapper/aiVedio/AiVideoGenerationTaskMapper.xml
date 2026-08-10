@@ -15,6 +15,7 @@
         <result property="maxRetry" column="max_retry"/>
         <result property="retryCount" column="retry_count"/>
         <result property="nextRetryTime" column="next_retry_time"/>
+        <result property="recoverCount" column="recover_count"/>
         <result property="requestJson" column="request_json"/>
         <result property="errorCode" column="error_code"/>
         <result property="errorMessage" column="error_message"/>
@@ -25,6 +26,7 @@
     <sql id="selectAiVideoGenerationTaskVo">
         select task_id, project_id, chapter_id, asset_id, task_type, task_name, status,
                idempotency_key, provider_task_id, progress, max_retry, retry_count, next_retry_time,
+               recover_count,
                request_json, error_code, error_message, callback_event_id, create_time
         from ai_video_generation_task
     </sql>
@@ -139,6 +141,7 @@
             request_json = json_set(coalesce(request_json, json_object()),
                 '$.stageCode', 'QUEUED', '$.stageLabel', '任务已恢复，等待分析线程执行'),
             error_code = null, error_message = null,
+            recover_count = 0,
             worker_id = null, lease_expire = null,
             update_by = #{updateBy}, update_time = now()
         where task_id = #{taskId} and task_type = 'STORY_BIBLE' and status = 'PAUSED'
@@ -430,7 +433,8 @@
 
     <select id="selectQueuedStoryBibleTasksForRecovery" resultMap="AiVideoGenerationTaskResult">
         select task_id, project_id, chapter_id, asset_id, task_type, task_name, status, idempotency_key,
-               provider_task_id, progress, request_json, error_code, error_message, create_time
+               provider_task_id, progress, request_json, error_code, error_message,
+               recover_count, create_time
         from ai_video_generation_task
         where (del_flag = '0' or del_flag is null) and task_type = 'STORY_BIBLE'
           and status = 'QUEUED'
@@ -448,7 +452,40 @@
                 '$.stageCode', 'QUEUED', '$.stageLabel', '任务已恢复，等待分析线程执行'),
             worker_id = null, lease_expire = null, update_time = now()
         where task_type = 'STORY_BIBLE' and status = 'RUNNING'
-          and (lease_expire is null or lease_expire &lt; now())
+          and lease_expire is not null and lease_expire &lt; now()
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="failNullLeaseStoryBibleTasks">
+        update ai_video_generation_task
+        set status = 'FAILED', progress = 100,
+            error_code = 'STORY_BIBLE_LEASE_MISSING',
+            error_message = '执行中任务缺少租约（数据异常），已终止防止重复投递',
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.stageCode', 'FAILED', '$.stageLabel', '任务因租约缺失异常终止'),
+            completed_time = now(), worker_id = null, update_time = now()
+        where task_type = 'STORY_BIBLE' and status = 'RUNNING' and lease_expire is null
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="incrementStoryBibleRecoveryCount">
+        update ai_video_generation_task
+        set recover_count = recover_count + 1, update_time = now()
+        where task_id = #{taskId} and task_type = 'STORY_BIBLE' and status = 'QUEUED'
+          and recover_count &lt; #{maxRecovery}
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="failStoryBibleTaskRecoveryLimitExceeded">
+        update ai_video_generation_task
+        set status = 'FAILED', progress = 100,
+            error_code = 'STORY_BIBLE_RECOVERY_LIMIT_EXCEEDED',
+            error_message = '恢复投递次数达到上限，任务已终止',
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.stageCode', 'FAILED', '$.stageLabel', '任务因恢复投递超限终止'),
+            completed_time = now(), worker_id = null, lease_expire = null, update_time = now()
+        where task_id = #{taskId} and task_type = 'STORY_BIBLE' and status = 'QUEUED'
+          and recover_count &gt;= #{maxRecovery}
           and (del_flag = '0' or del_flag is null)
     </update>
 

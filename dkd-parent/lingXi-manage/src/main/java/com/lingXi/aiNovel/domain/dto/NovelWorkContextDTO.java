@@ -36,4 +36,7 @@ public class NovelWorkContextDTO {
 
     /** 设定卡列表 */
     private List<NovelSettingItemDTO> settings;
+
+    /** 未解伏笔列表 */
+    private List<NovelForeshadowItemDTO> foreshadows;
 }

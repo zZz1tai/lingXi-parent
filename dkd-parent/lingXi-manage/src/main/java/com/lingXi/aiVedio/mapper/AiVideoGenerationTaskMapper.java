@@ -446,10 +446,43 @@ public interface AiVideoGenerationTaskMapper
 
     /**
      * 释放租约过期的故事圣经任务（执行者崩溃后恢复为排队状态）。
+     * <p>仅处理租约非空且已过期的任务；租约缺失的异常任务由
+     * {@link #failNullLeaseStoryBibleTasks()} 直接失败，防止无谓重投递。</p>
      *
      * @return 影响的行数
      */
     int releaseStaleStoryBibleTasks();
+
+    /**
+     * 将执行中但租约缺失的故事圣经任务直接标记为失败。
+     * <p>正常领取任务必然写入租约，执行中无租约属于数据异常，
+     * 恢复为排队只会导致反复重投递消耗 LLM token。</p>
+     *
+     * @return 影响的行数
+     */
+    int failNullLeaseStoryBibleTasks();
+
+    /**
+     * 原子累加故事圣经任务的恢复重投递次数。
+     * <p>仅在任务仍处于排队状态且未超过上限时累加，返回 1 表示本次
+     * 投递获得许可；返回 0 表示已达上限或状态已变化（已被领取/取消）。</p>
+     *
+     * @param taskId      任务ID
+     * @param maxRecovery 恢复投递次数上限
+     * @return 影响的行数（1=允许投递，0=已达上限或状态变化）
+     */
+    int incrementStoryBibleRecoveryCount(@Param("taskId") Long taskId,
+            @Param("maxRecovery") int maxRecovery);
+
+    /**
+     * 将恢复投递次数已达上限的排队故事圣经任务标记为失败。
+     *
+     * @param taskId      任务ID
+     * @param maxRecovery 恢复投递次数上限
+     * @return 影响的行数
+     */
+    int failStoryBibleTaskRecoveryLimitExceeded(@Param("taskId") Long taskId,
+            @Param("maxRecovery") int maxRecovery);
 
     /**
      * 将已领取的图片任务安排自动重试（回到排队状态并计算退避时间）。
