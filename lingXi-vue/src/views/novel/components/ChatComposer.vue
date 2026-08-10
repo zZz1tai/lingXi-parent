@@ -44,7 +44,7 @@
               {{ message.content }}
             </template>
             <template v-else>
-              {{ message.content }}
+              <div class="nk-msg-copy" v-html="renderNovelMarkdown(message.content)" />
               <span v-if="message.streaming" class="nk-typing-cursor" />
               <template v-if="message.role === 'ai' && !message.streaming && message.content">
                 <div class="nk-msg-actions">
@@ -108,6 +108,7 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getChatHistory } from '@/api/ai'
 import { streamNovelWrite } from '@/api/novel/novel'
+import { renderNovelMarkdown } from '../novelMarkdown'
 
 const props = defineProps({
   work: { type: Object, default: null },

@@ -15,21 +15,36 @@
 
     <div class="nk-paper-scroll">
       <span class="nk-clip is-top-right" aria-hidden="true" />
-      <textarea
-        v-model="draft"
-        class="nk-manuscript"
-        :placeholder="placeholder"
-        spellcheck="false"
-        @input="handleInput"
-      />
+      <div class="nk-manuscript-fields" :class="{ 'has-heading': headingLevel }">
+        <input
+          v-if="headingLevel"
+          v-model="heading"
+          class="nk-manuscript-heading"
+          type="text"
+          aria-label="正文标题"
+          spellcheck="false"
+          @input="handleInput"
+          @keydown.enter.prevent="bodyRef?.focus()"
+        />
+        <textarea
+          ref="bodyRef"
+          v-model="body"
+          class="nk-manuscript"
+          :placeholder="placeholder"
+          spellcheck="false"
+          aria-label="正文内容"
+          @input="handleInput"
+        />
+      </div>
     </div>
   </section>
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import { Document, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { joinMarkdownHeading, splitLeadingMarkdownHeading } from '../novelMarkdown'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -40,16 +55,35 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue', 'input'])
 
-const draft = ref(props.modelValue)
+const draft = ref('')
+const headingLevel = ref(0)
+const heading = ref('')
+const body = ref('')
+const bodyRef = ref(null)
+
+function applyValue(value) {
+  const parsed = splitLeadingMarkdownHeading(value)
+  draft.value = value || ''
+  headingLevel.value = parsed.level
+  heading.value = parsed.title
+  body.value = parsed.body
+}
+
+applyValue(props.modelValue)
 
 watch(
   () => props.modelValue,
   value => {
-    if (value !== draft.value) draft.value = value
+    if (value !== draft.value) applyValue(value)
   }
 )
 
 function handleInput() {
+  draft.value = joinMarkdownHeading({
+    level: headingLevel.value,
+    title: heading.value,
+    body: body.value
+  })
   emit('update:modelValue', draft.value)
   emit('input', draft.value)
 }
@@ -62,7 +96,9 @@ function handleClear() {
     type: 'warning'
   })
     .then(() => {
-      draft.value = ''
+      headingLevel.value = 0
+      heading.value = ''
+      body.value = ''
       handleInput()
       ElMessage.success('手稿已清空')
     })
@@ -73,8 +109,4 @@ function handleCount() {
   const chars = (draft.value || '').replace(/\s/g, '').length
   ElMessage.success(`当前正文 ${chars} 字（不含空白）`)
 }
-
-onMounted(() => {
-  if (!draft.value && props.modelValue) draft.value = props.modelValue
-})
 </script>
