@@ -221,3 +221,10 @@ aivideo:
     sync-read-timeout-ms: 180000
     # 进程中断后恢复未完成图片任务的扫描间隔
     queued-recovery-interval-ms: 10000
+
+management:
+  # Actuator 健康检查与指标端点暴露（供监控系统抓取 Micrometer 指标）
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

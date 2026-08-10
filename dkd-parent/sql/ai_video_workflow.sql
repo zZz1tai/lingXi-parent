@@ -305,6 +305,8 @@ CREATE TABLE IF NOT EXISTS ai_video_generation_task (
   estimated_cost DECIMAL(12,4) NOT NULL DEFAULT 0 COMMENT '预估成本',
   actual_cost DECIMAL(12,4) NOT NULL DEFAULT 0 COMMENT '实际成本',
   callback_event_id VARCHAR(255) DEFAULT NULL COMMENT '最后回调事件ID',
+  worker_id VARCHAR(64) DEFAULT NULL COMMENT '当前执行者标识（租约持有者）',
+  lease_expire DATETIME DEFAULT NULL COMMENT '租约过期时间，过期后可被其他执行者回收',
   started_time DATETIME DEFAULT NULL,
   completed_time DATETIME DEFAULT NULL,
   version INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本',

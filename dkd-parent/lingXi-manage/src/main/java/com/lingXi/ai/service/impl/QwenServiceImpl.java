@@ -514,6 +514,8 @@ public class QwenServiceImpl implements IQwenService {
         history.setModelName("agent");
         history.setStatus("ACCEPTED");
         history.setRequestId(RequestIdFilter.current());
+        // 受理时间即开始处理时间，供断流/超时监控使用（started_at 后长期无终态 = 卡住）。
+        history.setStartedAt(new Date());
         if (modelHistoryService.insertModelHistory(history) != 1) {
             throw new IllegalStateException("用户消息持久化失败");
         }

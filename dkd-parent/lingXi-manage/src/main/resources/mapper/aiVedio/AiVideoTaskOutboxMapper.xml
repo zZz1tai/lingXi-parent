@@ -43,4 +43,16 @@
             next_retry_time = #{nextRetryTime}, update_time = now()
         where outbox_id = #{outboxId} and status = 'PENDING'
     </update>
+
+    <select id="countPendingOutboxEvents" resultType="long">
+        select count(1)
+        from ai_video_task_outbox
+        where status = 'PENDING'
+    </select>
+
+    <select id="selectOldestPendingEventAgeSeconds" resultType="long">
+        select timestampdiff(second, min(create_time), now())
+        from ai_video_task_outbox
+        where status = 'PENDING'
+    </select>
 </mapper>

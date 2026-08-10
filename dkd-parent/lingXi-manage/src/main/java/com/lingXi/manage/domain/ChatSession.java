@@ -30,5 +30,8 @@ public class ChatSession extends BaseEntity
     /** 会话名称 */
     private String sessionName;
 
+    /** 会话状态：ACTIVE 正常/DELETING 删除中 */
+    private String status;
+
 
 }

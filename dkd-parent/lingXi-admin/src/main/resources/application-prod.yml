@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# 生产环境配置模板（激活方式：--spring.profiles.active=prod,druid）
+# 以 application.yml 为基础，仅覆盖环境差异项；数据库连接见 application-druid.yml。
+# 生产部署要求：全部敏感配置经环境变量注入，禁止默认密钥。
+# ---------------------------------------------------------------------------
+
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  data:
+    redis:
+      # 生产 Redis 地址通过环境变量注入
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      password: ${REDIS_PASSWORD}
+
+logging:
+  level:
+    com.dkd: info
+
+# 生产环境密钥必须由环境变量提供，缺失时启动即失败（防止默认值上线）。
+token:
+  secret: ${TOKEN_SECRET}
+
+# 生产环境回调验签密钥必须注入（为空则回调被拒绝）。
+aivideo:
+  callback:
+    shared-secret: ${AIVIDEO_CALLBACK_SECRET}
+
+# 上传目录使用持久化卷
+ruoyi:
+  profile: ${RUOYI_PROFILE:/data/lingxi/upload}
+
+# 生产环境关闭 Swagger 接口文档
+swagger:
+  enabled: false

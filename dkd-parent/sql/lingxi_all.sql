@@ -2206,14 +2206,22 @@ CREATE TABLE tb_model_history
     user_id      VARCHAR(64)                NOT NULL COMMENT '用户唯一标识',
     user_name    VARCHAR(128)               NOT NULL COMMENT '用户名字',
     message_type ENUM ('user', 'assistant') NOT NULL DEFAULT 'user' COMMENT '消息类型',
+    status       VARCHAR(20)                NOT NULL DEFAULT 'SUCCEEDED'
+        COMMENT '消息处理状态：ACCEPTED/STREAMING/SUCCEEDED/FAILED/CANCELLED/REJECTED',
+    error_code   VARCHAR(64)                         DEFAULT NULL COMMENT '稳定错误码（与 Java/Agent 契约一致）',
+    request_id   VARCHAR(64)                         DEFAULT NULL COMMENT '请求标识（request_id，跨 Java/Agent 链路）',
     content      TEXT                       NOT NULL COMMENT '消息内容',
     model_name   VARCHAR(64)                         DEFAULT NULL COMMENT '使用的模型名称',
     tokens       INT UNSIGNED                        DEFAULT 0 COMMENT '消耗的token数量',
     created_at   DATETIME                            DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    started_at   DATETIME                            DEFAULT NULL COMMENT '开始处理时间（用户消息受理写入）',
     updated_at   DATETIME                            DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    completed_at DATETIME                            DEFAULT NULL COMMENT '消息完成时间（SUCCEEDED/FAILED/CANCELLED 写入）',
 
     INDEX idx_session_id (session_id),
     INDEX idx_user_id (user_id),
+    INDEX idx_status (status),
+    INDEX idx_request_id (request_id),
     INDEX idx_created_at (created_at)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -2226,6 +2234,7 @@ CREATE TABLE tb_chat_session
     session_id   VARCHAR(128) NOT NULL UNIQUE COMMENT '会话唯一标识',
     user_id      VARCHAR(64)  NOT NULL COMMENT '用户唯一标识',
     session_name VARCHAR(128) NOT NULL COMMENT '会话名称',
+    status       VARCHAR(16)  DEFAULT 'ACTIVE' COMMENT '会话状态：ACTIVE 正常/DELETING 删除中（拒绝新消息）',
     created_at   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     
@@ -2658,6 +2667,8 @@ CREATE TABLE IF NOT EXISTS ai_video_generation_task (
   estimated_cost DECIMAL(12,4) NOT NULL DEFAULT 0 COMMENT '预估成本',
   actual_cost DECIMAL(12,4) NOT NULL DEFAULT 0 COMMENT '实际成本',
   callback_event_id VARCHAR(255) DEFAULT NULL COMMENT '最后回调事件ID',
+  worker_id VARCHAR(64) DEFAULT NULL COMMENT '当前执行者标识（租约持有者）',
+  lease_expire DATETIME DEFAULT NULL COMMENT '租约过期时间，过期后可被其他执行者回收',
   started_time DATETIME DEFAULT NULL,
   completed_time DATETIME DEFAULT NULL,
   version INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本',

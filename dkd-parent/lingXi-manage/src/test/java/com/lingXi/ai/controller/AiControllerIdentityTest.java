@@ -178,6 +178,7 @@ class AiControllerIdentityTest {
         assertEquals(Boolean.TRUE, result.get("data"));
         InOrder order = inOrder(chatSessionService, qwenService);
         order.verify(chatSessionService).selectChatSessionBySessionId("session-delete");
+        order.verify(chatSessionService).markChatSessionDeleting("session-delete");
         order.verify(qwenService).clearConversationMemory(
                 "session-delete", TRUSTED_USER_ID);
         order.verify(chatSessionService)
@@ -197,8 +198,62 @@ class AiControllerIdentityTest {
 
         verify(chatSessionService, never())
                 .deleteChatSessionAndHistoryBySessionId(anyString());
+        // 清理失败后会话恢复为正常，不遗留拒绝新消息的 DELETING 状态。
+        verify(chatSessionService).restoreChatSessionActive("session-delete-failure");
         assertEquals("删除会话失败", result.get("msg"));
         assertFalse(String.valueOf(result.get("msg")).contains(secretMarker));
+    }
+
+    @Test
+    void deletingSessionRejectsNewMessages() {
+        ChatSession deleting = new ChatSession();
+        deleting.setSessionId("session-deleting");
+        deleting.setUserId(TRUSTED_USER_ID);
+        deleting.setStatus("DELETING");
+        when(chatSessionService.selectChatSessionBySessionId("session-deleting"))
+                .thenReturn(deleting);
+        ChatVO request = new ChatVO();
+        request.setSessionId("session-deleting");
+        request.setMessage("删除中的消息");
+
+        ServiceException rejected = assertThrows(
+                ServiceException.class, () -> controller.chat(request));
+
+        assertTrue(rejected.getMessage().contains("删除中"));
+        verify(qwenService, never()).chat(
+                anyString(), any(AgentUserContext.class), anyString());
+    }
+
+    @Test
+    void deletingSessionRejectsRename() {
+        ChatSession deleting = new ChatSession();
+        deleting.setSessionId("session-rename-deleting");
+        deleting.setUserId(TRUSTED_USER_ID);
+        deleting.setStatus("DELETING");
+        when(chatSessionService.selectChatSessionBySessionId("session-rename-deleting"))
+                .thenReturn(deleting);
+        ChatSession rename = new ChatSession();
+        rename.setSessionId("session-rename-deleting");
+        rename.setSessionName("新名字");
+
+        AjaxResult result = controller.updateSession(rename);
+
+        assertEquals("更新会话名称失败", result.get("msg"));
+        verify(chatSessionService, never()).updateChatSession(any());
+    }
+
+    @Test
+    void deleteSessionRestoresActiveAfterAttachmentCleanupFailure() {
+        allowOwnedSession("session-delete-attachment-failure");
+        when(chatSessionService.deleteChatSessionAndHistoryBySessionId(
+                "session-delete-attachment-failure")).thenThrow(
+                        new IllegalStateException("oss unavailable"));
+
+        AjaxResult result = controller.deleteSession("session-delete-attachment-failure");
+
+        verify(chatSessionService).restoreChatSessionActive(
+                "session-delete-attachment-failure");
+        assertEquals("删除会话失败", result.get("msg"));
     }
 
     @Test

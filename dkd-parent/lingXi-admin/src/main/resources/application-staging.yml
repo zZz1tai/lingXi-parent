@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# 预发/联调环境配置模板（激活方式：--spring.profiles.active=staging,druid）
+# 以 application.yml 为基础，仅覆盖环境差异项；数据库连接见 application-druid.yml。
+# ---------------------------------------------------------------------------
+
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  data:
+    redis:
+      # 预发 Redis 地址通过环境变量注入
+      host: ${REDIS_HOST:staging-redis-host}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      password: ${REDIS_PASSWORD:}
+
+logging:
+  level:
+    com.dkd: info
+
+# 预发环境必须通过环境变量注入生产级密钥，禁止使用默认值。
+token:
+  secret: ${TOKEN_SECRET}
+
+# 预发环境回调验签密钥必须注入（为空则回调被拒绝）。
+aivideo:
+  callback:
+    shared-secret: ${AIVIDEO_CALLBACK_SECRET}
+
+# 上传目录建议使用持久化卷
+ruoyi:
+  profile: ${RUOYI_PROFILE:/data/lingxi/upload}

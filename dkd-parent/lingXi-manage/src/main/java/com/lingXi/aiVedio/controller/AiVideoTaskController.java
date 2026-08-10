@@ -13,8 +13,8 @@ import com.lingXi.common.core.controller.BaseController;
 import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.common.core.page.TableDataInfo;
 import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
-import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.service.AiVideoTaskCancellationService;
+import com.lingXi.aiVedio.service.AiVideoTaskQueryService;
 import com.lingXi.aiVedio.service.IAiVideoProjectService;
 import com.lingXi.common.utils.SecurityUtils;
 
@@ -32,7 +32,7 @@ import com.lingXi.common.utils.SecurityUtils;
 public class AiVideoTaskController extends BaseController
 {
     @Autowired
-    private AiVideoGenerationTaskMapper taskMapper;
+    private AiVideoTaskQueryService taskQueryService;
 
     @Autowired
     private IAiVideoProjectService projectService;
@@ -55,7 +55,7 @@ public class AiVideoTaskController extends BaseController
     public AjaxResult list(@RequestParam Long projectId)
     {
         projectService.checkProjectOwner(projectId);
-        List<AiVideoGenerationTask> tasks = taskMapper.selectAiVideoGenerationTaskList(projectId);
+        List<AiVideoGenerationTask> tasks = taskQueryService.listByProject(projectId);
         return success(tasks);
     }
 
@@ -78,7 +78,7 @@ public class AiVideoTaskController extends BaseController
             projectService.checkProjectOwner(query.getProjectId());
         }
         startPage();
-        return getDataTable(taskMapper.selectAiVideoGenerationTaskPage(query));
+        return getDataTable(taskQueryService.page(query));
     }
 
     /**
@@ -95,7 +95,7 @@ public class AiVideoTaskController extends BaseController
     @PostMapping("/{taskId}/cancel")
     public AjaxResult cancel(@PathVariable Long taskId)
     {
-        AiVideoGenerationTask task = taskMapper.selectAiVideoGenerationTaskByTaskId(taskId);
+        AiVideoGenerationTask task = taskQueryService.getByTaskId(taskId);
         if (task != null)
         {
             projectService.checkProjectOwner(task.getProjectId());

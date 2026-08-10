@@ -17,6 +17,9 @@ ALTER TABLE `tb_model_history`
   ADD COLUMN `completed_at` DATETIME DEFAULT NULL
     COMMENT '消息完成时间（SUCCEEDED/FAILED/CANCELLED 写入）'
     AFTER `updated_at`,
+  ADD COLUMN `started_at` DATETIME DEFAULT NULL
+    COMMENT '开始处理时间（用户消息受理写入）'
+    AFTER `created_at`,
   ADD INDEX `idx_status` (`status`),
   ADD INDEX `idx_request_id` (`request_id`);
 

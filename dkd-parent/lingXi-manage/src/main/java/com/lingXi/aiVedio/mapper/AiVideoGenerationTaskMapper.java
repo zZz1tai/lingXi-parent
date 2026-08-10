@@ -99,10 +99,13 @@ public interface AiVideoGenerationTaskMapper
     /**
      * 认领故事圣经任务
      *
-     * @param taskId 任务ID
+     * @param taskId       任务ID
+     * @param workerId     执行者标识
+     * @param leaseSeconds 租约时长（秒）
      * @return 影响的行数
      */
-    int claimStoryBibleTask(@Param("taskId") Long taskId);
+    int claimStoryBibleTask(@Param("taskId") Long taskId,
+            @Param("workerId") String workerId, @Param("leaseSeconds") int leaseSeconds);
 
     /**
      * 暂停故事圣经任务
@@ -192,10 +195,24 @@ public interface AiVideoGenerationTaskMapper
      *
      * @param taskId       任务ID
      * @param providerCode 供应商编码
+     * @param workerId     执行者标识
+     * @param leaseSeconds 租约时长（秒）
      * @return 影响的行数
      */
     int claimVideoProviderTask(@Param("taskId") Long taskId,
-            @Param("providerCode") String providerCode);
+            @Param("providerCode") String providerCode,
+            @Param("workerId") String workerId, @Param("leaseSeconds") int leaseSeconds);
+
+    /**
+     * 续租任务租约
+     *
+     * @param taskId       任务ID
+     * @param workerId     执行者标识
+     * @param leaseSeconds 续租时长（秒）
+     * @return 影响的行数
+     */
+    int renewTaskLease(@Param("taskId") Long taskId, @Param("workerId") String workerId,
+            @Param("leaseSeconds") int leaseSeconds);
 
     /**
      * 更新已认领的视频供应商任务状态
@@ -298,9 +315,12 @@ public interface AiVideoGenerationTaskMapper
      *
      * @param taskId         任务ID
      * @param expectedStatus 期望的任务状态
+     * @param workerId       执行者标识
+     * @param leaseSeconds   租约时长（秒）
      * @return 影响的行数
      */
-    int claimImageTask(@Param("taskId") Long taskId, @Param("expectedStatus") String expectedStatus);
+    int claimImageTask(@Param("taskId") Long taskId, @Param("expectedStatus") String expectedStatus,
+            @Param("workerId") String workerId, @Param("leaseSeconds") int leaseSeconds);
 
     /**
      * 在期望状态匹配时将图片任务标记为失败
@@ -344,10 +364,13 @@ public interface AiVideoGenerationTaskMapper
      *
      * @param taskId       任务ID
      * @param providerCode 供应商编码
+     * @param workerId     执行者标识
+     * @param leaseSeconds 租约时长（秒）
      * @return 影响的行数
      */
     int claimQueuedVideoTaskForSubmission(@Param("taskId") Long taskId,
-            @Param("providerCode") String providerCode);
+            @Param("providerCode") String providerCode,
+            @Param("workerId") String workerId, @Param("leaseSeconds") int leaseSeconds);
 
     /**
      * 将已领取的视频任务标记为等待回调（供应商已受理）。
@@ -420,6 +443,13 @@ public interface AiVideoGenerationTaskMapper
      * @return 排队中的故事圣经任务列表
      */
     List<AiVideoGenerationTask> selectQueuedStoryBibleTasksForRecovery(@Param("limit") int limit);
+
+    /**
+     * 释放租约过期的故事圣经任务（执行者崩溃后恢复为排队状态）。
+     *
+     * @return 影响的行数
+     */
+    int releaseStaleStoryBibleTasks();
 
     /**
      * 将已领取的图片任务安排自动重试（回到排队状态并计算退避时间）。

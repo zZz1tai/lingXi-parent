@@ -106,4 +106,20 @@ public interface IChatSessionService
      * @return 结果
      */
     public int deleteChatSessionAndHistoryBySessionId(String sessionId);
+
+    /**
+     * 将会话标记为删除中，拒绝新消息（仅 ACTIVE 可流转）。
+     * 
+     * @param sessionId 会话唯一标识
+     * @return 是否成功标记
+     */
+    public boolean markChatSessionDeleting(String sessionId);
+
+    /**
+     * 删除失败时将会话恢复为正常状态（仅 DELETING 可恢复）。
+     * 
+     * @param sessionId 会话唯一标识
+     * @return 是否成功恢复
+     */
+    public boolean restoreChatSessionActive(String sessionId);
 }

@@ -111,6 +111,7 @@
     <update id="claimStoryBibleTask">
         update ai_video_generation_task
         set status = 'RUNNING', progress = 10, error_code = null, error_message = null,
+            worker_id = #{workerId}, lease_expire = date_add(now(), interval #{leaseSeconds} second),
             request_json = json_set(coalesce(request_json, json_object()),
                 '$.stageCode', 'PREPARING', '$.stageLabel', '正在准备章节原文和人物规范'),
             started_time = coalesce(started_time, now()), update_time = now()
@@ -125,6 +126,7 @@
         set status = 'PAUSED',
             request_json = json_set(coalesce(request_json, json_object()),
                 '$.stageCode', 'PAUSED', '$.stageLabel', '章节解析已暂停'),
+            worker_id = null, lease_expire = null,
             update_by = #{updateBy}, update_time = now()
         where task_id = #{taskId} and task_type = 'STORY_BIBLE'
           and status in ('QUEUED', 'RUNNING')
@@ -137,6 +139,7 @@
             request_json = json_set(coalesce(request_json, json_object()),
                 '$.stageCode', 'QUEUED', '$.stageLabel', '任务已恢复，等待分析线程执行'),
             error_code = null, error_message = null,
+            worker_id = null, lease_expire = null,
             update_by = #{updateBy}, update_time = now()
         where task_id = #{taskId} and task_type = 'STORY_BIBLE' and status = 'PAUSED'
           and (del_flag = '0' or del_flag is null)
@@ -155,7 +158,8 @@
     <update id="updateStoryBibleTaskStatusIfRunning">
         update ai_video_generation_task
         set status = #{status}, progress = #{progress}, error_code = #{errorCode},
-            error_message = #{errorMessage}, completed_time = now(), update_time = now()
+            error_message = #{errorMessage}, completed_time = now(),
+            worker_id = null, lease_expire = null, update_time = now()
         where task_id = #{taskId} and task_type = 'STORY_BIBLE' and status = 'RUNNING'
           and (del_flag = '0' or del_flag is null)
     </update>
@@ -185,9 +189,19 @@
 
     <update id="claimVideoProviderTask">
         update ai_video_generation_task
-        set status = 'RUNNING', progress = 30, error_code = null, error_message = null, update_time = now()
+        set status = 'RUNNING', progress = 30, error_code = null, error_message = null,
+            worker_id = #{workerId}, lease_expire = date_add(now(), interval #{leaseSeconds} second),
+            update_time = now()
         where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status = 'WAITING_CALLBACK' and provider_task_id is not null
+          and (lease_expire is null or lease_expire &lt; now())
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
+    <update id="renewTaskLease">
+        update ai_video_generation_task
+        set lease_expire = date_add(now(), interval #{leaseSeconds} second), update_time = now()
+        where task_id = #{taskId} and worker_id = #{workerId} and status = 'RUNNING'
           and (del_flag = '0' or del_flag is null)
     </update>
 
@@ -200,6 +214,8 @@
             error_message = #{errorMessage},
             <if test="status == 'SUCCEEDED' or status == 'FAILED' or status == 'CANCELED'">
                 completed_time = now(),
+                worker_id = null,
+                lease_expire = null,
             </if>
             update_time = now()
         </set>
@@ -234,10 +250,11 @@
         update ai_video_generation_task
         set status = 'WAITING_CALLBACK', progress = 30,
             error_code = 'VIDEO_PROVIDER_POLL_INTERRUPTED',
-            error_message = '上次轮询处理中断，已安全恢复等待状态', update_time = now()
+            error_message = '上次轮询处理中断，已安全恢复等待状态',
+            worker_id = null, lease_expire = null, update_time = now()
         where task_type = 'VIDEO' and provider_code = #{providerCode} and status = 'RUNNING'
           and provider_task_id is not null
-          and coalesce(update_time, create_time) &lt; date_sub(now(), interval 5 minute)
+          and (lease_expire is null or lease_expire &lt; now())
           and (del_flag = '0' or del_flag is null)
     </update>
 
@@ -300,19 +317,20 @@
     <update id="claimImageTask">
         update ai_video_generation_task
         set status = 'RUNNING', progress = 10, error_code = null, error_message = null,
+            worker_id = #{workerId}, lease_expire = date_add(now(), interval #{leaseSeconds} second),
             started_time = now(), update_time = now()
         where task_id = #{taskId} and task_type = 'IMAGE' and provider_code = 'dashscope'
           and json_unquote(json_extract(request_json, '$.trigger')) = 'USER_CONFIRMED'
           and status = #{expectedStatus} and (del_flag = '0' or del_flag is null)
           <if test="expectedStatus == 'RUNNING'">
-              and coalesce(update_time, create_time) &lt; date_sub(now(), interval 5 minute)
+              and (lease_expire is null or lease_expire &lt; now())
           </if>
     </update>
 
     <update id="failImageTaskIfExpectedStatus">
         update ai_video_generation_task
         set status = 'FAILED', progress = 100, error_code = #{errorCode}, error_message = #{errorMessage},
-            completed_time = now(), update_time = now()
+            completed_time = now(), worker_id = null, lease_expire = null, update_time = now()
         where task_id = #{taskId} and task_type = 'IMAGE' and provider_code = 'dashscope'
           and status = #{expectedStatus} and (del_flag = '0' or del_flag is null)
     </update>
@@ -328,7 +346,7 @@
             or (status = 'RETRYING'
               and coalesce(update_time, create_time) &lt; date_sub(now(), interval 60 second))
             or (status = 'RUNNING'
-              and coalesce(update_time, create_time) &lt; date_sub(now(), interval 5 minute))
+              and (lease_expire is null or lease_expire &lt; now()))
           )
         order by create_time asc
         limit 20
@@ -355,6 +373,7 @@
     <update id="claimQueuedVideoTaskForSubmission">
         update ai_video_generation_task
         set status = 'RUNNING', progress = 5, error_code = null, error_message = null,
+            worker_id = #{workerId}, lease_expire = date_add(now(), interval #{leaseSeconds} second),
             started_time = coalesce(started_time, now()), update_time = now()
         where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status = 'QUEUED' and (del_flag = '0' or del_flag is null)
@@ -365,7 +384,8 @@
         set provider_task_id = #{providerTaskId}, status = 'WAITING_CALLBACK', progress = 20,
             request_json = json_set(coalesce(request_json, json_object()),
                 '$.normalizedDurationMs', #{normalizedDurationMs}),
-            error_code = null, error_message = null, update_time = now()
+            error_code = null, error_message = null,
+            worker_id = null, lease_expire = null, update_time = now()
         where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
     </update>
@@ -373,7 +393,8 @@
     <update id="markClaimedVideoTaskNeedsReview">
         update ai_video_generation_task
         set status = 'NEEDS_REVIEW', progress = 20,
-            error_code = #{errorCode}, error_message = #{errorMessage}, update_time = now()
+            error_code = #{errorCode}, error_message = #{errorMessage},
+            worker_id = null, lease_expire = null, update_time = now()
         where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
     </update>
@@ -381,7 +402,7 @@
     <update id="failClaimedVideoTask">
         update ai_video_generation_task
         set status = 'FAILED', progress = 100, error_code = #{errorCode}, error_message = #{errorMessage},
-            completed_time = now(), update_time = now()
+            completed_time = now(), worker_id = null, lease_expire = null, update_time = now()
         where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
     </update>
@@ -390,7 +411,8 @@
         update ai_video_generation_task
         set status = 'QUEUED', progress = 5, provider_task_id = null,
             retry_count = #{retryCount}, next_retry_time = #{nextRetryTime},
-            error_code = #{errorCode}, error_message = #{errorMessage}, update_time = now()
+            error_code = #{errorCode}, error_message = #{errorMessage},
+            worker_id = null, lease_expire = null, update_time = now()
         where task_id = #{taskId} and task_type = 'VIDEO' and provider_code = #{providerCode}
           and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
     </update>
@@ -417,11 +439,25 @@
         limit #{limit}
     </select>
 
+    <update id="releaseStaleStoryBibleTasks">
+        update ai_video_generation_task
+        set status = 'QUEUED', progress = 5,
+            error_code = 'STORY_BIBLE_EXECUTION_INTERRUPTED',
+            error_message = '上次执行中断，租约已过期，等待重新执行',
+            request_json = json_set(coalesce(request_json, json_object()),
+                '$.stageCode', 'QUEUED', '$.stageLabel', '任务已恢复，等待分析线程执行'),
+            worker_id = null, lease_expire = null, update_time = now()
+        where task_type = 'STORY_BIBLE' and status = 'RUNNING'
+          and (lease_expire is null or lease_expire &lt; now())
+          and (del_flag = '0' or del_flag is null)
+    </update>
+
     <update id="retryClaimedImageTask">
         update ai_video_generation_task
         set status = 'QUEUED', progress = 5, provider_task_id = null,
             retry_count = #{retryCount}, next_retry_time = #{nextRetryTime},
-            error_code = #{errorCode}, error_message = #{errorMessage}, update_time = now()
+            error_code = #{errorCode}, error_message = #{errorMessage},
+            worker_id = null, lease_expire = null, update_time = now()
         where task_id = #{taskId} and task_type = 'IMAGE' and provider_code = 'dashscope'
           and status = 'RUNNING' and (del_flag = '0' or del_flag is null)
     </update>
@@ -472,7 +508,8 @@
 
     <update id="cancelQueuedTask">
         update ai_video_generation_task
-        set status = 'CANCELLED', progress = 100, completed_time = now(),
+        set status = 'CANCELED', progress = 100, completed_time = now(),
+            worker_id = null, lease_expire = null,
             update_by = #{updateBy}, update_time = now()
         where task_id = #{taskId} and status in ('QUEUED', 'RETRYING')
           and (del_flag = '0' or del_flag is null)
@@ -480,7 +517,8 @@
 
     <update id="cancelActiveVideoTask">
         update ai_video_generation_task
-        set status = 'CANCELLED', progress = 100, completed_time = now(),
+        set status = 'CANCELED', progress = 100, completed_time = now(),
+            worker_id = null, lease_expire = null,
             update_by = #{updateBy}, update_time = now()
         where task_id = #{taskId} and task_type = 'VIDEO'
           and status in ('WAITING_CALLBACK', 'RUNNING')

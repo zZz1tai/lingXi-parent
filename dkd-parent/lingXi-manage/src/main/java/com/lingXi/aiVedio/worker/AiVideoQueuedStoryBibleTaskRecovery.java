@@ -32,15 +32,16 @@ public class AiVideoQueuedStoryBibleTaskRecovery
     @Scheduled(fixedDelayString = "${aivideo.story-bible.queued-recovery-interval-ms}")
     public void recover()
     {
+        int released = taskMapper.releaseStaleStoryBibleTasks();
         List<AiVideoGenerationTask> tasks =
                 taskMapper.selectQueuedStoryBibleTasksForRecovery(RECOVERY_BATCH_SIZE);
         for (AiVideoGenerationTask task : tasks)
         {
             chapterAnalysisWorker.analyze(task.getTaskId(), task.getChapterId());
         }
-        if (!tasks.isEmpty())
+        if (released > 0 || !tasks.isEmpty())
         {
-            log.info("AI视频故事圣经恢复扫描完成，重新投递数量={}", tasks.size());
+            log.info("AI视频故事圣经恢复扫描完成，释放租约过期任务数量={}，重新投递数量={}", released, tasks.size());
         }
     }
 }

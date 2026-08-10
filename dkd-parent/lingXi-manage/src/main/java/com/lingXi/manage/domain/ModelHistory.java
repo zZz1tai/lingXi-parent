@@ -50,6 +50,9 @@ public class ModelHistory extends BaseEntity
     /** 消息完成时间（SUCCEEDED/FAILED/CANCELLED 写入） */
     private Date completedAt;
 
+    /** 开始处理时间（用户消息受理写入） */
+    private Date startedAt;
+
     /** 使用的模型名称（如 Qwen、GPT-4 等） */
     private String modelName;
 

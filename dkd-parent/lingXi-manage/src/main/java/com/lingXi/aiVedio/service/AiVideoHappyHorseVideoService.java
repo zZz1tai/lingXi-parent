@@ -24,6 +24,7 @@ import com.lingXi.aiVedio.outbox.AiVideoTaskOutboxPublisher;
 import com.lingXi.aiVedio.storage.AiVideoPublicAssetUrlResolver;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
 import com.lingXi.aiVedio.util.AiVideoReferenceImagePolicy;
+import com.lingXi.aiVedio.util.AiVideoWorkerIdentity;
 import com.lingXi.common.exception.ServiceException;
 import lombok.extern.slf4j.Slf4j;
 
@@ -134,7 +135,8 @@ public class AiVideoHappyHorseVideoService implements AiVideoGenerationService
             throw new IllegalStateException("视频任务不存在或类型无效，taskId=" + taskId);
         }
         if (!AiVideoTaskStatus.QUEUED.is(task.getStatus())
-                && taskMapper.claimQueuedVideoTaskForSubmission(taskId, providerCode()) != 1)
+                && taskMapper.claimQueuedVideoTaskForSubmission(taskId, providerCode(),
+                        AiVideoWorkerIdentity.WORKER_ID, AiVideoWorkerIdentity.DEFAULT_LEASE_SECONDS) != 1)
         {
             log.info("视频任务已被其他执行者领取或状态已变化，跳过提交，taskId={}", taskId);
             return;

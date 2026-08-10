@@ -163,4 +163,41 @@
 
     </dependencies>
 
+    <build>
+        <plugins>
+            <!-- 基础模块依赖防护：common 不得依赖任何业务或框架模块 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>enforce-baseline-dependencies</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[17,)</version>
+                                </requireJavaVersion>
+                                <bannedDependencies>
+                                    <excludes>
+                                        <exclude>com.dkd:lingXi-framework</exclude>
+                                        <exclude>com.dkd:lingXi-system</exclude>
+                                        <exclude>com.dkd:lingXi-manage</exclude>
+                                        <exclude>com.dkd:lingXi-quartz</exclude>
+                                        <exclude>com.dkd:lingXi-generator</exclude>
+                                        <exclude>com.dkd:lingXi-admin</exclude>
+                                    </excludes>
+                                    <message>lingXi-common 是基础模块，不得依赖业务或框架模块</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
 </project>

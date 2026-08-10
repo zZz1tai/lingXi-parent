@@ -73,4 +73,10 @@ public class AiVideoGenerationTask extends BaseEntity
 
     /** 最后回调事件ID，用于供应商回调去重 */
     private String callbackEventId;
+
+    /** 当前执行者标识（租约持有者） */
+    private String workerId;
+
+    /** 租约过期时间，过期后可被其他执行者回收 */
+    private Date leaseExpire;
 }

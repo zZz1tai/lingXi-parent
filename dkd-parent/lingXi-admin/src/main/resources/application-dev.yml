@@ -1,0 +1,30 @@
+# ---------------------------------------------------------------------------
+# 开发环境配置模板（激活方式：--spring.profiles.active=dev 或 dev,druid）
+# 以 application.yml 为基础，仅覆盖环境差异项；数据库连接见 application-druid.yml。
+# ---------------------------------------------------------------------------
+
+server:
+  # 本地调试端口
+  port: 8080
+
+spring:
+  data:
+    redis:
+      # 本地 Redis
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      password: ${REDIS_PASSWORD:}
+
+# 本地开发可直接使用默认密钥；如需联调回调验签请注入 AIVIDEO_CALLBACK_SECRET。
+token:
+  secret: ${TOKEN_SECRET:abcdefghijklmnopqrstuvwxyz}
+
+# AI 视频回调共享密钥（空值时回调将被拒绝）
+aivideo:
+  callback:
+    shared-secret: ${AIVIDEO_CALLBACK_SECRET:}
+
+# 本地上传路径
+ruoyi:
+  profile: ${RUOYI_PROFILE:./uploadPath}

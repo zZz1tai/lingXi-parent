@@ -10,6 +10,7 @@ import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.AiVideoTaskOutbox;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.mapper.AiVideoTaskOutboxMapper;
+import com.lingXi.aiVedio.outbox.AiVideoOutboxMetrics;
 import com.lingXi.aiVedio.service.AiVideoHappyHorseVideoService;
 import com.lingXi.aiVedio.service.AiVideoQwenAssetService;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +41,8 @@ public class AiVideoTaskOutboxDispatcher
     private AiVideoQwenAssetService qwenAssetService;
     @Autowired
     private AiVideoChapterAnalysisWorker chapterAnalysisWorker;
+    @Autowired
+    private AiVideoOutboxMetrics outboxMetrics;
 
     /**
      * 定时派发待处理投递事件。
@@ -54,10 +57,12 @@ public class AiVideoTaskOutboxDispatcher
             try
             {
                 dispatchOne(outbox);
+                outboxMetrics.recordDispatchSuccess();
                 processed++;
             }
             catch (Exception ex)
             {
+                outboxMetrics.recordDispatchFailure();
                 log.error("AI视频投递事件处理失败，outboxId={}, taskId={}, eventType={}, errorType={}",
                         outbox.getOutboxId(), outbox.getTaskId(), outbox.getEventType(),
                         ex.getClass().getSimpleName());

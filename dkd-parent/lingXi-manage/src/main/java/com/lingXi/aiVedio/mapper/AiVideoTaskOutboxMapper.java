@@ -48,4 +48,18 @@ public interface AiVideoTaskOutboxMapper
     int markAiVideoTaskOutboxFailed(@Param("outboxId") Long outboxId,
             @Param("retryCount") int retryCount, @Param("nextRetryTime") Date nextRetryTime,
             @Param("errorMessage") String errorMessage);
+
+    /**
+     * 统计未投递事件数量（含等待重试）。
+     *
+     * @return 未投递事件数量
+     */
+    long countPendingOutboxEvents();
+
+    /**
+     * 查询最老未投递事件的等待时长（秒）。
+     *
+     * @return 等待秒数；无待投递事件时返回 null
+     */
+    Long selectOldestPendingEventAgeSeconds();
 }

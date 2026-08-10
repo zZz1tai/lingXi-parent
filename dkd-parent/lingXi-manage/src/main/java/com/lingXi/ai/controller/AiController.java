@@ -13,6 +13,7 @@ import com.lingXi.common.utils.SecurityUtils;
 import com.lingXi.manage.domain.ChatSession;
 import com.lingXi.manage.domain.Emp;
 import com.lingXi.manage.domain.ModelHistory;
+import com.lingXi.manage.domain.enums.ChatSessionStatus;
 import com.lingXi.ai.service.IChatSessionService;
 import com.lingXi.ai.service.AiChatAttachmentService;
 import com.lingXi.manage.service.IModelHistoryService;
@@ -99,7 +100,7 @@ public class AiController {
     public String chat(@Validated @RequestBody ChatVO chatVO) {
         AgentUserContext userContext = currentAgentUserContext();
         String userId = userContext.getUserId();
-        requireOwnedSession(chatVO.getSessionId(), userId);
+        requireActiveSession(chatVO.getSessionId(), userId);
         if (chatVO.getAttachmentIds() == null || chatVO.getAttachmentIds().isEmpty()) {
             return qwenService.chat(
                     chatVO.getSessionId(), userContext, chatVO.getMessage());
@@ -120,7 +121,7 @@ public class AiController {
             @Validated @RequestBody GenerateQuestionsVO generateQuestionsVO) {
         try {
             String userId = currentUserId();
-            requireOwnedSession(generateQuestionsVO.getSessionId(), userId);
+            requireActiveSession(generateQuestionsVO.getSessionId(), userId);
             List<String> questions = qwenService.generateSmartQuestions(
                     generateQuestionsVO.getSessionId(),
                     userId,
@@ -143,7 +144,7 @@ public class AiController {
     public SseEmitter streamChat(@Validated @RequestBody ChatVO chatVO) {
         AgentUserContext userContext = currentAgentUserContext();
         String userId = userContext.getUserId();
-        requireOwnedSession(chatVO.getSessionId(), userId);
+        requireActiveSession(chatVO.getSessionId(), userId);
         if (chatVO.getAttachmentIds() == null || chatVO.getAttachmentIds().isEmpty()) {
             return qwenService.streamChat(
                     chatVO.getSessionId(), userContext, chatVO.getMessage());
@@ -158,7 +159,7 @@ public class AiController {
     public SseEmitter streamChatV2(@Validated @RequestBody ChatVO chatVO) {
         AgentUserContext userContext = currentAgentUserContext();
         String userId = userContext.getUserId();
-        requireOwnedSession(chatVO.getSessionId(), userId);
+        requireActiveSession(chatVO.getSessionId(), userId);
         if (chatVO.getAttachmentIds() == null || chatVO.getAttachmentIds().isEmpty()) {
             return qwenService.streamChatV2(
                     chatVO.getSessionId(), userContext, chatVO.getMessage());
@@ -179,7 +180,7 @@ public class AiController {
         try {
             AgentUserContext userContext = currentAgentUserContext();
             String userId = userContext.getUserId();
-            requireOwnedSession(analyzeVO.getSessionId(), userId);
+            requireActiveSession(analyzeVO.getSessionId(), userId);
             // 自由分析进入普通 Agent，由业务工具按需查询；不再默认搬运全量看板。
             String answer = qwenService.chat(
                     analyzeVO.getSessionId(), userContext, analysisQuestion(analyzeVO));
@@ -201,7 +202,7 @@ public class AiController {
         try {
             AgentUserContext userContext = currentAgentUserContext();
             String userId = userContext.getUserId();
-            requireOwnedSession(analyzeVO.getSessionId(), userId);
+            requireActiveSession(analyzeVO.getSessionId(), userId);
             return qwenService.streamChat(
                     analyzeVO.getSessionId(), userContext, analysisQuestion(analyzeVO));
         } catch (Exception e) {
@@ -259,7 +260,7 @@ public class AiController {
                 return AjaxResult.error("内容不能为空");
             }
             String userId = currentUserId();
-            requireOwnedSession(history.getSessionId(), userId);
+            requireActiveSession(history.getSessionId(), userId);
             history.setUserId(userId);
             history.setUserName(currentUsername());
             int result = modelHistoryService.insertModelHistory(history);
@@ -285,7 +286,7 @@ public class AiController {
                 if (history.getContent() == null || history.getContent().isEmpty()) {
                     return AjaxResult.error("内容不能为空");
                 }
-                requireOwnedSession(history.getSessionId(), userId);
+                requireActiveSession(history.getSessionId(), userId);
                 history.setUserId(userId);
                 history.setUserName(username);
             }
@@ -307,7 +308,7 @@ public class AiController {
     public AjaxResult clearHistory(@RequestParam String sessionId) {
         try {
             String userId = currentUserId();
-            requireOwnedSession(sessionId, userId);
+            requireActiveSession(sessionId, userId);
             String normalizedSessionId = sessionId.trim();
             qwenService.clearConversationMemory(normalizedSessionId, userId);
             if (attachmentService != null) {
@@ -367,7 +368,7 @@ public class AiController {
     public AjaxResult updateSession(@RequestBody ChatSession chatSession) {
         try {
             String userId = currentUserId();
-            ChatSession existing = requireOwnedSession(chatSession.getSessionId(), userId);
+            ChatSession existing = requireActiveSession(chatSession.getSessionId(), userId);
             chatSession.setId(existing.getId());
             chatSession.setUserId(userId);
             int result = chatSessionService.updateChatSession(chatSession);
@@ -388,15 +389,25 @@ public class AiController {
     public AjaxResult deleteSession(@RequestParam String sessionId) {
         try {
             String userId = currentUserId();
-            requireOwnedSession(sessionId, userId);
             String normalizedSessionId = sessionId.trim();
-            qwenService.clearConversationMemory(normalizedSessionId, userId);
-            if (attachmentService != null) {
-                attachmentService.deleteSessionAttachments(normalizedSessionId, userId);
+            requireOwnedSession(normalizedSessionId, userId);
+            // 先置为删除中拒绝新消息，清理完 Checkpoint 与附件后再事务删除本地数据。
+            chatSessionService.markChatSessionDeleting(normalizedSessionId);
+            try {
+                qwenService.clearConversationMemory(normalizedSessionId, userId);
+                if (attachmentService != null) {
+                    attachmentService.deleteSessionAttachments(normalizedSessionId, userId);
+                }
+                int result = chatSessionService.deleteChatSessionAndHistoryBySessionId(
+                        normalizedSessionId);
+                return AjaxResult.success(result > 0);
+            } catch (Exception cleanupFailure) {
+                // 清理失败时本地数据保留，会话恢复为可继续使用的正常状态。
+                boolean restored = chatSessionService.restoreChatSessionActive(normalizedSessionId);
+                log.warn("会话删除清理失败，已恢复会话可用，sessionId={}, restored={}, errorType={}",
+                        normalizedSessionId, restored, cleanupFailure.getClass().getSimpleName());
+                throw cleanupFailure;
             }
-            int result = chatSessionService.deleteChatSessionAndHistoryBySessionId(
-                    normalizedSessionId);
-            return AjaxResult.success(result > 0);
         } catch (Exception e) {
             return safeError("删除会话失败", e);
         }
@@ -409,7 +420,7 @@ public class AiController {
         try {
             AgentUserContext userContext = currentAgentUserContext();
             String userId = userContext.getUserId();
-            requireOwnedSession(analyzeVO.getSessionId(), userId);
+            requireActiveSession(analyzeVO.getSessionId(), userId);
             return qwenService.streamChatV2(
                     analyzeVO.getSessionId(), userContext, analysisQuestion(analyzeVO));
         } catch (Exception e) {
@@ -543,6 +554,22 @@ public class AiController {
                 || !session.getUserId().equals(userId)) {
             // 统一返回无权访问，避免泄露其他用户的会话是否真实存在。
             throw new ServiceException("会话不存在或无权访问");
+        }
+        return session;
+    }
+
+    /**
+     * 校验会话归属权且会话处于正常状态，拒绝删除中的会话继续产生新内容。
+     *
+     * @param sessionId 会话唯一标识
+     * @param userId    用户唯一标识
+     * @return 会话对象
+     * @throws ServiceException 会话不存在、无权访问或正在删除时抛出
+     */
+    ChatSession requireActiveSession(String sessionId, String userId) {
+        ChatSession session = requireOwnedSession(sessionId, userId);
+        if (ChatSessionStatus.DELETING.is(session.getStatus())) {
+            throw new ServiceException("会话正在删除中，无法继续操作");
         }
         return session;
     }

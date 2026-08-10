@@ -15,6 +15,7 @@ import com.lingXi.aiVedio.mapper.AiVideoAssetMapper;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.util.AiVideoImageAspectRatioPolicy;
 import com.lingXi.aiVedio.util.AiVideoJsonMetadata;
+import com.lingXi.aiVedio.util.AiVideoWorkerIdentity;
 import com.lingXi.aiVedio.service.AiVideoImageReferenceService.ResolvedImageReferences;
 import lombok.extern.slf4j.Slf4j;
 
@@ -188,7 +189,8 @@ public class AiVideoQwenAssetService
             throw new IllegalStateException("图片任务不存在或类型无效，taskId=" + taskId);
         }
         if (!AiVideoTaskStatus.QUEUED.is(task.getStatus())
-                && taskMapper.claimImageTask(taskId, AiVideoTaskStatus.QUEUED.name()) != 1)
+                && taskMapper.claimImageTask(taskId, AiVideoTaskStatus.QUEUED.name(),
+                        AiVideoWorkerIdentity.WORKER_ID, AiVideoWorkerIdentity.DEFAULT_LEASE_SECONDS) != 1)
         {
             log.info("图片任务已被其他执行者领取或状态已变化，跳过生成，taskId={}", taskId);
             return;

@@ -12,6 +12,7 @@ import com.lingXi.aiVedio.domain.dto.AiVideoModelConfig;
 import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.service.AiVideoProviderTaskOutcomeService;
+import com.lingXi.aiVedio.util.AiVideoWorkerIdentity;
 import com.lingXi.common.exception.ServiceException;
 import lombok.extern.slf4j.Slf4j;
 
@@ -52,12 +53,15 @@ public class AiVideoProviderTaskPoller
         List<AiVideoGenerationTask> tasks = taskMapper.selectWaitingVideoProviderTasks(providerCode);
         for (AiVideoGenerationTask task : tasks)
         {
-            if (taskMapper.claimVideoProviderTask(task.getTaskId(), providerCode) != 1)
+            if (taskMapper.claimVideoProviderTask(task.getTaskId(), providerCode,
+                    AiVideoWorkerIdentity.WORKER_ID, AiVideoWorkerIdentity.DEFAULT_LEASE_SECONDS) != 1)
             {
                 continue;
             }
             try
             {
+                taskMapper.renewTaskLease(task.getTaskId(), AiVideoWorkerIdentity.WORKER_ID,
+                        AiVideoWorkerIdentity.DEFAULT_LEASE_SECONDS);
                 VideoQueryResult result = videoClient.queryVideo(
                         runtimeConfig.getApiKey(), runtimeConfig.getWorkspaceBaseUrl(),
                         task.getProviderTaskId());

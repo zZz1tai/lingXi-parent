@@ -40,6 +40,7 @@ import com.lingXi.aiVedio.mapper.AiVideoSceneMapper;
 import com.lingXi.aiVedio.mapper.AiVideoShotMapper;
 import com.lingXi.aiVedio.mapper.AiVideoStoryBibleMapper;
 import com.lingXi.aiVedio.service.AiVideoQwenAssetService;
+import com.lingXi.aiVedio.util.AiVideoWorkerIdentity;
 import lombok.extern.slf4j.Slf4j;
 
 /** 将章节原文转换为下游图片、视频和配音智能体可消费的 ScenePackage。 */
@@ -203,7 +204,8 @@ public class AiVideoChapterAnalysisWorker
         {
             try
             {
-                return taskMapper.claimStoryBibleTask(taskId) == 1;
+                return taskMapper.claimStoryBibleTask(taskId,
+                        AiVideoWorkerIdentity.WORKER_ID, AiVideoWorkerIdentity.DEFAULT_LEASE_SECONDS) == 1;
             }
             catch (PessimisticLockingFailureException ex)
             {
@@ -269,6 +271,8 @@ public class AiVideoChapterAnalysisWorker
             stageLabel = stageLabel.substring(0, 256);
         }
         int boundedProgress = Math.max(10, Math.min(progress == null ? 10 : progress, 95));
+        taskMapper.renewTaskLease(taskId, AiVideoWorkerIdentity.WORKER_ID,
+                AiVideoWorkerIdentity.DEFAULT_LEASE_SECONDS);
         int updated = taskMapper.updateStoryBibleTaskProgress(
                 taskId, boundedProgress, stageCode, stageLabel);
         if (updated != 1)

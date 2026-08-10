@@ -13,6 +13,7 @@ import com.lingXi.aiVedio.domain.AiVideoGenerationTask;
 import com.lingXi.aiVedio.domain.enums.AiVideoTaskStatus;
 import com.lingXi.aiVedio.mapper.AiVideoGenerationTaskMapper;
 import com.lingXi.aiVedio.service.AiVideoProviderTaskOutcomeService;
+import com.lingXi.aiVedio.util.AiVideoWorkerIdentity;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -112,7 +113,8 @@ public class AiVideoProviderCallbackService
 
         if (AiVideoTaskStatus.WAITING_CALLBACK.is(task.getStatus()))
         {
-            if (taskMapper.claimVideoProviderTask(task.getTaskId(), providerCode) != 1)
+            if (taskMapper.claimVideoProviderTask(task.getTaskId(), providerCode,
+                    AiVideoWorkerIdentity.WORKER_ID, AiVideoWorkerIdentity.DEFAULT_LEASE_SECONDS) != 1)
             {
                 log.info("视频任务已被轮询器领取，忽略回调，taskId={}", task.getTaskId());
                 return;

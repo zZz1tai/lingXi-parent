@@ -185,4 +185,26 @@ public class ChatSessionServiceImpl implements IChatSessionService {
         int sessionResult = chatSessionMapper.deleteChatSessionBySessionId(sessionId);
         return historyResult + sessionResult;
     }
+
+    /**
+     * 将会话标记为删除中，拒绝新消息（仅 ACTIVE 可流转）。
+     * 
+     * @param sessionId 会话唯一标识
+     * @return 是否成功标记
+     */
+    @Override
+    public boolean markChatSessionDeleting(String sessionId) {
+        return chatSessionMapper.markChatSessionDeleting(sessionId) == 1;
+    }
+
+    /**
+     * 删除失败时将会话恢复为正常状态（仅 DELETING 可恢复）。
+     * 
+     * @param sessionId 会话唯一标识
+     * @return 是否成功恢复
+     */
+    @Override
+    public boolean restoreChatSessionActive(String sessionId) {
+        return chatSessionMapper.restoreChatSessionActive(sessionId) == 1;
+    }
 }
