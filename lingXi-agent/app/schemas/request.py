@@ -412,6 +412,43 @@ class NovelSynopsisRequest(StrictRequestModel):
         return normalized if normalized else None
 
 
+class NovelOutlineChapterItem(BaseModel):
+    """参与大纲生成的现有章节条目（Java 侧章节列表的轻量子集）。"""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    chapter_no: int = Field(validation_alias=AliasChoices("chapter_no", "chapterNo"))
+    chapter_title: str | None = Field(
+        default=None, max_length=128,
+        validation_alias=AliasChoices("chapter_title", "chapterTitle"),
+    )
+    chapter_brief: str | None = Field(
+        default=None, max_length=4000,
+        validation_alias=AliasChoices("chapter_brief", "chapterBrief"),
+    )
+
+
+class NovelOutlineRequest(StrictRequestModel):
+    """「生成小说三层大纲（全书→卷→章）」的请求，直接调用 LLM，不进入 Agent。
+
+    携带作品上下文、现有章节列表与现有大纲树，输出结构化三层大纲
+    及大纲-章节断链检查报告。
+    """
+
+    work_context: NovelWorkContext | None = None
+    chapters: list[NovelOutlineChapterItem] = Field(default_factory=list)
+    outline_tree: list[dict[str, Any]] = Field(default_factory=list)
+    llm_config: LLMConfig | None = None
+
+    @field_validator("outline_tree")
+    @classmethod
+    def bound_outline_tree(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """限制现有大纲树规模，避免请求体过大。"""
+        if len(value) > 500:
+            raise ValueError("outline_tree must not exceed 500 nodes")
+        return value
+
+
 class NovelWriteRequest(StrictRequestModel):
     """小说创作智能体的流式创作请求。"""
 

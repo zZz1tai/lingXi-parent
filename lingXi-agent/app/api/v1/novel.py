@@ -8,11 +8,14 @@ from typing import Any, Mapping
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.output_parsers import JsonOutputParser
 from langgraph.errors import GraphRecursionError
 
 from app.agents.builder import get_recursion_limit
 from app.agents.novel_prompts import (
+    NOVEL_OUTLINE_SYSTEM_PROMPT,
     NOVEL_SYNOPSIS_SYSTEM_PROMPT,
+    compose_novel_outline_prompt,
     compose_novel_synopsis_prompt,
 )
 from app.agents.state import checkpoint_thread_id
@@ -39,11 +42,14 @@ from app.api.v1.chat import (
 from app.observability.tracing import with_trace
 from app.schemas.request import (
     DeleteChatThreadRequest,
+    NovelOutlineRequest,
     NovelSynopsisRequest,
     NovelWriteRequest,
 )
 from app.schemas.response import (
     BaseResponse,
+    NovelOutlineData,
+    NovelOutlineResponse,
     NovelSynopsisData,
     NovelSynopsisResponse,
     StreamEvent,
@@ -376,6 +382,150 @@ async def novel_synopsis_generate(
         success=True,
         message="generated",
         data=NovelSynopsisData(synopsis=synopsis),
+    )
+
+
+#: 各层级允许的子级映射，用于校验模型输出的三层大纲树。
+_OUTLINE_CHILD_LEVELS: dict[str, str | None] = {
+    "BOOK": "VOLUME",
+    "VOLUME": "CHAPTER",
+    "CHAPTER": None,
+}
+
+
+def _validate_outline_node(
+    nodes: list[dict[str, Any]],
+    *,
+    expected_level: str,
+    depth: int,
+) -> None:
+    """校验大纲树节点层级嵌套与章节号合法性。"""
+
+    if depth > 4:
+        raise ValueError("outline tree nesting is too deep")
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise ValueError(f"outline node must be an object, got {type(node).__name__}")
+        if node.get("level") != expected_level:
+            raise ValueError(
+                f"outline node level mismatch, expected={expected_level}, "
+                f"actual={node.get('level')!r}"
+            )
+        if not isinstance(node.get("title"), str) or not node["title"].strip():
+            raise ValueError(f"outline {expected_level} node missing a title")
+        if expected_level == "CHAPTER":
+            chapter_no = node.get("chapterNo")
+            if not isinstance(chapter_no, int) or chapter_no < 1:
+                raise ValueError("CHAPTER outline node must carry a positive chapterNo")
+        child_level = _OUTLINE_CHILD_LEVELS[expected_level]
+        children = node.get("children") or []
+        if child_level is None:
+            if children:
+                raise ValueError("CHAPTER outline node must not have children")
+        else:
+            _validate_outline_node(children, expected_level=child_level, depth=depth + 1)
+
+
+def _validate_outline_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """校验并规范化模型输出的大纲载荷（tree + gaps）。"""
+
+    tree = data.get("tree")
+    if not isinstance(tree, list) or not tree:
+        raise ValueError("model returned an empty outline tree")
+    _validate_outline_node(tree, expected_level="BOOK", depth=0)
+    gaps = data.get("gaps")
+    if gaps is None:
+        gaps = []
+    if not isinstance(gaps, list):
+        raise ValueError("gaps must be a list")
+    valid_issues = {"ORPHAN_CHAPTER", "MISSING_CHAPTER", "MISMATCH"}
+    for gap in gaps:
+        if not isinstance(gap, dict):
+            raise ValueError(f"gap item must be an object, got {type(gap).__name__}")
+        if gap.get("issue") not in valid_issues:
+            raise ValueError(f"invalid gap issue: {gap.get('issue')!r}")
+    return {"tree": tree, "gaps": gaps}
+
+
+@router.post(
+    "/outline/generate",
+    response_model=NovelOutlineResponse,
+    summary="Generate a three-level novel outline with gap checking",
+)
+async def novel_outline_generate(
+    request: NovelOutlineRequest,
+    request_id: str = Depends(get_request_id),
+) -> NovelOutlineResponse:
+    """生成小说三层大纲（全书→卷→章）并检查大纲-章节断链。
+
+    不走 Agent 图：直连白名单 LLM，一次性输出结构化大纲树与断链报告，
+    供 Java 侧持久化后由人工确认；不产生会话记忆。
+    """
+    try:
+        llm = create_llm(
+            request.llm_config,
+            profile="novel-outline",
+            temperature=0.4,
+            max_retries=2,
+        )
+        messages = [
+            ("system", NOVEL_OUTLINE_SYSTEM_PROMPT),
+            (
+                "user",
+                compose_novel_outline_prompt(
+                    work_context=(
+                        request.work_context.model_dump(mode="json")
+                        if request.work_context is not None
+                        else None
+                    ),
+                    chapters=[
+                        chapter.model_dump(mode="json", exclude_none=True)
+                        for chapter in request.chapters
+                    ],
+                    outline_tree=request.outline_tree,
+                ),
+            ),
+        ]
+        response = await llm.ainvoke(messages)
+        content = getattr(response, "content", None)
+        if isinstance(content, list):
+            text_parts = [
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            content = "".join(text_parts)
+        raw_text = str(content or "").strip()
+        if not raw_text:
+            raise RuntimeError("model returned an empty outline response")
+        parsed = JsonOutputParser().parse(raw_text)
+        payload = _validate_outline_payload(parsed)
+    except AgentError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Novel outline generation failed | request_id=%s | error_type=%s | "
+            "chapters=%d",
+            request_id,
+            type(exc).__name__,
+            len(request.chapters),
+        )
+        raise
+    logger.info(
+        "Novel outline generated | request_id=%s | chapters=%d | tree_nodes=%d | "
+        "gaps=%d",
+        request_id,
+        len(request.chapters),
+        len(payload["tree"]),
+        len(payload["gaps"]),
+    )
+    return NovelOutlineResponse(
+        success=True,
+        message="generated",
+        data=NovelOutlineData(
+            tree=payload["tree"],
+            gaps=payload["gaps"],
+        ),
     )
 
 

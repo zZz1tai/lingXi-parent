@@ -196,6 +196,59 @@ export function saveNovelManuscript(workId, data) {
   })
 }
 
+// ── 三层大纲（长篇：全书→卷→章） ─────────────────────
+
+export function listNovelOutline(workId) {
+  return request({
+    url: '/novel/work/' + workId + '/outline/list',
+    method: 'get'
+  })
+}
+
+/**
+ * AI 生成三层大纲并全量保存，返回 { tree, gaps }（tree 为 BOOK→VOLUME→CHAPTER
+ * 嵌套结构，gaps 为断链检查报告）。
+ * @param {number} workId
+ */
+export function generateNovelOutline(workId) {
+  return request({
+    url: '/novel/work/' + workId + '/outline/generate',
+    method: 'post',
+    timeout: 120000
+  })
+}
+
+export function addNovelOutline(workId, data) {
+  return request({
+    url: '/novel/work/' + workId + '/outline',
+    method: 'post',
+    data: data
+  })
+}
+
+export function updateNovelOutline(workId, data) {
+  return request({
+    url: '/novel/work/' + workId + '/outline',
+    method: 'put',
+    data: data
+  })
+}
+
+export function delNovelOutline(workId, outlineId) {
+  return request({
+    url: '/novel/work/' + workId + '/outline/' + outlineId,
+    method: 'delete'
+  })
+}
+
+export function sortNovelOutline(workId, parentId, outlineIds) {
+  return request({
+    url: '/novel/work/' + workId + '/outline/sort',
+    method: 'put',
+    data: { parentId, outlineIds }
+  })
+}
+
 /**
  * 流式调用小说创作智能体（独立智能体，自动联网核查）。
  * 服务端从作品库组装作品上下文（梗概/章节/正文末尾/设定卡），

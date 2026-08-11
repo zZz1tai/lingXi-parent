@@ -167,6 +167,7 @@ agent:
   novel-thread-delete-url: /api/v1/novel/thread
   novel-synopsis-url: /api/v1/novel/synopsis/generate
   novel-synopsis-stream-url: /api/v1/novel/synopsis/stream
+  novel-outline-url: /api/v1/novel/outline/generate
   style: professional
   max-iterations: 5
   connect-timeout: 5000

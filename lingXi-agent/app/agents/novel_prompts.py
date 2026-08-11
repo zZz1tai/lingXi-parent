@@ -120,6 +120,80 @@ def compose_novel_synopsis_prompt(
     )
 
 
+NOVEL_OUTLINE_SYSTEM_PROMPT = """\
+你是资深中文网文主编，擅长为长篇连载设计「全书 → 卷 → 章」三层大纲，
+并检查大纲与已有章节之间的一致性。
+
+严格按以下 JSON 结构输出（不要输出任何前言、解释或 Markdown 代码块）：
+
+{
+  "tree": [
+    {
+      "level": "BOOK",
+      "title": "全书书名",
+      "content": "全书总纲：主线、核心冲突、主题、结尾方向，300~500 字",
+      "children": [
+        {
+          "level": "VOLUME",
+          "title": "卷名",
+          "content": "本卷概述：起止情节、本卷目标与关键转折，200~300 字",
+          "children": [
+            {
+              "level": "CHAPTER",
+              "chapterNo": 1,
+              "title": "章节标题",
+              "content": "本章要点：核心事件与推进，50~120 字",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "gaps": [
+    {
+      "chapterNo": 8,
+      "chapterTitle": "章节标题",
+      "issue": "ORPHAN_CHAPTER | MISSING_CHAPTER | MISMATCH",
+      "suggestion": "具体修复建议"
+    }
+  ]
+}
+
+要求：
+- 已有章节时必须覆盖全部章节：每个现存章节都要在大纲 CHAPTER 层有对应项，
+  章节点按章节号分入恰当的卷，不允许遗漏（遗漏记为 MISSING_CHAPTER）。
+- 尚未写到的部分按合理节奏补全计划章节，卷内章节自然衔接已有章节。
+- 卷数按预计篇幅设定：200 章以内 3~6 卷，200 章以上每 60~100 章一卷。
+- 标题精炼有网文感；content 用简洁叙事语，不用形容词堆砌。
+- 断链检查只针对真实不一致：现存章节在大纲中无对应项 → ORPHAN_CHAPTER；
+  大纲缺失该章节 → MISSING_CHAPTER；标题出入过大 → MISMATCH。
+  没有断链时 gaps 为空数组，不得虚构问题。
+- 全书只有一条 BOOK 节点；无卷概念时 VOLUME 至少一条。
+"""
+
+
+def compose_novel_outline_prompt(
+    *,
+    work_context: Mapping[str, Any] | None = None,
+    chapters: list[dict[str, Any]] | None = None,
+    outline_tree: list[dict[str, Any]] | None = None,
+) -> str:
+    """构造「生成小说三层大纲」的用户提示词。"""
+
+    parts: list[str] = []
+    parts.append("请为当前小说作品设计/重建三层大纲，并执行断链检查。")
+    if work_context:
+        parts.append(f"作品上下文：{json.dumps(dict(work_context), ensure_ascii=False)}")
+    if chapters:
+        parts.append(f"已有章节列表：{json.dumps(chapters, ensure_ascii=False)}")
+    else:
+        parts.append("已有章节列表：无（全新作品，自由设计全书架构）")
+    if outline_tree:
+        parts.append(f"现有大纲树：{json.dumps(outline_tree, ensure_ascii=False)}")
+    return "\n\n".join(parts)
+
+
 def _render_novel_context(novel_context: Mapping[str, Any] | None) -> str:
     """把作品上下文渲染成「仅数据」JSON 数据块。"""
 

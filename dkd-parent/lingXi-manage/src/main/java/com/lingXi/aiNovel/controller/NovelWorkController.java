@@ -20,10 +20,12 @@ import com.lingXi.common.core.page.TableDataInfo;
 import com.lingXi.common.enums.BusinessType;
 import com.lingXi.aiNovel.domain.AiNovelChapter;
 import com.lingXi.aiNovel.domain.AiNovelForeshadow;
+import com.lingXi.aiNovel.domain.AiNovelOutline;
 import com.lingXi.aiNovel.domain.AiNovelSetting;
 import com.lingXi.aiNovel.domain.AiNovelWork;
 import com.lingXi.aiNovel.service.IAiNovelChapterService;
 import com.lingXi.aiNovel.service.IAiNovelForeshadowService;
+import com.lingXi.aiNovel.service.IAiNovelOutlineService;
 import com.lingXi.aiNovel.service.IAiNovelSettingService;
 import com.lingXi.aiNovel.service.IAiNovelWorkService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -50,6 +52,9 @@ public class NovelWorkController extends BaseController
 
     @Autowired
     private IAiNovelForeshadowService foreshadowService;
+
+    @Autowired
+    private IAiNovelOutlineService outlineService;
 
     // ── 作品 ──────────────────────────────────────────
 
@@ -271,5 +276,76 @@ public class NovelWorkController extends BaseController
             @PathVariable Long workId, @RequestBody Map<String, String> body)
     {
         return toAjax(workService.updateAiNovelWorkManuscript(workId, body.get("content")));
+    }
+
+    // ── 三层大纲 ──────────────────────────────────────
+
+    /** 获取作品三层大纲平铺列表（按层级与排序，前端据此组树）。 */
+    @Operation(summary = "获取小说三层大纲")
+    @PreAuthorize("@ss.hasPermi('novel:work:list')")
+    @GetMapping("/{workId}/outline/list")
+    public TableDataInfo outlineList(@PathVariable Long workId)
+    {
+        startPage();
+        List<AiNovelOutline> list = outlineService.selectAiNovelOutlineList(workId);
+        return getDataTable(list);
+    }
+
+    /** AI 生成三层大纲（全书→卷→章）并全量保存，返回新大纲与断链报告。 */
+    @Operation(summary = "AI 生成小说三层大纲")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @Log(title = "AI小说大纲", businessType = BusinessType.UPDATE)
+    @PostMapping("/{workId}/outline/generate")
+    public AjaxResult generateOutline(@PathVariable Long workId)
+    {
+        return success(outlineService.generateOutline(workId));
+    }
+
+    /** 新增单个大纲节点。 */
+    @Operation(summary = "新增小说大纲节点")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @Log(title = "AI小说大纲", businessType = BusinessType.INSERT)
+    @PostMapping("/{workId}/outline")
+    public AjaxResult addOutline(
+            @PathVariable Long workId, @RequestBody AiNovelOutline outline)
+    {
+        return toAjax(outlineService.insertAiNovelOutline(workId, outline));
+    }
+
+    /** 更新大纲节点。 */
+    @Operation(summary = "更新小说大纲节点")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @Log(title = "AI小说大纲", businessType = BusinessType.UPDATE)
+    @PutMapping("/{workId}/outline")
+    public AjaxResult editOutline(
+            @PathVariable Long workId, @RequestBody AiNovelOutline outline)
+    {
+        return toAjax(outlineService.updateAiNovelOutline(workId, outline));
+    }
+
+    /** 删除大纲节点（卷节点级联删除章节点）。 */
+    @Operation(summary = "删除小说大纲节点")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @Log(title = "AI小说大纲", businessType = BusinessType.DELETE)
+    @DeleteMapping("/{workId}/outline/{outlineId}")
+    public AjaxResult removeOutline(
+            @PathVariable Long workId, @PathVariable Long outlineId)
+    {
+        return toAjax(outlineService.deleteAiNovelOutline(workId, outlineId));
+    }
+
+    /** 按给定顺序重排同一父级下的大纲节点。 */
+    @Operation(summary = "重排小说大纲节点")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @Log(title = "AI小说大纲", businessType = BusinessType.UPDATE)
+    @PutMapping("/{workId}/outline/sort")
+    public AjaxResult sortOutline(
+            @PathVariable Long workId, @RequestBody Map<String, Object> body)
+    {
+        Long parentId = body.get("parentId") == null
+                ? 0L : Long.valueOf(String.valueOf(body.get("parentId")));
+        @SuppressWarnings("unchecked")
+        List<Long> outlineIds = (List<Long>) body.get("outlineIds");
+        return toAjax(outlineService.sortAiNovelOutline(workId, parentId, outlineIds));
     }
 }

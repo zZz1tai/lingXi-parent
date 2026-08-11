@@ -2826,6 +2826,26 @@ CREATE TABLE IF NOT EXISTS ai_novel_setting (
   PRIMARY KEY (setting_id),
   KEY idx_novel_setting_work (work_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI小说设定卡';
+CREATE TABLE IF NOT EXISTS ai_novel_outline (
+  outline_id BIGINT NOT NULL AUTO_INCREMENT COMMENT '大纲ID',
+  work_id BIGINT NOT NULL COMMENT '作品ID',
+  outline_level VARCHAR(16) NOT NULL COMMENT '层级:BOOK-全书, VOLUME-卷, CHAPTER-章',
+  parent_id BIGINT NOT NULL DEFAULT 0 COMMENT '父级大纲ID，BOOK 层为 0',
+  seq_no INT NOT NULL DEFAULT 0 COMMENT '同级排序序号',
+  outline_title VARCHAR(128) NOT NULL COMMENT '大纲标题',
+  outline_content TEXT DEFAULT NULL COMMENT '概述/梗概内容',
+  chapter_id BIGINT DEFAULT NULL COMMENT '关联章节ID（章级大纲）',
+  create_by VARCHAR(64) DEFAULT '',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_by VARCHAR(64) DEFAULT '',
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  del_flag CHAR(1) NOT NULL DEFAULT '0' COMMENT '删除标志:0存在 2删除',
+  remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (outline_id),
+  KEY idx_novel_outline_work (work_id, outline_level),
+  KEY idx_novel_outline_parent (parent_id),
+  KEY idx_novel_outline_chapter (chapter_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI小说三层大纲（全书-卷-章）';
 
 CREATE TABLE IF NOT EXISTS ai_novel_foreshadow (
   foreshadow_id BIGINT NOT NULL AUTO_INCREMENT COMMENT '伏笔ID',

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiNovel.mapper.AiNovelOutlineMapper">
+
+    <resultMap id="AiNovelOutlineResult" type="AiNovelOutline">
+        <id property="outlineId" column="outline_id"/>
+        <result property="workId" column="work_id"/>
+        <result property="outlineLevel" column="outline_level"/>
+        <result property="parentId" column="parent_id"/>
+        <result property="seqNo" column="seq_no"/>
+        <result property="outlineTitle" column="outline_title"/>
+        <result property="outlineContent" column="outline_content"/>
+        <result property="chapterId" column="chapter_id"/>
+        <result property="chapterNo" column="chapter_no"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateBy" column="update_by"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="remark" column="remark"/>
+    </resultMap>
+
+    <sql id="selectAiNovelOutlineVo">
+        select o.outline_id, o.work_id, o.outline_level, o.parent_id, o.seq_no,
+               o.outline_title, o.outline_content, o.chapter_id,
+               c.chapter_no,
+               o.create_by, o.create_time, o.update_by, o.update_time, o.remark
+        from ai_novel_outline o
+        left join ai_novel_chapter c on c.chapter_id = o.chapter_id and c.del_flag = '0'
+    </sql>
+
+    <select id="selectAiNovelOutlineByOutlineId" parameterType="Long" resultMap="AiNovelOutlineResult">
+        <include refid="selectAiNovelOutlineVo"/>
+        where o.outline_id = #{outlineId} and o.del_flag = '0'
+    </select>
+
+    <select id="selectAiNovelOutlineListByWorkId" parameterType="Long" resultMap="AiNovelOutlineResult">
+        <include refid="selectAiNovelOutlineVo"/>
+        where o.work_id = #{workId} and o.del_flag = '0'
+        order by o.outline_level, o.seq_no asc, o.outline_id asc
+    </select>
+
+    <select id="selectAiNovelOutlineListByWorkAndLevel" resultMap="AiNovelOutlineResult">
+        <include refid="selectAiNovelOutlineVo"/>
+        where o.work_id = #{workId} and o.outline_level = #{outlineLevel} and o.del_flag = '0'
+        order by o.seq_no asc, o.outline_id asc
+    </select>
+
+    <select id="selectAiNovelOutlineListByParentId" resultMap="AiNovelOutlineResult">
+        <include refid="selectAiNovelOutlineVo"/>
+        where o.work_id = #{workId} and o.parent_id = #{parentId} and o.del_flag = '0'
+        order by o.seq_no asc, o.outline_id asc
+    </select>
+
+    <insert id="insertAiNovelOutline" parameterType="AiNovelOutline" useGeneratedKeys="true" keyProperty="outlineId">
+        insert into ai_novel_outline
+        (work_id, outline_level, parent_id, seq_no, outline_title, outline_content, chapter_id, create_by, create_time, remark)
+        values
+        (#{workId}, #{outlineLevel}, #{parentId}, #{seqNo}, #{outlineTitle}, #{outlineContent}, #{chapterId}, #{createBy}, #{createTime}, #{remark})
+    </insert>
+
+    <update id="updateAiNovelOutline" parameterType="AiNovelOutline">
+        update ai_novel_outline
+        <set>
+            <if test="outlineLevel != null">outline_level = #{outlineLevel},</if>
+            <if test="parentId != null">parent_id = #{parentId},</if>
+            <if test="seqNo != null">seq_no = #{seqNo},</if>
+            <if test="outlineTitle != null">outline_title = #{outlineTitle},</if>
+            <if test="outlineContent != null">outline_content = #{outlineContent},</if>
+            <if test="chapterId != null">chapter_id = #{chapterId},</if>
+            update_by = #{updateBy},
+            update_time = #{updateTime}
+        </set>
+        where outline_id = #{outlineId} and work_id = #{workId} and del_flag = '0'
+    </update>
+
+    <update id="updateOutlineSeqNo">
+        update ai_novel_outline
+        set seq_no = #{seqNo}, update_time = now()
+        where outline_id = #{outlineId} and work_id = #{workId} and del_flag = '0'
+    </update>
+
+    <update id="deleteAiNovelOutlineByOutlineId">
+        update ai_novel_outline set del_flag = '2', update_time = now()
+        where outline_id = #{outlineId} and work_id = #{workId} and del_flag = '0'
+    </update>
+
+    <update id="deleteAiNovelOutlineByWorkIds">
+        update ai_novel_outline set del_flag = '2', update_time = now()
+        where del_flag = '0' and work_id in
+        <foreach collection="workIds" item="workId" open="(" separator="," close=")">
+            #{workId}
+        </foreach>
+    </update>
+</mapper>

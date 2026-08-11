@@ -633,6 +633,43 @@ public class AgentClient {
     }
 
     /**
+     * 调用 Python 生成小说三层大纲（全书 → 卷 → 章）并执行断链检查。
+     * <p>直连白名单 LLM，不进入 Agent 图；请求携带作品上下文、现有章节列表
+     * 与现有大纲树，响应包含完整大纲树与断链报告。</p>
+     *
+     * @param workContext 作品上下文（设定卡/梗概/伏笔等，由 workService 组装）
+     * @param chapters    现有章节列表（chapterNo/title/brief）
+     * @param outlineTree 现有大纲树（可为 null）
+     * @return 生成结果 data 节点（tree + gaps）
+     */
+    public JsonNode generateNovelOutline(
+            Object workContext, List<?> chapters, Object outlineTree) {
+        try {
+            ObjectNode root = objectMapper.createObjectNode();
+            root.set("work_context", objectMapper.valueToTree(workContext));
+            root.set("chapters", objectMapper.valueToTree(chapters));
+            if (outlineTree != null) {
+                root.set("outline_tree", objectMapper.valueToTree(outlineTree));
+            }
+            putLlmConfig(root);
+
+            JsonNode response = requestJson(
+                    "POST",
+                    config.getNovelOutlineUrl(),
+                    objectMapper.writeValueAsString(root));
+            requireSuccess(response, "AGENT_OUTLINE_FAILED", "AI 生成大纲失败");
+            JsonNode data = response.get("data");
+            if (data == null || !data.has("tree")) {
+                throw new RuntimeException("AI 返回了空的大纲");
+            }
+            return data;
+        } catch (Exception e) {
+            log.error("AI 生成大纲失败，errorType={}", e.getClass().getSimpleName());
+            throw new RuntimeException("AI 生成大纲失败", e);
+        }
+    }
+
+    /**
      * 根据书名流式拟写故事梗概，将 Python 侧的 token 事件逐字转发给浏览器。
      * <p>与 {@link #generateNovelSynopsis} 同构，但不做聚合等待，
      * 前端可在梗概文本框中实时看到生成过程。</p>

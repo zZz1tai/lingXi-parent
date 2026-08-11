@@ -116,6 +116,14 @@
                 >
                   伏笔
                 </button>
+                <button
+                  type="button"
+                  class="nk-drawer-tab"
+                  :class="{ 'is-active': drawerTab === 'outline' }"
+                  @click="drawerTab = 'outline'"
+                >
+                  大纲
+                </button>
               </div>
 
               <div class="nk-drawer-body">
@@ -160,16 +168,6 @@
                       @delete="handleDeleteSetting"
                     />
                   </div>
-                  <div class="nk-settings-group">
-                    <p class="nk-settings-label">大纲</p>
-                    <SettingNotebook
-                      type="outline"
-                      :cards="settingOutlines"
-                      @add="openSettingDialog"
-                      @edit="openSettingDialog"
-                      @delete="handleDeleteSetting"
-                    />
-                  </div>
                 </template>
 
                 <template v-else-if="drawerTab === 'foreshadows'">
@@ -183,6 +181,10 @@
                       @resolve="handleResolveForeshadow"
                     />
                   </div>
+                </template>
+
+                <template v-else-if="drawerTab === 'outline'">
+                  <OutlinePanel v-if="selectedWork" :work-id="selectedWork.workId" />
                 </template>
               </div>
             </aside>
@@ -378,6 +380,7 @@ import ManuscriptEditor from './components/ManuscriptEditor.vue'
 import ChapterTree from './components/ChapterTree.vue'
 import SettingNotebook from './components/SettingNotebook.vue'
 import ForeshadowBoard from './components/ForeshadowBoard.vue'
+import OutlinePanel from './components/OutlinePanel.vue'
 import { countNovelCharacters } from './novelWordCount'
 import './novel-kraft.scss'
 
@@ -713,7 +716,7 @@ const settingTypeLabel = computed(() => {
 })
 
 async function loadSettings(workId) {
-  for (const type of ['character', 'world', 'outline']) {
+  for (const type of ['character', 'world']) {
     try {
       const result = await listNovelSetting(workId, type)
       settings[type] = result?.rows || []

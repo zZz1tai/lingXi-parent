@@ -110,6 +110,23 @@ class NovelSynopsisResponse(BaseResponse):
     data: NovelSynopsisData
 
 
+class NovelOutlineData(BaseModel):
+    """生成的小说三层大纲树与断链检查报告。
+
+    ``tree`` 为 BOOK → VOLUME → CHAPTER 嵌套结构；``gaps`` 列出
+    大纲与现有章节不一致的条目及修复建议，由 Java 侧持久化。
+    """
+
+    tree: list[dict[str, Any]]
+    gaps: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class NovelOutlineResponse(BaseResponse):
+    """``POST /api/v1/novel/outline/generate``端点的响应。"""
+
+    data: NovelOutlineData
+
+
 class MemoryListData(BaseModel):
     """长期记忆功能状态与当前用户偏好。"""
 
