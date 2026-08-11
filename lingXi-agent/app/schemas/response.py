@@ -236,6 +236,28 @@ class StreamEvent(BaseModel):
     tool: Optional[str] = Field(default=None, description="Tool name (for tool_start/tool_end)")
     tool_input: Optional[dict[str, Any]] = Field(default=None, description="Tool input params")
     tool_output: Optional[str] = Field(default=None, description="Tool output (for tool_end)")
+    call_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Unique tool call id, links tool_start/tool_progress/tool_end",
+    )
+    sequence: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="Ordinal of the tool call within the stream",
+    )
+    elapsed_ms: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=3_600_000,
+        description="Tool execution duration in milliseconds",
+    )
+    input_summary: Optional[str] = Field(
+        default=None,
+        max_length=256,
+        description="Safe, user-friendly summary of the tool call input",
+    )
     data: Any | None = Field(default=None, description="Structured update/custom payload")
     content_blocks: list[dict[str, Any]] | None = Field(
         default=None,

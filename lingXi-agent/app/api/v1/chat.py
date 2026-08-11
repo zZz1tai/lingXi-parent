@@ -907,6 +907,7 @@ def _safe_custom_event(
 
     event_type = str(chunk.get("type") or "")
     tool_name = str(chunk.get("tool") or "unknown")[:128]
+    call_id = str(chunk.get("call_id") or "")[:64] or None
     if event_type == "tool_progress":
         progress = {
             key: chunk[key]
@@ -916,6 +917,7 @@ def _safe_custom_event(
         return StreamEvent(
             type="tool_progress",
             tool=tool_name,
+            call_id=call_id,
             data=progress,
             request_id=request_id,
             thread_id=thread_id,
@@ -1030,6 +1032,36 @@ def _safe_tool_input(tool_name: str, arguments: Any) -> dict[str, Any]:
     }
 
 
+def _safe_input_summary(tool_name: str, arguments: Any) -> str:
+    """把白名单工具参数压缩为一行用户可读的安全摘要。
+
+    ``inputSummary`` 只能包含日期范围、区域、设备编号等白名单字段，
+    不能包含令牌、内部 URL 或原始工具参数。
+    """
+    fields = _safe_tool_input(tool_name, arguments)
+    parts: list[str] = []
+    start = fields.get("start")
+    end = fields.get("end")
+    if isinstance(start, str) and isinstance(end, str):
+        parts.append(f"{start} 至 {end}")
+    elif isinstance(start, str):
+        parts.append(f"自 {start}")
+    elif isinstance(end, str):
+        parts.append(f"至 {end}")
+    for key, template in (
+        ("granularity", "按{value}"),
+        ("region_id", "区域 {value}"),
+        ("limit", "最多 {value} 条"),
+        ("task_type", "类型 {value}"),
+        ("document_type", "文档 {value}"),
+        ("product_model", "型号 {value}"),
+    ):
+        value = fields.get(key)
+        if value is not None:
+            parts.append(template.format(value=value))
+    return " · ".join(parts)[:256]
+
+
 async def _stream_agent_events(
     request: ChatRequest | ActionResumeRequest,
     request_id: str,
@@ -1046,6 +1078,8 @@ async def _stream_agent_events(
     final_response = ""
     interrupted = False
     agent_stream: Any = None
+    tool_call_started: dict[str, tuple[float, int]] = {}
+    next_tool_sequence = 0
     try:
         recalled_preferences = await _recall_preferences(
             request.user_id,
@@ -1167,11 +1201,24 @@ async def _stream_agent_events(
                 if isinstance(message, AIMessage) and message.tool_calls:
                     for tool_call in message.tool_calls:
                         tool_name = str(tool_call.get("name") or "unknown")
+                        call_id = str(tool_call.get("id") or "")[:64] or None
+                        next_tool_sequence += 1
+                        if call_id:
+                            tool_call_started[call_id] = (
+                                time.monotonic(),
+                                next_tool_sequence,
+                            )
                         yield _format_sse_event(
                             StreamEvent(
                                 type="tool_start",
                                 tool=tool_name,
+                                call_id=call_id,
+                                sequence=next_tool_sequence,
                                 tool_input=_safe_tool_input(
+                                    tool_name,
+                                    tool_call.get("args"),
+                                ),
+                                input_summary=_safe_input_summary(
                                     tool_name,
                                     tool_call.get("args"),
                                 ),
@@ -1189,10 +1236,25 @@ async def _stream_agent_events(
                         candidate = artifact.get("result_count")
                         if isinstance(candidate, int) and candidate >= 0:
                             result_count = candidate
+                    call_id = str(
+                        getattr(message, "tool_call_id", "") or ""
+                    )[:64] or None
+                    elapsed_ms = None
+                    sequence = None
+                    started = tool_call_started.pop(call_id, None) if call_id else None
+                    if started is not None:
+                        sequence = started[1]
+                        elapsed_ms = min(
+                            max(int((time.monotonic() - started[0]) * 1000), 0),
+                            3_600_000,
+                        )
                     yield _format_sse_event(
                         StreamEvent(
                             type="tool_end",
                             tool=message.name or "unknown",
+                            call_id=call_id,
+                            sequence=sequence,
+                            elapsed_ms=elapsed_ms,
                             data={
                                 "status": getattr(message, "status", "success"),
                                 **(

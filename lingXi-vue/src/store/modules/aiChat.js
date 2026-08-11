@@ -17,18 +17,75 @@ const toolLabels = {
   execute_maintenance_task: '创建维修工单'
 }
 
-function activityFor(draft, tool) {
-  let activity = draft.activities.find(item => item.tool === tool)
-  if (!activity) {
-    activity = {
-      tool,
-      label: toolLabels[tool] || '使用智能工具',
-      status: 'running',
-      resultCount: null
-    }
-    draft.activities.push(activity)
+function mapToolStepStatus(status, isEnd) {
+  const s = String(status || '');
+  if (s === 'failed' || s === 'error' || s === 'cancelled') return 'error';
+  if (isEnd || s === 'completed' || s === 'success' || s === 'succeeded') return 'completed';
+  return 'running';
+}
+
+function findToolStepByCallId(draft, callId) {
+  return draft.activities.find(item => item.callId === callId);
+}
+
+function findToolStepByTool(draft, tool) {
+  const steps = [...draft.activities].reverse();
+  return (
+    steps.find(item => item.tool === tool && item.status !== 'completed')
+    || steps.find(item => item.tool === tool)
+  );
+}
+
+function pushToolStep(draft, event) {
+  let callId = String(event.call_id || '');
+  if (!callId) {
+    draft.fallbackCallCount += 1;
+    callId = `local-${draft.fallbackCallCount}-${event.tool || 'tool'}`;
   }
-  return activity
+  const existing = findToolStepByCallId(draft, callId);
+  if (existing) return existing;
+  const step = {
+    callId,
+    sequence: Number.isInteger(event.sequence) && event.sequence > 0
+      ? event.sequence
+      : draft.activities.length + 1,
+    tool: event.tool || 'unknown',
+    label: toolLabels[event.tool] || '使用智能工具',
+    status: 'running',
+    inputSummary: typeof event.input_summary === 'string' ? event.input_summary : '',
+    resultCount: null,
+    startedAt: Date.now(),
+    endedAt: null,
+    elapsedMs: null,
+    errorCode: '',
+    retryable: false
+  };
+  draft.activities.push(step);
+  draft.activities.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+  return step;
+}
+
+function updateToolStep(draft, event, isEnd) {
+  const callId = String(event.call_id || '');
+  let step = callId ? findToolStepByCallId(draft, callId) : undefined;
+  if (!step) step = findToolStepByTool(draft, event.tool);
+  if (!step) {
+    if (!isEnd) return undefined;
+    step = pushToolStep(draft, event);
+  }
+  step.status = mapToolStepStatus(event.data?.status, isEnd);
+  if (Number.isInteger(event.data?.result_count) && event.data.result_count >= 0) {
+    step.resultCount = event.data.result_count;
+  }
+  if (isEnd) {
+    step.endedAt = Date.now();
+    if (Number.isInteger(event.elapsed_ms) && event.elapsed_ms >= 0) {
+      step.elapsedMs = event.elapsed_ms;
+    }
+    const errorCode = String(event.data?.error_code || '');
+    if (errorCode) step.errorCode = errorCode;
+  }
+  return step;
 }
 
 function applyStreamEvent(draft, event) {
@@ -43,20 +100,14 @@ function applyStreamEvent(draft, event) {
     return
   }
   if (event.type === 'tool_start') {
-    activityFor(draft, event.tool).status = 'running'
+    const step = pushToolStep(draft, event)
+    if (typeof event.input_summary === 'string') {
+      step.inputSummary = event.input_summary
+    }
     return
   }
   if (event.type === 'tool_progress' || event.type === 'tool_end') {
-    const activity = activityFor(draft, event.tool)
-    const status = event.data?.status
-    activity.status = status === 'failed' || status === 'error'
-      ? 'error'
-      : status === 'completed' || status === 'success' || event.type === 'tool_end'
-        ? 'completed'
-        : 'running'
-    if (Number.isInteger(event.data?.result_count) && event.data.result_count >= 0) {
-      activity.resultCount = event.data.result_count
-    }
+    updateToolStep(draft, event, event.type === 'tool_end')
     return
   }
   if (event.type === 'citation' && event.data?.source_id) {
@@ -134,6 +185,7 @@ const useAiChatStore = defineStore('ai-chat', {
         assistantMessageId,
         error: '',
         activities: [],
+        fallbackCallCount: 0,
         citations: [],
         memorySaved: [],
         clarification: '',

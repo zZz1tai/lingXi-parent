@@ -411,16 +411,24 @@ class AgentClientContractTest {
         String secret = "SENTINEL_PRIVATE_TOOL_VALUE";
         streamResponse.set(
                 "data: {\"type\":\"tool_start\",\"tool\":\"lookup_device\","
+                        + "\"call_id\":\"call-d1\",\"sequence\":1,"
+                        + "\"input_summary\":\"自 2026-08-01\","
                         + "\"tool_input\":{\"tool_access_token\":\"" + secret + "\"}}\n\n"
-                        + "data: {\"type\":\"tool_start\",\"tool\":\"get_weather\"}\n\n"
+                        + "data: {\"type\":\"tool_start\",\"tool\":\"get_weather\","
+                        + "\"call_id\":\"bad token\",\"sequence\":2,"
+                        + "\"input_summary\":\"区域 102\"}\n\n"
                         + "data: {\"type\":\"tool_end\",\"tool\":\"get_weather\","
-                        + "\"data\":{\"status\":\"success\",\"result_count\":3}}\n\n"
+                        + "\"call_id\":\"bad token\",\"sequence\":2,"
+                        + "\"data\":{\"status\":\"success\",\"result_count\":3,"
+                        + "\"elapsed_ms\":860,\"internal\":\"" + secret + "\"}}\n\n"
                         + "data: {\"type\":\"citation\",\"tool\":\"search_knowledge\","
                         + "\"data\":{\"title\":\"操作规范\",\"source_id\":\"sop#1\","
                         + "\"secret\":\"" + secret + "\"}}\n\n"
                         + "data: {\"type\":\"tool_end\",\"tool\":\"lookup_device\","
+                        + "\"call_id\":\"call-d1\",\"sequence\":1,"
                         + "\"tool_output\":\"" + secret + "\","
-                        + "\"data\":{\"status\":\"success\",\"result_count\":1}}\n\n"
+                        + "\"data\":{\"status\":\"success\",\"result_count\":1,"
+                        + "\"elapsed_ms\":420}}\n\n"
                         + "data: {\"type\":\"memory_saved\","
                         + "\"data\":{\"preference\":\"answer_length\","
                         + "\"value\":\"short\",\"evidence\":\"" + secret + "\"}}\n\n"
@@ -447,9 +455,16 @@ class AgentClientContractTest {
         assertTrue(emitted.contains("操作规范"));
         assertTrue(emitted.contains("answer_length"));
         assertTrue(emitted.contains("完成"));
+        assertTrue(emitted.contains("\"call_id\":\"call-d1\""));
+        assertTrue(emitted.contains("\"sequence\":1"));
+        assertTrue(emitted.contains("\"elapsed_ms\":860"));
+        assertTrue(emitted.contains("\"input_summary\":\"自 2026-08-01\""));
+        assertFalse(emitted.contains("bad token"));
         assertFalse(emitted.contains(secret));
         assertFalse(emitted.contains("tool_access_token"));
         assertFalse(emitted.contains("tool_output"));
+        assertFalse(emitted.contains("internal"));
+        assertTrue(emitted.contains("\"elapsed_ms\":420"));
     }
 
     @Test

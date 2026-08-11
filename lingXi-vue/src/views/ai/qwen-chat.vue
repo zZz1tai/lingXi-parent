@@ -137,21 +137,10 @@
                   </div>
                   <div class="message-bubble assistant-bubble">
                     <div class="message-text markdown-content" v-html="renderMarkdown(item.content)"></div>
-                    <div v-if="item.activities?.length" class="agent-work-trace">
-                      <div
-                        v-for="activity in item.activities"
-                        :key="activity.tool"
-                        class="work-trace-row"
-                        :class="`is-${activity.status}`"
-                      >
-                        <span class="status-lamp" aria-hidden="true"></span>
-                        <span class="work-label">{{ activity.label }}</span>
-                        <span v-if="activity.resultCount !== null" class="work-count">
-                          {{ activity.resultCount }} 项
-                        </span>
-                        <span class="work-status">{{ activityStatusText(activity.status) }}</span>
-                      </div>
-                    </div>
+                    <AgentExecutionTrace
+                      v-if="item.activities?.length"
+                      :activities="item.activities"
+                    />
                     <section
                       v-if="item.pendingAction"
                       class="approval-card"
@@ -783,6 +772,7 @@ import {
 } from '@/api/aiVedio/project';
 import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
+import AgentExecutionTrace from './components/AgentExecutionTrace.vue';
 import {
   createLatestSingleFlight,
   smartQuestionRequestKey
@@ -1001,12 +991,6 @@ const userStore = useUserStore();
 const aiChatStore = useAiChatStore();
 const currentDraft = computed(() => aiChatStore.draftFor(currentSessionId.value));
 const loading = computed(() => ['streaming', 'resuming'].includes(currentDraft.value?.status));
-
-const activityStatusText = status => ({
-  running: '进行中',
-  completed: '已完成',
-  error: '未完成'
-}[status] || '处理中');
 
 const memoryPreferenceText = item => {
   const labels = {
@@ -2709,64 +2693,6 @@ onBeforeUnmount(() => {
     color: var(--lx-text);
     box-shadow: var(--lx-shadow-sm);
 
-    .agent-work-trace {
-      margin: 12px 0 14px;
-      padding: 9px 10px;
-      border: 1px solid #dce8e7;
-      border-left: 3px solid #0f766e;
-      border-radius: 8px;
-      background: #f3faf8;
-    }
-
-    .work-trace-row {
-      display: grid;
-      grid-template-columns: 10px minmax(0, 1fr) auto auto;
-      align-items: center;
-      gap: 8px;
-      min-height: 26px;
-      color: #365b5a;
-      font-size: 12px;
-
-      & + .work-trace-row {
-        border-top: 1px solid #deebe9;
-      }
-
-      .status-lamp {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: #0d9488;
-        box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12);
-      }
-
-      &.is-running .status-lamp {
-        animation: status-pulse 1.4s ease-in-out infinite;
-      }
-
-      &.is-completed .status-lamp {
-        background: #22c55e;
-        box-shadow: none;
-      }
-
-      &.is-error .status-lamp {
-        background: #ef4444;
-        box-shadow: none;
-      }
-
-      .work-label {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-weight: 600;
-      }
-
-      .work-count,
-      .work-status {
-        color: #68817f;
-        font-variant-numeric: tabular-nums;
-      }
-    }
-
     .approval-card {
       margin: 14px 0;
       padding: 16px;
@@ -3352,14 +3278,8 @@ onBeforeUnmount(() => {
   }
 }
 
-@keyframes status-pulse {
-  0%, 100% { transform: scale(0.82); opacity: 0.65; }
-  50% { transform: scale(1); opacity: 1; }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .welcome-icon,
-  .status-lamp {
+  .welcome-icon {
     animation: none !important;
   }
 }

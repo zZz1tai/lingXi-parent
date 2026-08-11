@@ -638,6 +638,108 @@ class StreamingContractTests(unittest.IsolatedAsyncioTestCase):
             1,
         )
 
+    async def test_tool_trace_events_carry_call_id_sequence_and_safe_summary(
+        self,
+    ) -> None:
+        class FakeAgent:
+            async def astream(self, _input, **_kwargs):
+                yield (
+                    "updates",
+                    {
+                        "model": {
+                            "messages": [
+                                AIMessage(
+                                    content="",
+                                    tool_calls=[
+                                        {
+                                            "name": "query_sales_summary",
+                                            "args": {
+                                                "start": "2026-08-01",
+                                                "end": "2026-08-11",
+                                                "region_id": 102,
+                                                "tool_access_token": (
+                                                    "must-not-escape"
+                                                ),
+                                            },
+                                            "id": "call-sales-1",
+                                        },
+                                        {
+                                            "name": "query_sales_summary",
+                                            "args": {
+                                                "start": "2026-08-01",
+                                                "end": "2026-08-11",
+                                                "granularity": "day",
+                                            },
+                                            "id": "call-sales-2",
+                                        },
+                                    ],
+                                )
+                            ]
+                        }
+                    },
+                )
+                yield (
+                    "updates",
+                    {
+                        "tools": {
+                            "messages": [
+                                ToolMessage(
+                                    content="ok",
+                                    name="query_sales_summary",
+                                    tool_call_id="call-sales-1",
+                                    artifact={"result_count": 12},
+                                )
+                            ]
+                        }
+                    },
+                )
+
+        fake_agent = FakeAgent()
+        request = ChatRequest(
+            message="查一下销售",
+            user_id="user-1",
+            thread_id="thread-1",
+        )
+        with (
+            patch.object(chat_api, "get_agent", return_value=fake_agent),
+            patch.object(
+                chat_api,
+                "create_agent_context",
+                return_value=AgentContext(user_id="user-1", thread_id="thread-1"),
+            ),
+        ):
+            raw_events = [
+                event
+                async for event in chat_api._stream_agent_events(
+                    request,
+                    "request-1",
+                )
+            ]
+
+        payloads = [
+            json.loads(event.removeprefix("data:").strip()) for event in raw_events
+        ]
+        starts = [payload for payload in payloads if payload["type"] == "tool_start"]
+        ends = [payload for payload in payloads if payload["type"] == "tool_end"]
+        self.assertEqual(len(starts), 2)
+        self.assertEqual(len(ends), 1)
+        self.assertEqual(
+            [payload["call_id"] for payload in starts],
+            ["call-sales-1", "call-sales-2"],
+        )
+        self.assertEqual([payload["sequence"] for payload in starts], [1, 2])
+        self.assertEqual(ends[0]["call_id"], "call-sales-1")
+        self.assertEqual(ends[0]["sequence"], 1)
+        self.assertEqual(
+            starts[0]["input_summary"],
+            "2026-08-01 至 2026-08-11 · 区域 102",
+        )
+        self.assertNotIn("tool_access_token", json.dumps(starts))
+        self.assertNotIn("must-not-escape", json.dumps(starts))
+        self.assertIsInstance(ends[0]["elapsed_ms"], int)
+        self.assertGreaterEqual(ends[0]["elapsed_ms"], 0)
+        self.assertEqual(ends[0]["data"]["result_count"], 12)
+
     async def test_output_limit_cancels_the_agent_stream(self) -> None:
         class LimitedAgent:
             closed = False

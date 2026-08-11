@@ -1425,6 +1425,11 @@ public class AgentClient {
         if (eventType.startsWith("tool_")) {
             String tool = source.path("tool").asText("unknown");
             safe.put("tool", safeToolName(tool));
+            copyIdentifier(source, safe, "call_id", 64);
+            JsonNode sequence = source.path("sequence");
+            if (sequence.isInt() && sequence.asInt() > 0 && sequence.asInt() <= 200) {
+                safe.put("sequence", sequence.asInt());
+            }
         }
 
         JsonNode data = source.path("data");
@@ -1439,8 +1444,15 @@ public class AgentClient {
                     && data.path("result_count").asInt() >= 0) {
                 safeData.put("result_count", data.path("result_count").asInt());
             }
+            if ("tool_end".equals(eventType)
+                    && data.path("elapsed_ms").canConvertToInt()
+                    && data.path("elapsed_ms").asInt() >= 0
+                    && data.path("elapsed_ms").asInt() <= 3_600_000) {
+                safeData.put("elapsed_ms", data.path("elapsed_ms").asInt());
+            }
         } else if ("tool_start".equals(eventType)) {
             safe.putObject("data").put("status", "started");
+            copyDisplayText(source, safe, "input_summary", 256);
         } else if ("citation".equals(eventType) && data.isObject()) {
             ObjectNode citation = safe.putObject("data");
             copyDisplayText(data, citation, "title", 256);
