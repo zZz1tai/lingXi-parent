@@ -141,6 +141,16 @@
                       v-if="item.activities?.length"
                       :activities="item.activities"
                     />
+                    <div
+                      v-for="uiBlock in readyOpenUiBlocks(item)"
+                      :key="`ui-${uiBlock.renderId}`"
+                      class="openui-block"
+                    >
+                      <OpenUIRenderer :sections="uiBlock.sections" />
+                    </div>
+                    <p v-if="openUiErrorCount(item)" class="openui-error-note">
+                      部分可视化组件生成失败，已展示文字结果。
+                    </p>
                     <section
                       v-if="item.pendingAction"
                       class="approval-card"
@@ -773,6 +783,9 @@ import {
 import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
 import AgentExecutionTrace from './components/AgentExecutionTrace.vue';
+import OpenUIRenderer from './components/openui/OpenUIRenderer.vue';
+import { OPEN_UI_ENABLED } from '@/config/openui';
+import { restoreUiRendersFromHistory } from '@/store/modules/agentStreamDraft';
 import {
   createLatestSingleFlight,
   smartQuestionRequestKey
@@ -781,6 +794,10 @@ import {
   getQuickVideoImageDimensionError,
   readQuickVideoImageDimensions
 } from '@/utils/quickVideoImages';
+import {
+  isSafeExternalUrl,
+  sanitizeRawHtmlBlock
+} from '@/utils/markdownSafety';
 
 // 配置marked
 marked.setOptions({
@@ -791,6 +808,16 @@ marked.setOptions({
 
 // ── AI 生成媒体（图片/视频）渲染 ──────────────────────────────────────────
 const chatMediaRenderer = new marked.Renderer();
+
+// 正文 Markdown 的安全边界：原始 HTML 转义、链接/图片仅允许 https 与回环 http。
+chatMediaRenderer.html = token => sanitizeRawHtmlBlock(token?.text || '');
+chatMediaRenderer.link = ({ href, title, text }) => {
+  if (!isSafeExternalUrl(href)) return escapeHtmlAttribute(text || href || '');
+  const attrs = `href="${escapeHtmlAttribute(href)}"`
+    + (title ? ` title="${escapeHtmlAttribute(title)}"` : '')
+    + ' rel="noopener noreferrer" target="_blank"';
+  return `<a ${attrs}>${text}</a>`;
+};
 
 const MEDIA_ICON_ZOOM =
   '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 13.5 13.5"/></svg>';
@@ -838,6 +865,7 @@ function mediaFilename(url, fallbackExt) {
 // 图片：回复内显示低清预览，附带 预览/下载 按钮。
 chatMediaRenderer.image = (href, title, text) => {
   if (!href) return '';
+  if (!isSafeExternalUrl(href)) return escapeHtmlAttribute(text || href);
   const src = escapeHtmlAttribute(href);
   const thumb = escapeHtmlAttribute(toChatImageThumb(href));
   const alt = escapeHtmlAttribute(text || 'AI 生成的图片');
@@ -1119,7 +1147,8 @@ const appendMessage = (isUser, content, id, attachments = []) => {
     clarification: '',
     pendingAction: null,
     error: '',
-    attachments
+    attachments,
+    uiRenders: []
   };
   history.value.push(newMessage);
   scrollToBottom();
@@ -1150,6 +1179,28 @@ const syncStreamDraft = () => {
   assistantMessage.clarification = draft.clarification;
   assistantMessage.pendingAction = draft.pendingAction;
   assistantMessage.error = draft.error;
+  assistantMessage.uiRenders = draft.uiRenders;
+};
+
+// 取已完成（或部分累积）的 OpenUI 渲染块，交给渲染器展示。
+const readyOpenUiBlocks = item => {
+  if (!OPEN_UI_ENABLED || !item.uiRenders || !Array.isArray(item.uiRenders)) return [];
+  return item.uiRenders
+    .filter(render => (
+      render?.status === 'complete'
+      && Array.isArray(render.sections)
+      && render.sections.length
+    ))
+    .map(render => ({
+      renderId: render.renderId,
+      sections: render.sections
+    }));
+};
+
+// 统计失败被降级的渲染块数量，用于提示信息。
+const openUiErrorCount = item => {
+  if (!OPEN_UI_ENABLED || !item.uiRenders || !Array.isArray(item.uiRenders)) return 0;
+  return item.uiRenders.filter(render => render?.status === 'error').length;
 };
 
 const formatFileSize = size => {
@@ -1804,7 +1855,10 @@ const loadChatHistory = async () => {
     if (data && data.length > 0) {
       const formattedHistory = data.map(item => ({
         ...item,
-        isUser: item.messageType === 'user'
+        isUser: item.messageType === 'user',
+        uiRenders: item.messageType === 'assistant'
+          ? restoreUiRendersFromHistory(item.uiJson)
+          : []
       }));
       history.value = formattedHistory;
       syncStreamDraft();
@@ -2791,6 +2845,13 @@ onBeforeUnmount(() => {
         color: #b91c1c;
         font-size: 12px;
         font-weight: 650;
+      }
+
+      .openui-error-note {
+        margin: 6px 0 0;
+        color: #b45309;
+        font-size: 12px;
+        line-height: 1.5;
       }
 
       .approval-result {

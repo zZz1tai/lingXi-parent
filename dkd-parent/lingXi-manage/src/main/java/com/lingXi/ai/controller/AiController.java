@@ -421,7 +421,7 @@ public class AiController {
             AgentUserContext userContext = currentAgentUserContext();
             String userId = userContext.getUserId();
             requireActiveSession(analyzeVO.getSessionId(), userId);
-            return qwenService.streamChatV2(
+            return qwenService.streamAnalyzeV2(
                     analyzeVO.getSessionId(), userContext, analysisQuestion(analyzeVO));
         } catch (Exception e) {
             log.warn("V2 流式分析失败，errorType={}", e.getClass().getSimpleName());

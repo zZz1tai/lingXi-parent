@@ -13,6 +13,7 @@ public class AiChatHistoryVO {
     private String userId;
     private String userName;
     private String content;
+    private String uiJson;
     private String messageType;
     private String modelName;
     private Integer tokens;

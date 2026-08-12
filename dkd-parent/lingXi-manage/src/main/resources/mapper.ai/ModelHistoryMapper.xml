@@ -10,6 +10,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="userId" column="user_id" />
         <result property="userName" column="user_name" />
         <result property="content" column="content" />
+        <result property="uiJson" column="ui_json" />
         <result property="messageType" column="message_type" />
         <result property="status" column="status" />
         <result property="errorCode" column="error_code" />
@@ -23,7 +24,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </resultMap>
 
     <sql id="selectModelHistoryVo">
-        select id, session_id, user_id, user_name, content, message_type, status, error_code, request_id, completed_at, started_at, model_name, tokens, created_at, updated_at from tb_model_history
+        select id, session_id, user_id, user_name, content, ui_json, message_type, status, error_code, request_id, completed_at, started_at, model_name, tokens, created_at, updated_at from tb_model_history
     </sql>
 
     <select id="selectModelHistoryList" parameterType="ModelHistory" resultMap="ModelHistoryResult">
@@ -55,6 +56,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="userId != null">user_id,</if>
             <if test="userName != null">user_name,</if>
             content,
+            <if test="uiJson != null">ui_json,</if>
             <if test="messageType != null">message_type,</if>
             <if test="status != null">status,</if>
             <if test="errorCode != null">error_code,</if>
@@ -70,6 +72,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="userId != null">#{userId},</if>
             <if test="userName != null">#{userName},</if>
             #{content},
+            <if test="uiJson != null">#{uiJson},</if>
             <if test="messageType != null">#{messageType},</if>
             <if test="status != null">#{status},</if>
             <if test="errorCode != null">#{errorCode},</if>

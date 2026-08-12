@@ -217,6 +217,10 @@ class StreamEvent(BaseModel):
         "tool_start",
         "tool_progress",
         "tool_end",
+        "ui_start",
+        "ui_delta",
+        "ui_complete",
+        "ui_error",
         "citation",
         "clarification",
         "memory_saved",
@@ -228,8 +232,8 @@ class StreamEvent(BaseModel):
     ] = Field(
         ...,
         description=(
-            "Event type: token / tool_start / tool_progress / tool_end / "
-            "citation / done / error"
+            "Event type: token / tool_start / tool_progress / tool_end / ui_start / "
+            "ui_delta / ui_complete / ui_error / citation / done / error"
         ),
     )
     content: Optional[str] = Field(default=None, description="Text content (for token/done events)")
@@ -259,6 +263,35 @@ class StreamEvent(BaseModel):
         description="Safe, user-friendly summary of the tool call input",
     )
     data: Any | None = Field(default=None, description="Structured update/custom payload")
+    render_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Unique OpenUI render id, links ui_start/ui_delta/ui_complete",
+    )
+    schema_version: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=99,
+        description="OpenUI spec schema version",
+    )
+    spec: Any | None = Field(
+        default=None,
+        description="Validated OpenUI section list (for ui_complete)",
+    )
+    delta: Any | None = Field(
+        default=None,
+        description="Partial OpenUI section list (for ui_delta)",
+    )
+    fallback_markdown: Optional[str] = Field(
+        default=None,
+        max_length=200_000,
+        description="Markdown fallback kept when OpenUI cannot render",
+    )
+    code: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Error code (for ui_error)",
+    )
     content_blocks: list[dict[str, Any]] | None = Field(
         default=None,
         description="Normalized LangChain v1 content blocks",

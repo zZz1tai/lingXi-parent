@@ -5,6 +5,8 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.ai.domain.dto.AgentUserContext;
 import com.lingXi.ai.domain.dto.AiImageOcrRequestDTO;
@@ -43,6 +45,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -465,6 +469,265 @@ class AgentClientContractTest {
         assertFalse(emitted.contains("tool_output"));
         assertFalse(emitted.contains("internal"));
         assertTrue(emitted.contains("\"elapsed_ms\":420"));
+    }
+
+    @Test
+    void openUiEventsAreSanitizedAndOversizedSpecDegradesToUiError() throws Exception {
+        String secret = "SENTINEL_PRIVATE_UI_VALUE";
+        String renderId = "ui-render-1";
+        ArrayNode tooManyNodesSpec = objectMapper.createArrayNode();
+        while (tooManyNodesSpec.size() < 11) {
+            ObjectNode grid = objectMapper.createObjectNode();
+            grid.put("type", "MetricGrid");
+            ArrayNode cards = objectMapper.createArrayNode();
+            for (int i = 0; i < 12; i++) {
+                cards.add(objectMapper.createObjectNode()
+                        .put("type", "MetricCard")
+                        .put("label", "指标" + i)
+                        .put("value", "v" + i)
+                        .put("unit", "单"));
+            }
+            grid.set("cards", cards);
+            tooManyNodesSpec.add(grid);
+        }
+        ArrayNode oversizedSpec = objectMapper.createArrayNode();
+        while (oversizedSpec.size() < 120) {
+            oversizedSpec.add(objectMapper.createObjectNode()
+                    .put("type", "Text")
+                    .put("text", "x".repeat(4096)));
+        }
+        streamResponse.set(
+                "data: {\"type\":\"ui_start\",\"render_id\":\"" + renderId + "\","
+                        + "\"schema_version\":1,\"secret\":\"" + secret + "\"}\n\n"
+                        + "data: {\"type\":\"ui_delta\",\"render_id\":\"" + renderId + "\","
+                        + "\"sequence\":1,\"delta\":["
+                        + "{\"type\":\"MetricGrid\",\"cards\":["
+                        + "{\"type\":\"MetricCard\",\"label\":\"订单数\",\"value\":\"128\","
+                        + "\"unit\":\"单\"},"
+                        + "{\"type\":\"MetricCard\",\"label\":\"销售额\",\"value\":\"12,860\","
+                        + "\"unit\":\"元\"}]},"
+                        + "{\"type\":\"Text\",\"text\":\"更新完成\"},"
+                        + "{\"type\":\"Script\",\"src\":\"javascript:alert(1)\"},"
+                        + "{\"type\":\"ImageResult\",\"src\":\"javascript:alert(1)\","
+                        + "\"alt\":\"x\"}]}\n\n"
+                        + "data: {\"type\":\"ui_complete\",\"render_id\":\"" + renderId + "\","
+                        + "\"schema_version\":1,\"spec\":["
+                        + "{\"type\":\"BarChart\",\"title\":\"销售趋势\","
+                        + "\"labels\":[\"一月\",\"二月\"],"
+                        + "\"series\":[{\"name\":\"销售额\",\"data\":[1.5,2.5]}]},"
+                        + "{\"type\":\"ImageResult\",\"src\":\"https://cdn.example.com/x.png\","
+                        + "\"alt\":\"示意图\",\"evil\":\"" + secret + "\"}],"
+                        + "\"fallback_markdown\":\"正文\"}\n\n"
+                        + "data: {\"type\":\"ui_complete\",\"render_id\":\"ui-render-2\","
+                        + "\"spec\":" + tooManyNodesSpec + "}\n\n"
+                        + "data: {\"type\":\"ui_complete\",\"render_id\":\"ui-render-3\","
+                        + "\"spec\":" + oversizedSpec + "}\n\n"
+                        + "data: {\"type\":\"token\",\"content\":\"完成\"}\n\n"
+                        + "data: {\"type\":\"done\"}\n\n"
+                        + "data: [DONE]\n\n");
+        CountDownLatch completed = new CountDownLatch(1);
+        AtomicReference<String> reply = new AtomicReference<>();
+        AgentUserContext context = new AgentUserContext(
+                "42", "张三", "1002", "运营员", 12L, "上海一区",
+                Collections.singletonList("manage:vm:list"));
+
+        SseEmitter emitter = client.streamChatV2(
+                "查询设备", "session-ui-1", context, value -> {
+                    reply.set(value);
+                    completed.countDown();
+                });
+
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals("完成", reply.get());
+        String emitted = emittedData(emitter);
+        assertTrue(emitted.contains("\"type\":\"ui_start\""));
+        assertTrue(emitted.contains("\"schema_version\":1"));
+        assertTrue(emitted.contains("\"sequence\":1"));
+        assertTrue(emitted.contains("\"MetricGrid\""));
+        assertTrue(emitted.contains("\"订单数\""));
+        assertTrue(emitted.contains("\"更新完成\""));
+        assertTrue(emitted.contains("\"销售趋势\""));
+        assertTrue(emitted.contains("https://cdn.example.com/x.png"));
+        assertTrue(emitted.contains("\"fallback_markdown\":\"正文\""));
+        assertFalse(emitted.contains(secret));
+        assertFalse(emitted.contains("\"Script\""));
+        assertFalse(emitted.contains("javascript:"));
+        assertFalse(emitted.contains("\"evil\""));
+        assertTrue(emitted.contains("\"code\":\"OPENUI_TOO_LARGE\""));
+        assertTrue(emitted.contains("\"code\":\"OPENUI_FILTER_REJECTED\""));
+    }
+
+    @Test
+    void openUiEventFieldValidationAllowsOnlyPublicBoundaries() throws Exception {
+        String secret = "SENTINEL_PRIVATE_UI_VALUE";
+        streamResponse.set(
+                // 上游 ui_error：code 保留转发，其余字段丢弃
+                "data: {\"type\":\"ui_error\",\"render_id\":\"ui-render-e1\","
+                        + "\"code\":\"OPENUI_BUILD_FAILED\",\"internal\":\"" + secret + "\"}\n\n"
+                // ui_start：render_id 非法（空格/感叹号）、schema_version 超界 999
+                + "data: {\"type\":\"ui_start\",\"render_id\":\"bad render id!\","
+                        + "\"schema_version\":999}\n\n"
+                // ui_start：合法字段保留
+                + "data: {\"type\":\"ui_start\",\"render_id\":\"ui-render-1\","
+                        + "\"schema_version\":1}\n\n"
+                // ui_delta：sequence 为 0 非法丢弃，但 delta 内容保留
+                + "data: {\"type\":\"ui_delta\",\"render_id\":\"ui-render-1\",\"sequence\":0,"
+                        + "\"delta\":[{\"type\":\"Text\",\"text\":\"增量片段\"}]}\n\n"
+                // ui_delta：sequence 超 200 非法丢弃
+                + "data: {\"type\":\"ui_delta\",\"render_id\":\"ui-render-1\",\"sequence\":201,"
+                        + "\"delta\":[{\"type\":\"Text\",\"text\":\"x\"}]}\n\n"
+                // ui_complete：无 fallback 字段，secret 字段丢弃
+                + "data: {\"type\":\"ui_complete\",\"render_id\":\"ui-render-1\","
+                        + "\"schema_version\":7,\"secret\":\"" + secret + "\","
+                        + "\"spec\":[{\"type\":\"Notice\",\"tone\":\"info\","
+                        + "\"text\":\"完成\"}]}\n\n"
+                + "data: {\"type\":\"token\",\"content\":\"完成\"}\n\n"
+                + "data: {\"type\":\"done\"}\n\n"
+                + "data: [DONE]\n\n");
+        CountDownLatch completed = new CountDownLatch(1);
+        AtomicReference<String> reply = new AtomicReference<>();
+        AgentUserContext context = new AgentUserContext(
+                "42", "张三", "1002", "运营员", 12L, "上海一区",
+                Collections.singletonList("manage:vm:list"));
+
+        SseEmitter emitter = client.streamChatV2(
+                "查询设备", "session-ui-edge", context, value -> {
+                    reply.set(value);
+                    completed.countDown();
+                });
+
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals("完成", reply.get());
+        String emitted = emittedData(emitter);
+        assertTrue(emitted.contains("\"type\":\"ui_error\""));
+        assertTrue(emitted.contains("\"code\":\"OPENUI_BUILD_FAILED\""));
+        assertFalse(emitted.contains(secret));
+        assertTrue(emitted.contains("\"schema_version\":1"));
+        assertFalse(emitted.contains("\"schema_version\":999"));
+        assertFalse(emitted.contains("bad render id!"));
+        assertFalse(emitted.contains("\"sequence\":0"));
+        assertFalse(emitted.contains("\"sequence\":201"));
+        assertTrue(emitted.contains("\"增量片段\""));
+        assertTrue(emitted.contains("\"schema_version\":7"));
+        assertFalse(emitted.contains("fallback_markdown"));
+    }
+
+    @Test
+    void successStreamDeliversSanitizedUiJsonToOutcomeListener() throws Exception {
+        String secret = "SENTINEL_PRIVATE_UI_VALUE";
+        String renderId = "ui-render-hist-1";
+        ArrayNode oversizedSpec = objectMapper.createArrayNode();
+        while (oversizedSpec.size() < 80) {
+            oversizedSpec.add(objectMapper.createObjectNode()
+                    .put("type", "Text").put("text", "x".repeat(4096)));
+        }
+        streamResponse.set(
+                "data: {\"type\":\"ui_start\",\"render_id\":\"" + renderId + "\","
+                        + "\"schema_version\":1}\n\n"
+                // 有效渲染收集进历史；Script 与 evil 字段被清洗
+                + "data: {\"type\":\"ui_complete\",\"render_id\":\"" + renderId + "\","
+                        + "\"schema_version\":1,\"spec\":["
+                        + "{\"type\":\"BarChart\",\"title\":\"销售趋势\","
+                        + "\"labels\":[\"一月\",\"二月\"],"
+                        + "\"series\":[{\"name\":\"销售额\",\"data\":[1.5,2.5]}]},"
+                        + "{\"type\":\"Script\",\"src\":\"javascript:alert(1)\"},"
+                        + "{\"type\":\"ImageResult\",\"src\":\"https://cdn.example.com/x.png\","
+                        + "\"alt\":\"示意图\",\"evil\":\"" + secret + "\"}],"
+                        + "\"fallback_markdown\":\"正文\"}\n\n"
+                // 超限渲染不会进入历史（降级为 ui_error）
+                + "data: {\"type\":\"ui_complete\",\"render_id\":\"ui-render-hist-2\","
+                        + "\"spec\":" + oversizedSpec + "}\n\n"
+                + "data: {\"type\":\"ui_complete\",\"render_id\":\"ui-render-hist-3\","
+                        + "\"spec\":[{\"type\":\"Text\",\"text\":\"正常\"}],"
+                        + "\"secret\":\"" + secret + "\"}\n\n"
+                + "data: {\"type\":\"token\",\"content\":\"完成\"}\n\n"
+                + "data: {\"type\":\"done\"}\n\n"
+                + "data: [DONE]\n\n");
+        CountDownLatch reported = new CountDownLatch(1);
+        AtomicReference<String> uiJson = new AtomicReference<>();
+        CountDownLatch replyLatch = new CountDownLatch(1);
+        AgentUserContext context = new AgentUserContext(
+                "42", "张三", "1002", "运营员", 12L, "上海一区",
+                Collections.singletonList("manage:vm:list"));
+        AgentClient.StreamOutcomeListener listener = new AgentClient.StreamOutcomeListener() {
+            @Override
+            public void onReply(String reply) {
+                replyLatch.countDown();
+            }
+
+            @Override
+            public void onUiArtifacts(String ui) {
+                uiJson.set(ui);
+                reported.countDown();
+            }
+
+            @Override
+            public void onFailed(String errorCode) {
+            }
+
+            @Override
+            public void onCancelled() {
+            }
+        };
+
+        client.streamChatV2(
+                "查询设备", "session-ui-hist", context, null, listener);
+        assertTrue(reported.await(5, TimeUnit.SECONDS));
+        assertTrue(replyLatch.await(5, TimeUnit.SECONDS));
+        awaitClientTasks();
+
+        String delivered = uiJson.get();
+        assertNotNull(delivered);
+        assertTrue(delivered.contains("\"render_id\":\"ui-render-hist-1\""));
+        assertTrue(delivered.contains("\"BarChart\""));
+        assertTrue(delivered.contains("https://cdn.example.com/x.png"));
+        assertTrue(delivered.contains("\"fallback_markdown\":\"正文\""));
+        assertTrue(delivered.contains("\"schema_version\":1"));
+        assertFalse(delivered.contains(secret));
+        assertFalse(delivered.contains("\"Script\""));
+        assertFalse(delivered.contains("javascript:"));
+        assertFalse(delivered.contains("\"evil\""));
+        JsonNode envelope = objectMapper.readTree(delivered);
+        assertTrue(envelope.path("renders").isArray());
+        assertEquals(2, envelope.path("renders").size());
+    }
+
+    @Test
+    void failedStreamDoesNotDeliverUiJsonToOutcomeListener() throws Exception {
+        streamResponse.set(
+                "data: {\"type\":\"ui_complete\",\"render_id\":\"ui-render-fail-1\","
+                        + "\"spec\":[{\"type\":\"Text\",\"text\":\"正常\"}]}\n\n"
+                + "data: {\"type\":\"error\"}\n\n");
+        CountDownLatch failed = new CountDownLatch(1);
+        AtomicReference<String> uiJson = new AtomicReference<>();
+        AgentUserContext context = new AgentUserContext(
+                "42", "张三", "1002", "运营员", 12L, "上海一区",
+                Collections.singletonList("manage:vm:list"));
+        AgentClient.StreamOutcomeListener listener = new AgentClient.StreamOutcomeListener() {
+            @Override
+            public void onFailed(String errorCode) {
+                failed.countDown();
+            }
+
+            @Override
+            public void onUiArtifacts(String ui) {
+                uiJson.set(ui);
+            }
+
+            @Override
+            public void onReply(String reply) {
+            }
+
+            @Override
+            public void onCancelled() {
+            }
+        };
+
+        client.streamChatV2("查询设备", "session-ui-fail", context, null, listener);
+        assertTrue(failed.await(5, TimeUnit.SECONDS));
+        awaitClientTasks();
+
+        assertNull(uiJson.get());
     }
 
     @Test

@@ -40,6 +40,9 @@ from app.chains.business_chat import (
 )
 from app.config.settings import settings
 from app.observability.tracing import with_trace
+from app.openui.build import build_data_analysis_spec
+from app.openui.schema import OPENUI_SCHEMA_VERSION
+from app.openui.validate import validate_spec
 from app.schemas.request import (
     ChatMode,
     ChatRequest,
@@ -1062,6 +1065,76 @@ def _safe_input_summary(tool_name: str, arguments: Any) -> str:
     return " · ".join(parts)[:256]
 
 
+def _openui_render_id(request_id: str) -> str:
+    return f"ui-{(request_id or 'stream')[:56]}"
+
+
+async def _emit_openui_events(
+    artifacts: list[dict[str, Any]],
+    *,
+    request_id: str,
+    thread_id: str,
+) -> AsyncGenerator[str, None]:
+    """在数据分析模式会话后构建并流式发射 OpenUI 表现层事件。
+
+    生成失败或校验不通过时只发射 ``ui_error``，正文 Markdown 不受影响。
+    """
+    render_id = _openui_render_id(request_id)
+    try:
+        spec = build_data_analysis_spec(artifacts)
+    except Exception as exc:  # 防御：任何构建异常都不能破坏正文流
+        logger.warning(
+            "OpenUI spec build failed | request_id=%s | error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        spec = []
+    if not spec:
+        return
+    cleaned, error_code = validate_spec(spec)
+    if error_code is not None or not cleaned:
+        yield _format_sse_event(
+            StreamEvent(
+                type="ui_error",
+                render_id=render_id,
+                code=error_code or "OPENUI_BUILD_FAILED",
+                request_id=request_id,
+                thread_id=thread_id,
+            )
+        )
+        return
+    yield _format_sse_event(
+        StreamEvent(
+            type="ui_start",
+            render_id=render_id,
+            schema_version=OPENUI_SCHEMA_VERSION,
+            request_id=request_id,
+            thread_id=thread_id,
+        )
+    )
+    for index, start in enumerate(range(0, len(cleaned), 3), start=1):
+        yield _format_sse_event(
+            StreamEvent(
+                type="ui_delta",
+                render_id=render_id,
+                sequence=index,
+                delta=cleaned[start : start + 3],
+                request_id=request_id,
+                thread_id=thread_id,
+            )
+        )
+    yield _format_sse_event(
+        StreamEvent(
+            type="ui_complete",
+            render_id=render_id,
+            schema_version=OPENUI_SCHEMA_VERSION,
+            spec=cleaned,
+            request_id=request_id,
+            thread_id=thread_id,
+        )
+    )
+
+
 async def _stream_agent_events(
     request: ChatRequest | ActionResumeRequest,
     request_id: str,
@@ -1080,6 +1153,12 @@ async def _stream_agent_events(
     agent_stream: Any = None
     tool_call_started: dict[str, tuple[float, int]] = {}
     next_tool_sequence = 0
+    openui_mode = (
+        settings.agent_openui_enabled
+        and isinstance(request, ChatRequest)
+        and request.business_tag == "data_analysis"
+    )
+    openui_artifacts: list[dict[str, Any]] = []
     try:
         recalled_preferences = await _recall_preferences(
             request.user_id,
@@ -1228,6 +1307,12 @@ async def _stream_agent_events(
                         )
                 elif isinstance(message, ToolMessage):
                     artifact = getattr(message, "artifact", None)
+                    if (
+                        openui_mode
+                        and isinstance(artifact, dict)
+                        and isinstance(artifact.get("data"), dict)
+                    ):
+                        openui_artifacts.append(artifact)
                     for image_url in _generated_image_urls([message]):
                         if image_url not in generated_image_urls:
                             generated_image_urls.append(image_url)
@@ -1308,6 +1393,13 @@ async def _stream_agent_events(
             )
             if final_response:
                 _add_stream_text(0, final_response)
+        if openui_mode:
+            async for ui_event in _emit_openui_events(
+                openui_artifacts,
+                request_id=request_id,
+                thread_id=public_thread_id,
+            ):
+                yield ui_event
         if isinstance(request, ChatRequest):
             for item in await _capture_preferences(
                 request.user_id,

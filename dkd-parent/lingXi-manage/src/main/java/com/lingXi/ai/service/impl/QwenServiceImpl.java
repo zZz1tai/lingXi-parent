@@ -140,11 +140,12 @@ public class QwenServiceImpl implements IQwenService {
             throw agentFailure;
         }
         // 仅在 Agent 成功返回完整回答后保存助手消息。
-        saveAssistantReply(
+saveAssistantReply(
                 normalizedSessionId,
                 trustedContext.getUserId(),
                 trustedContext.getUserName(),
-                reply);
+                reply,
+                null);
         return reply;
     }
 
@@ -198,7 +199,8 @@ public class QwenServiceImpl implements IQwenService {
                 normalizedSessionId,
                 trustedContext.getUserId(),
                 trustedContext.getUserName(),
-                reply);
+                reply,
+                null);
         return reply;
     }
 
@@ -271,6 +273,26 @@ public class QwenServiceImpl implements IQwenService {
             AgentUserContext userContext,
             String userMessage,
             List<String> attachmentIds) {
+        return streamChatV2Internal(sessionId, userContext, userMessage,
+                attachmentIds, null);
+    }
+
+    @Override
+    public SseEmitter streamAnalyzeV2(
+            String sessionId,
+            AgentUserContext userContext,
+            String userMessage) {
+        return streamChatV2Internal(sessionId, userContext, userMessage,
+                List.of(), "data_analysis");
+    }
+
+    /** V2 流式对话共用实现；数据分析入口额外携带业务标签。 */
+    private SseEmitter streamChatV2Internal(
+            String sessionId,
+            AgentUserContext userContext,
+            String userMessage,
+            List<String> attachmentIds,
+            String businessTag) {
         AgentUserContext trustedContext = requireUserContext(userContext);
         String normalizedSessionId = requireValidSessionId(sessionId);
         List<AiChatAttachmentAgentDTO> attachments = prepareAttachments(
@@ -297,13 +319,17 @@ public class QwenServiceImpl implements IQwenService {
                 normalizedSessionId,
                 trustedContext.getUserId(),
                 trustedContext.getUserName());
-        SseEmitter emitter = attachments.isEmpty()
-                ? agentClient.streamChatV2(
+        SseEmitter emitter = "data_analysis".equals(businessTag)
+                ? agentClient.streamAnalyzeV2(
                         normalizedMessage, normalizedSessionId,
                         trustedContext, null, outcome)
-                : agentClient.streamChatV2(
-                        normalizedMessage, normalizedSessionId,
-                        trustedContext, attachments, null, outcome);
+                : (attachments.isEmpty()
+                        ? agentClient.streamChatV2(
+                                normalizedMessage, normalizedSessionId,
+                                trustedContext, null, outcome)
+                        : agentClient.streamChatV2(
+                                normalizedMessage, normalizedSessionId,
+                                trustedContext, attachments, null, outcome));
         emitter.onCompletion(() -> log.info(
                 "V2 流式聊天完成，sessionIdLength={}", safeLength(normalizedSessionId)));
         return emitter;
@@ -590,7 +616,9 @@ public class QwenServiceImpl implements IQwenService {
      * @param userName  用户名称
      * @param content   回复内容
      */
-    private void saveAssistantReply(String sessionId, String userId, String userName, String content) {
+    private void saveAssistantReply(
+            String sessionId, String userId, String userName,
+            String content, String uiJson) {
         if (content == null || content.trim().isEmpty()) {
             log.warn("忽略空的助手回复，sessionIdLength={}", safeLength(sessionId));
             return;
@@ -600,6 +628,7 @@ public class QwenServiceImpl implements IQwenService {
         history.setUserId(userId);
         history.setUserName(userName);
         history.setContent(content);
+        history.setUiJson(uiJson);
         history.setMessageType("assistant");
         history.setModelName("agent");
         history.setStatus("SUCCEEDED");
@@ -728,15 +757,23 @@ public class QwenServiceImpl implements IQwenService {
             String userName) {
         AtomicBoolean outcomeReported = new AtomicBoolean(false);
         return new StreamOutcomeListener() {
-            @Override
-            public void onReply(String reply) {
-                if (!outcomeReported.compareAndSet(false, true)) {
-                    log.warn("忽略重复的流式成功报告，sessionIdLength={}",
-                            safeLength(sessionId));
-                    return;
-                }
-                saveAssistantReply(sessionId, userId, userName, reply);
+            private String uiJson;
+
+        @Override
+        public void onUiArtifacts(String ui) {
+            // AgentClient 契约：onReply 之前同步调用，失败/取消时不调用。
+            this.uiJson = ui;
+        }
+
+        @Override
+        public void onReply(String reply) {
+            if (!outcomeReported.compareAndSet(false, true)) {
+                log.warn("忽略重复的流式成功报告，sessionIdLength={}",
+                        safeLength(sessionId));
+                return;
             }
+            saveAssistantReply(sessionId, userId, userName, reply, uiJson);
+        }
 
             @Override
             public void onFailed(String errorCode) {

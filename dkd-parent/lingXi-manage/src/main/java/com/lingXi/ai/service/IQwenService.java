@@ -81,6 +81,10 @@ public interface IQwenService {
     SseEmitter streamChatV2(
             String sessionId, AgentUserContext userContext, String userMessage);
 
+    /** 数据分析 V2 流：携带业务标签，Python 端启用 OpenUI 表现层。 */
+    SseEmitter streamAnalyzeV2(
+            String sessionId, AgentUserContext userContext, String userMessage);
+
     /** 使用可信用户上下文和会话附件返回结构化 V2 流。 */
     default SseEmitter streamChatV2(
             String sessionId,

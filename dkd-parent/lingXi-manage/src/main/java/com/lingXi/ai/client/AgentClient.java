@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -38,6 +39,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -58,6 +60,10 @@ public class AgentClient {
         /** 收到完整回答并确认流正常终止。 */
         void onReply(String fullReply);
 
+        /** 收到 OpenUI 渲染历史（成功回答时携带，未产生则为 null）。 */
+        default void onUiArtifacts(String uiJson) {
+        }
+
         /** 流异常终止，携带稳定错误码。 */
         void onFailed(String errorCode);
 
@@ -69,6 +75,60 @@ public class AgentClient {
     static final int MAX_STREAM_REPLY_CHARS = 200_000;
     /** 单个 SSE 事件允许读取的最大字符数。 */
     static final int MAX_STREAM_EVENT_CHARS = 1_048_576;
+
+    // ── OpenUI 表现层限制（与 Python app/openui 保持一致）──────────────
+    private static final int OPENUI_MAX_SPEC_BYTES = 256 * 1024;
+    private static final int OPENUI_MAX_NODES = 120;
+    private static final int OPENUI_MAX_DEPTH = 8;
+    private static final int OPENUI_MAX_TEXT = 4096;
+    private static final int OPENUI_MAX_TITLE = 200;
+    private static final int OPENUI_MAX_LABEL = 256;
+    private static final int OPENUI_MAX_CARDS = 12;
+    private static final int OPENUI_MAX_COLUMNS = 8;
+    private static final int OPENUI_MAX_ROWS = 60;
+    private static final int OPENUI_MAX_SERIES = 6;
+    private static final int OPENUI_MAX_LABELS = 90;
+    private static final int OPENUI_MAX_MEDIA_URL = 2048;
+    private static final long OPENUI_MAX_NUMBER_ABS = 1_000_000_000_000_000L;
+    private static final Set<String> OPENUI_ALLOWED_TYPES = Set.of(
+            "Text", "Markdown", "Notice", "MetricGrid", "MetricCard", "DataTable",
+            "LineChart", "BarChart", "PieChart", "DeviceStatusCard",
+            "MaintenanceTaskCard", "ImageResult", "VideoResult");
+    private static final Map<String, Set<String>> OPENUI_FIELDS = Map.ofEntries(
+            Map.entry("Text", Set.of("text")),
+            Map.entry("Markdown", Set.of("text")),
+            Map.entry("Notice", Set.of("tone", "text")),
+            Map.entry("MetricGrid", Set.of("title", "columns", "cards")),
+            Map.entry("MetricCard", Set.of("label", "value", "unit", "tone")),
+            Map.entry("DataTable", Set.of("title", "columns", "rows")),
+            Map.entry("LineChart", Set.of("title", "labels", "series", "x_label", "y_label")),
+            Map.entry("BarChart", Set.of("title", "labels", "series", "x_label", "y_label")),
+            Map.entry("PieChart", Set.of("title", "series")),
+            Map.entry("DeviceStatusCard", Set.of(
+                    "inner_code", "name", "region", "status", "updated_at")),
+            Map.entry("MaintenanceTaskCard", Set.of(
+                    "task_code", "device_name", "type", "priority", "status", "notes")),
+            Map.entry("ImageResult", Set.of("src", "alt")),
+            Map.entry("VideoResult", Set.of("src", "poster", "alt")));
+    private static final Map<String, Integer> OPENUI_TEXT_FIELDS = Map.ofEntries(
+            Map.entry("text", OPENUI_MAX_TEXT),
+            Map.entry("title", OPENUI_MAX_TITLE),
+            Map.entry("label", OPENUI_MAX_LABEL),
+            Map.entry("value", OPENUI_MAX_LABEL),
+            Map.entry("unit", OPENUI_MAX_LABEL),
+            Map.entry("name", OPENUI_MAX_LABEL),
+            Map.entry("status", OPENUI_MAX_LABEL),
+            Map.entry("notes", OPENUI_MAX_LABEL),
+            Map.entry("task_code", OPENUI_MAX_LABEL),
+            Map.entry("device_name", OPENUI_MAX_LABEL),
+            Map.entry("type", OPENUI_MAX_LABEL),
+            Map.entry("priority", OPENUI_MAX_LABEL),
+            Map.entry("inner_code", OPENUI_MAX_LABEL),
+            Map.entry("region", OPENUI_MAX_LABEL),
+            Map.entry("updated_at", OPENUI_MAX_LABEL),
+            Map.entry("x_label", OPENUI_MAX_LABEL),
+            Map.entry("y_label", OPENUI_MAX_LABEL),
+            Map.entry("alt", OPENUI_MAX_LABEL));
 
     /** Python Agent 的地址、接口路径、超时和线程池配置。 */
     private final AgentConfig config;
@@ -488,6 +548,27 @@ public class AgentClient {
                 outcomeListener);
     }
 
+    /** 数据分析 V2 流：携带业务标签，Python 端据此启用 OpenUI 表现层。 */
+    public SseEmitter streamAnalyzeV2(
+            String message,
+            String sessionId,
+            AgentUserContext userContext,
+            Consumer<String> completedReplyConsumer,
+            StreamOutcomeListener outcomeListener) {
+        return streamChat(
+                message,
+                sessionId,
+                userContext.getUserId(),
+                "chat",
+                null,
+                userContext,
+                List.of(),
+                completedReplyConsumer,
+                true,
+                outcomeListener,
+                "data_analysis");
+    }
+
     /** 使用当前登录态的新令牌恢复一个已经由 Java 记录决定的受控动作。 */
     public SseEmitter streamResumeAction(
             String sessionId,
@@ -904,7 +985,37 @@ public class AgentClient {
                 structuredEvents,
                 null,
                 null,
-                outcomeListener);
+                outcomeListener,
+                null);
+    }
+
+    /** 带业务标签的结构化 V2 流，用于数据分析模式的 OpenUI 试点。 */
+    private SseEmitter streamChat(
+            String message,
+            String sessionId,
+            String userId,
+            String mode,
+            Object contextData,
+            AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments,
+            Consumer<String> completedReplyConsumer,
+            boolean structuredEvents,
+            StreamOutcomeListener outcomeListener,
+            String businessTag) {
+        return streamAgent(
+                message,
+                sessionId,
+                userId,
+                mode,
+                contextData,
+                userContext,
+                attachments,
+                completedReplyConsumer,
+                structuredEvents,
+                null,
+                null,
+                outcomeListener,
+                businessTag);
     }
 
     /** 普通聊天和动作恢复共用同一条有界、可取消的 SSE 转发实现。 */
@@ -921,6 +1032,27 @@ public class AgentClient {
             String actionId,
             String decision,
             StreamOutcomeListener outcomeListener) {
+        return streamAgent(
+                message, sessionId, userId, mode, contextData, userContext,
+                attachments, completedReplyConsumer, structuredEvents,
+                actionId, decision, outcomeListener, null);
+    }
+
+    /** 普通聊天和动作恢复共用同一条有界、可取消的 SSE 转发实现。 */
+    private SseEmitter streamAgent(
+            String message,
+            String sessionId,
+            String userId,
+            String mode,
+            Object contextData,
+            AgentUserContext userContext,
+            List<AiChatAttachmentAgentDTO> attachments,
+            Consumer<String> completedReplyConsumer,
+            boolean structuredEvents,
+            String actionId,
+            String decision,
+            StreamOutcomeListener outcomeListener,
+            String businessTag) {
         long streamTimeout = config.getStreamTimeout() == null
                 || config.getStreamTimeout().longValue() <= 0L
                         ? 310_000L : config.getStreamTimeout().longValue();
@@ -933,6 +1065,7 @@ public class AgentClient {
         AgentToolAccess toolAccess = createToolAccess(userContext, sessionId);
 
         Runnable streamTask = () -> {
+            List<ObjectNode> collectedUi = new ArrayList<>();
             HttpURLConnection conn = null;
             long startedAt = System.currentTimeMillis();
             try {
@@ -963,7 +1096,7 @@ public class AgentClient {
                 String requestBody = actionId == null
                         ? buildRequest(
                                 message, sessionId, userId, mode, contextData,
-                                userContext, toolAccess, attachments)
+                                userContext, toolAccess, attachments, businessTag)
                         : buildResumeRequest(
                                 sessionId, userId, userContext, toolAccess,
                                 actionId, decision);
@@ -1024,7 +1157,7 @@ public class AgentClient {
                                 }
                                 fullReply.append(content);
                                 if (structuredEvents) {
-                                    sendStructuredEvent(emitter, eventType, node);
+                                    sendStructuredEvent(emitter, eventType, node, collectedUi);
                                 } else {
                                     emitter.send(SseEmitter.event().data(content));
                                 }
@@ -1044,11 +1177,11 @@ public class AgentClient {
                                     }
                                 }
                                 if (structuredEvents) {
-                                    sendStructuredEvent(emitter, eventType, node);
+                                    sendStructuredEvent(emitter, eventType, node, collectedUi);
                                 }
                             } else if ("done".equals(eventType)) {
                                 if (structuredEvents) {
-                                    sendStructuredEvent(emitter, eventType, node);
+                                    sendStructuredEvent(emitter, eventType, node, collectedUi);
                                 }
                             } else if ("error".equals(eventType)) {
                                 streamFailed = true;
@@ -1061,7 +1194,7 @@ public class AgentClient {
                                 if ("approval_required".equals(eventType)) {
                                     approvalPending = true;
                                 }
-                                sendStructuredEvent(emitter, eventType, node);
+                                sendStructuredEvent(emitter, eventType, node, collectedUi);
                             }
                         } catch (IOException parseError) {
                             streamFailed = true;
@@ -1095,6 +1228,7 @@ public class AgentClient {
                     circuitBreaker.recordSuccess();
                     if (outcomeListener != null
                             && outcomeReported.compareAndSet(false, true)) {
+                        outcomeListener.onUiArtifacts(serializeUiArtifacts(collectedUi));
                         outcomeListener.onReply(fullReply.toString());
                     }
                 }
@@ -1183,6 +1317,7 @@ public class AgentClient {
         AtomicReference<Future<?>> futureRef = new AtomicReference<>();
 
         Runnable streamTask = () -> {
+            List<ObjectNode> collectedUi = new ArrayList<>();
             HttpURLConnection conn = null;
             try {
                 if (!circuitBreaker.tryAcquire()) {
@@ -1255,7 +1390,7 @@ public class AgentClient {
                                     break;
                                 }
                                 fullReply.append(content);
-                                sendStructuredEvent(emitter, eventType, node);
+                                sendStructuredEvent(emitter, eventType, node, collectedUi);
                             } else if ("done".equals(eventType) && !content.isEmpty()) {
                                 if (fullReply.length() == 0) {
                                     if (content.length() > MAX_STREAM_REPLY_CHARS) {
@@ -1267,9 +1402,9 @@ public class AgentClient {
                                     }
                                     fullReply.append(content);
                                 }
-                                sendStructuredEvent(emitter, eventType, node);
+                                sendStructuredEvent(emitter, eventType, node, collectedUi);
                             } else if ("done".equals(eventType)) {
-                                sendStructuredEvent(emitter, eventType, node);
+                                sendStructuredEvent(emitter, eventType, node, collectedUi);
                             } else if ("error".equals(eventType)) {
                                 streamFailed = true;
                                 log.warn("Agent 流式响应返回错误事件");
@@ -1277,7 +1412,7 @@ public class AgentClient {
                                         "Agent 流式请求失败，请稍后重试");
                                 break;
                             } else if (isStructuredEvent(eventType)) {
-                                sendStructuredEvent(emitter, eventType, node);
+                                sendStructuredEvent(emitter, eventType, node, collectedUi);
                             }
                         } catch (IOException parseError) {
                             streamFailed = true;
@@ -1378,6 +1513,10 @@ public class AgentClient {
         return "tool_start".equals(eventType)
                 || "tool_progress".equals(eventType)
                 || "tool_end".equals(eventType)
+                || "ui_start".equals(eventType)
+                || "ui_delta".equals(eventType)
+                || "ui_complete".equals(eventType)
+                || "ui_error".equals(eventType)
                 || "citation".equals(eventType)
                 || "clarification".equals(eventType)
                 || "memory_saved".equals(eventType)
@@ -1409,7 +1548,8 @@ public class AgentClient {
 
     /** 重建用户可见事件，禁止透传工具原始参数、结果、内部节点和任意扩展字段。 */
     private void sendStructuredEvent(
-            SseEmitter emitter, String eventType, JsonNode source) throws IOException {
+            SseEmitter emitter, String eventType, JsonNode source,
+            List<ObjectNode> uiArtifacts) throws IOException {
         ObjectNode safe = objectMapper.createObjectNode();
         safe.put("type", eventType);
 
@@ -1429,6 +1569,12 @@ public class AgentClient {
             JsonNode sequence = source.path("sequence");
             if (sequence.isInt() && sequence.asInt() > 0 && sequence.asInt() <= 200) {
                 safe.put("sequence", sequence.asInt());
+            }
+        }
+
+        if (eventType.startsWith("ui_")) {
+            if (!forwardOpenUiEvent(emitter, eventType, source, uiArtifacts)) {
+                return;
             }
         }
 
@@ -1475,6 +1621,373 @@ public class AgentClient {
         emitter.send(SseEmitter.event()
                 .name(eventType)
                 .data(objectMapper.writeValueAsString(safe)));
+    }
+
+    /**
+     * 校验并转发 OpenUI 表现层事件。
+     * <p>只允许白名单组件、受控字段和受控深度/节点数；超限时改写为
+     * {@code ui_error}，让前端自动降级为 Markdown。</p>
+     *
+     * @return 是否继续发送原始事件；{@code false} 表示已改写为 ui_error
+     */
+    private boolean forwardOpenUiEvent(
+            SseEmitter emitter, String eventType, JsonNode source,
+            List<ObjectNode> uiArtifacts) throws IOException {
+        ObjectNode safe = objectMapper.createObjectNode();
+        safe.put("type", eventType);
+        String renderId = source.path("render_id").asText("");
+        if (renderId.matches("^[A-Za-z0-9:_-]{1,64}$")) {
+            safe.put("render_id", renderId);
+        }
+        if ("ui_start".equals(eventType) || "ui_complete".equals(eventType)) {
+            if (source.path("schema_version").canConvertToInt()
+                    && source.path("schema_version").asInt() >= 1
+                    && source.path("schema_version").asInt() <= 99) {
+                safe.put("schema_version", source.path("schema_version").asInt());
+            }
+        } else if ("ui_delta".equals(eventType)) {
+            if (source.path("sequence").canConvertToInt()
+                    && source.path("sequence").asInt() > 0
+                    && source.path("sequence").asInt() <= 200) {
+                safe.put("sequence", source.path("sequence").asInt());
+            }
+        } else if ("ui_error".equals(eventType)) {
+            copyIdentifier(source, safe, "code", 64);
+        }
+        if ("ui_delta".equals(eventType) || "ui_complete".equals(eventType)) {
+            String payloadField = "ui_delta".equals(eventType) ? "delta" : "spec";
+            JsonNode cleaned = sanitizeOpenUiSections(source.path(payloadField));
+            if (cleaned == null) {
+                return sendOpenUiError(emitter, renderId, "OPENUI_FILTER_REJECTED");
+            }
+            try {
+                if (objectMapper.writeValueAsBytes(cleaned).length > OPENUI_MAX_SPEC_BYTES) {
+                    return sendOpenUiError(emitter, renderId, "OPENUI_TOO_LARGE");
+                }
+            } catch (IOException invalidJson) {
+                return sendOpenUiError(emitter, renderId, "OPENUI_FILTER_REJECTED");
+            }
+            safe.set(payloadField, cleaned);
+            if ("ui_complete".equals(eventType)) {
+                String fallback = source.path("fallback_markdown").asText("");
+                if (!fallback.isEmpty()) {
+                    safe.put("fallback_markdown",
+                            fallback.substring(0, Math.min(fallback.length(), 200_000)));
+                }
+                if (uiArtifacts != null) {
+                    uiArtifacts.add(safe);
+                }
+            }
+        }
+        emitter.send(SseEmitter.event()
+                .name(eventType)
+                .data(objectMapper.writeValueAsString(safe)));
+        return true;
+    }
+
+    /** 以 ui_error 替换无效 OpenUI 事件，前端据此保留 Markdown 正文。 */
+    private boolean sendOpenUiError(SseEmitter emitter, String renderId, String code)
+            throws IOException {
+        ObjectNode safe = objectMapper.createObjectNode();
+        safe.put("type", "ui_error");
+        if (renderId.matches("^[A-Za-z0-9:_-]{1,64}$")) {
+            safe.put("render_id", renderId);
+        }
+        safe.put("code", code);
+        emitter.send(SseEmitter.event()
+                .name("ui_error")
+                .data(objectMapper.writeValueAsString(safe)));
+        return false;
+    }
+
+    /** 将收集到的 OpenUI 渲染打包为 {@code {"renders":[...]}}；无渲染时返回 null。 */
+    private String serializeUiArtifacts(List<ObjectNode> artifacts) {
+        if (artifacts == null || artifacts.isEmpty()) {
+            return null;
+        }
+        try {
+            ObjectNode envelope = objectMapper.createObjectNode();
+            envelope.set("renders", objectMapper.valueToTree(artifacts));
+            return objectMapper.writeValueAsString(envelope);
+        } catch (Exception serializationError) {
+            log.warn("序列化 OpenUI 渲染历史失败，将忽略该次渲染", serializationError);
+            return null;
+        }
+    }
+
+    /** OpenUI Spec 硬性超限信号：整段 Spec 判定失败并降级 Markdown。 */
+    private static final class OpenUiLimitException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+    }
+
+    /** 校验并清洗分节列表；任何硬性超限都返回 {@code null}。 */
+    private JsonNode sanitizeOpenUiSections(JsonNode sections) {
+        if (sections == null || !sections.isArray()) {
+            return null;
+        }
+        AtomicInteger nodes = new AtomicInteger();
+        try {
+            ArrayNode cleaned = objectMapper.createArrayNode();
+            for (JsonNode section : sections) {
+                JsonNode node = sanitizeOpenUiNode(section, 1, nodes);
+                if (node != null) {
+                    cleaned.add(node);
+                }
+            }
+            return cleaned;
+        } catch (OpenUiLimitException limit) {
+            return null;
+        }
+    }
+
+    private JsonNode sanitizeOpenUiNode(JsonNode node, int depth, AtomicInteger nodes) {
+        if (depth > OPENUI_MAX_DEPTH) {
+            throw new OpenUiLimitException();
+        }
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        String type = node.path("type").asText("");
+        if (!OPENUI_ALLOWED_TYPES.contains(type)) {
+            return null;
+        }
+        if (nodes.incrementAndGet() > OPENUI_MAX_NODES) {
+            throw new OpenUiLimitException();
+        }
+        Set<String> allowed = OPENUI_FIELDS.get(type);
+        ObjectNode cleaned = objectMapper.createObjectNode();
+        cleaned.put("type", type);
+        for (Map.Entry<String, JsonNode> entry : node.properties()) {
+            String key = entry.getKey();
+            JsonNode value = entry.getValue();
+            if ("type".equals(key) || !allowed.contains(key)) {
+                continue;
+            }
+            Integer maxChars = OPENUI_TEXT_FIELDS.get(key);
+            if (maxChars != null) {
+                if (!value.isTextual()) {
+                    return null;
+                }
+                String text = value.asText().trim();
+                if (text.isEmpty()) {
+                    return null;
+                }
+                cleaned.put(key, text.substring(0, Math.min(text.length(), maxChars)));
+            } else if ("src".equals(key) || "poster".equals(key)) {
+                String url = safeMediaUrl(value);
+                if (url == null) {
+                    return null;
+                }
+                cleaned.put(key, url);
+            } else if ("columns".equals(key)) {
+                ArrayNode columns = cleanTextArray(value, OPENUI_MAX_COLUMNS, 128);
+                if (columns == null) {
+                    return null;
+                }
+                cleaned.set(key, columns);
+            } else if ("labels".equals(key)) {
+                ArrayNode labels = cleanTextArray(value, OPENUI_MAX_LABELS, OPENUI_MAX_LABEL);
+                if (labels == null) {
+                    return null;
+                }
+                cleaned.set(key, labels);
+            } else if ("rows".equals(key)) {
+                ArrayNode rows = cleanRows(value);
+                if (rows == null) {
+                    return null;
+                }
+                cleaned.set(key, rows);
+            } else if ("cards".equals(key)) {
+                ArrayNode cards = cleanNodeArray(value, depth, nodes, OPENUI_MAX_CARDS);
+                if (cards == null) {
+                    return null;
+                }
+                cleaned.set(key, cards);
+            } else if ("series".equals(key)) {
+                ArrayNode series = cleanSeriesArray(value, depth, nodes);
+                if (series == null) {
+                    return null;
+                }
+                cleaned.set(key, series);
+            }
+        }
+        return cleaned;
+    }
+
+    private String safeMediaUrl(JsonNode value) {
+        if (!value.isTextual()) {
+            return null;
+        }
+        String url = value.asText();
+        if (url.isEmpty()) {
+            return null;
+        }
+        if (url.length() > OPENUI_MAX_MEDIA_URL) {
+            url = url.substring(0, OPENUI_MAX_MEDIA_URL);
+        }
+        if (url.startsWith("https://")) {
+            return url;
+        }
+        String lowered = url.toLowerCase(Locale.ROOT);
+        if (lowered.startsWith("http://localhost")
+                || lowered.startsWith("http://127.0.0.1")
+                || lowered.startsWith("http://[::1]")) {
+            return url;
+        }
+        return null;
+    }
+
+    private ArrayNode cleanTextArray(JsonNode value, int maxItems, int maxChars) {
+        if (!value.isArray() || value.isEmpty()) {
+            return null;
+        }
+        ArrayNode cleaned = objectMapper.createArrayNode();
+        int count = 0;
+        for (JsonNode item : value) {
+            if (count >= maxItems) {
+                break;
+            }
+            if (!item.isTextual() || item.asText().trim().isEmpty()) {
+                return null;
+            }
+            String text = item.asText().trim();
+            cleaned.add(text.substring(0, Math.min(text.length(), maxChars)));
+            count++;
+        }
+        return cleaned;
+    }
+
+    private ArrayNode cleanRows(JsonNode value) {
+        if (!value.isArray() || value.isEmpty()) {
+            return null;
+        }
+        ArrayNode cleaned = objectMapper.createArrayNode();
+        int count = 0;
+        for (JsonNode row : value) {
+            if (count >= OPENUI_MAX_ROWS) {
+                break;
+            }
+            if (!row.isArray()) {
+                return null;
+            }
+            ArrayNode cells = objectMapper.createArrayNode();
+            int cellCount = 0;
+            for (JsonNode cell : row) {
+                if (cellCount >= OPENUI_MAX_COLUMNS) {
+                    break;
+                }
+                String text = cell.isTextual() ? cell.asText() : String.valueOf(cell);
+                cells.add(text.substring(0, Math.min(text.length(), 128)));
+                cellCount++;
+            }
+            cleaned.add(cells);
+            count++;
+        }
+        return cleaned;
+    }
+
+    private ArrayNode cleanNodeArray(
+            JsonNode value, int depth, AtomicInteger nodes, int maxItems) {
+        if (!value.isArray() || value.isEmpty()) {
+            return null;
+        }
+        ArrayNode cleaned = objectMapper.createArrayNode();
+        int count = 0;
+        for (JsonNode item : value) {
+            if (count >= maxItems) {
+                break;
+            }
+            JsonNode node = sanitizeOpenUiNode(item, depth + 1, nodes);
+            if (node != null) {
+                cleaned.add(node);
+                count++;
+            }
+        }
+        return cleaned;
+    }
+
+    private ArrayNode cleanSeriesArray(JsonNode value, int depth, AtomicInteger nodes) {
+        if (!value.isArray() || value.isEmpty()) {
+            return null;
+        }
+        ArrayNode cleaned = objectMapper.createArrayNode();
+        int count = 0;
+        for (JsonNode series : value) {
+            if (count >= OPENUI_MAX_SERIES) {
+                break;
+            }
+            if (!series.isObject()) {
+                return null;
+            }
+            ObjectNode cleanedSeries = objectMapper.createObjectNode();
+            String name = series.path("name").asText("");
+            cleanedSeries.put("name", name.substring(0, Math.min(name.length(),
+                    OPENUI_MAX_LABEL)));
+            JsonNode data = series.path("data");
+            if (!data.isArray() || data.isEmpty()) {
+                return null;
+            }
+            boolean pieSlice = data.get(0).isObject();
+            ArrayNode dataNodes = objectMapper.createArrayNode();
+            int dataCount = 0;
+            for (JsonNode item : data) {
+                if (dataCount >= OPENUI_MAX_LABELS) {
+                    break;
+                }
+                if (pieSlice) {
+                    JsonNode cleanedItem = cleanPieSlice(item);
+                    if (cleanedItem == null) {
+                        return null;
+                    }
+                    dataNodes.add(cleanedItem);
+                } else {
+                    JsonNode cleanedNumber = cleanNumber(item);
+                    if (cleanedNumber == null) {
+                        return null;
+                    }
+                    dataNodes.add(cleanedNumber);
+                }
+                dataCount++;
+            }
+            cleanedSeries.set("data", dataNodes);
+            cleaned.add(cleanedSeries);
+            count++;
+        }
+        return cleaned;
+    }
+
+    private JsonNode cleanPieSlice(JsonNode item) {
+        if (!item.isObject()) {
+            return null;
+        }
+        String name = item.path("name").asText("");
+        JsonNode value = item.path("value");
+        JsonNode number = cleanNumber(value);
+        if (number == null) {
+            return null;
+        }
+        ObjectNode cleaned = objectMapper.createObjectNode();
+        cleaned.put("name", name.substring(0, Math.min(name.length(), OPENUI_MAX_LABEL)));
+        cleaned.set("value", number);
+        return cleaned;
+    }
+
+    private JsonNode cleanNumber(JsonNode value) {
+        if (!value.isNumber()) {
+            return null;
+        }
+        if (value.isIntegralNumber()) {
+            long number = value.asLong();
+            if (number > OPENUI_MAX_NUMBER_ABS || number < -OPENUI_MAX_NUMBER_ABS) {
+                return null;
+            }
+            return objectMapper.getNodeFactory().numberNode(number);
+        }
+        double number = value.asDouble();
+        if (number > OPENUI_MAX_NUMBER_ABS || number < -OPENUI_MAX_NUMBER_ABS) {
+            return null;
+        }
+        return objectMapper.getNodeFactory().numberNode(number);
     }
 
     private void sendSafeStreamError(
@@ -1881,6 +2394,22 @@ public class AgentClient {
             AgentUserContext userContext,
             AgentToolAccess toolAccess,
             List<AiChatAttachmentAgentDTO> attachments) {
+        return buildRequest(
+                message, sessionId, userId, mode, contextData,
+                userContext, toolAccess, attachments, null);
+    }
+
+    /** 构造包含服务端解析附件与业务标签的统一对话请求体。 */
+    String buildRequest(
+            String message,
+            String sessionId,
+            String userId,
+            String mode,
+            Object contextData,
+            AgentUserContext userContext,
+            AgentToolAccess toolAccess,
+            List<AiChatAttachmentAgentDTO> attachments,
+            String businessTag) {
         try {
             ObjectNode root = objectMapper.createObjectNode();
             root.put("message", message);
@@ -1894,6 +2423,9 @@ public class AgentClient {
             }
             if (userId != null && !userId.trim().isEmpty()) {
                 root.put("user_id", userId.trim());
+            }
+            if (businessTag != null && !businessTag.trim().isEmpty()) {
+                root.put("business_tag", businessTag.trim());
             }
             if (attachments != null && !attachments.isEmpty()) {
                 ArrayNode attachmentNodes = root.putArray("attachments");

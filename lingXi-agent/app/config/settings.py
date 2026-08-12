@@ -124,6 +124,11 @@ class Settings(BaseSettings):
         validation_alias="AGENT_TOOLS_ENABLED",
         description="Expose Java-backed business tools to the Agent",
     )
+    agent_openui_enabled: bool = Field(
+        default=True,
+        validation_alias="AGENT_OPENUI_ENABLED",
+        description="Emit OpenUI presentation events in data-analysis mode",
+    )
     agent_write_actions_enabled: bool = Field(
         default=False,
         validation_alias="AGENT_WRITE_ACTIONS_ENABLED",

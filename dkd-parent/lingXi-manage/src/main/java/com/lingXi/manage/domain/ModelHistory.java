@@ -35,6 +35,9 @@ public class ModelHistory extends BaseEntity
     /** 消息内容 */
     private String content;
 
+    /** OpenUI 渲染历史（JSON：{"renders":[...]}，仅助手成功消息可能携带） */
+    private String uiJson;
+
     /** 消息类型：user（用户消息）/assistant（助手消息） */
     private String messageType;
 

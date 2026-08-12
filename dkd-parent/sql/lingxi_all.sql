@@ -2211,6 +2211,7 @@ CREATE TABLE tb_model_history
     error_code   VARCHAR(64)                         DEFAULT NULL COMMENT '稳定错误码（与 Java/Agent 契约一致）',
     request_id   VARCHAR(64)                         DEFAULT NULL COMMENT '请求标识（request_id，跨 Java/Agent 链路）',
     content      TEXT                       NOT NULL COMMENT '消息内容',
+    ui_json      TEXT                               DEFAULT NULL COMMENT 'OpenUI 渲染历史（JSON：{"renders":[...]}，仅助手成功消息可能携带）',
     model_name   VARCHAR(64)                         DEFAULT NULL COMMENT '使用的模型名称',
     tokens       INT UNSIGNED                        DEFAULT 0 COMMENT '消耗的token数量',
     created_at   DATETIME                            DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

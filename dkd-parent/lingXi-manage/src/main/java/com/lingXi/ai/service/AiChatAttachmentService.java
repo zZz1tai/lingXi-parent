@@ -353,6 +353,7 @@ public class AiChatAttachmentService {
         view.setUserId(history.getUserId());
         view.setUserName(history.getUserName());
         view.setContent(history.getContent());
+        view.setUiJson(history.getUiJson());
         view.setMessageType(history.getMessageType());
         view.setModelName(history.getModelName());
         view.setTokens(history.getTokens());

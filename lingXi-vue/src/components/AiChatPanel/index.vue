@@ -88,6 +88,10 @@ import { RefreshRight, ArrowRight, Promotion, ChatDotRound } from '@element-plus
 import { marked } from 'marked';
 import { createSession, streamChatWithQwen } from '@/api/ai';
 import useUserStore from '@/store/modules/user';
+import {
+  isSafeExternalUrl,
+  sanitizeRawHtmlBlock
+} from '@/utils/markdownSafety';
 
 const props = defineProps({
   // 外部传入的上下文（如当前设备、点位信息）
@@ -132,11 +136,20 @@ const messages = ref([
   },
 ]);
 
-// Markdown 渲染
+// Markdown 渲染：转义原始 HTML，链接仅允许 https 与本地回环 http。
+const chatPanelRenderer = new marked.Renderer();
+chatPanelRenderer.html = token => sanitizeRawHtmlBlock(token?.text || '');
+chatPanelRenderer.link = ({ href, title, text }) => {
+  if (!isSafeExternalUrl(href)) return String(text || href || '').replace(/</g, '&lt;');
+  const attrs = `href="${href.replace(/"/g, '&quot;')}"`
+    + (title ? ` title="${title.replace(/"/g, '&quot;')}"` : '')
+    + ' rel="noopener noreferrer" target="_blank"';
+  return `<a ${attrs}>${text}</a>`;
+};
 const renderMd = (text) => {
   if (!text) return '';
   try {
-    return marked.parse(text, { breaks: true });
+    return marked.parse(text, { breaks: true, renderer: chatPanelRenderer });
   } catch {
     return text;
   }
