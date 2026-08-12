@@ -125,16 +125,7 @@
             >
               <!-- 助手消息 -->
               <div v-if="!item.isUser" class="assistant-message-wrapper">
-                <div class="message-avatar">
-                  <div class="avatar assistant-avatar">
-                    <img src="/favicon.ico" alt="灵犀" class="avatar-img" />
-                  </div>
-                </div>
                 <div class="message-content-wrapper">
-                  <div class="message-header">
-                    <span class="message-sender">灵犀</span>
-                    <span class="message-time">{{ item.time || formatTime(item.createTime) }}</span>
-                  </div>
                   <div class="message-bubble assistant-bubble">
                     <div class="message-text markdown-content" v-html="renderMarkdown(item.content)"></div>
                     <AgentExecutionTrace
@@ -247,12 +238,8 @@
               </div>
               
               <!-- 用户消息 -->
-              <div v-else class="user-message-wrapper">
+<div v-else class="user-message-wrapper">
                 <div class="message-content-wrapper user-wrapper">
-                  <div class="message-header user-header">
-                    <span class="message-time">{{ item.time }}</span>
-                    <span class="message-sender">{{ userStore.name }}</span>
-                  </div>
                   <div class="message-bubble user-bubble">
                     <div v-if="item.attachments?.length" class="message-attachments">
                       <a
@@ -280,9 +267,6 @@
                     </div>
                     <div class="message-text markdown-content" v-html="renderMarkdown(item.content)"></div>
                   </div>
-                </div>
-                <div class="message-avatar user-avatar">
-                  <div class="avatar user-avatar-icon">👤</div>
                 </div>
               </div>
             </div>
@@ -2478,24 +2462,6 @@ onBeforeUnmount(() => {
 
 /* 消息通用样式 */
 .message-item {
-  .message-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
-    font-size: 13px;
-
-    .message-sender {
-      font-weight: 700;
-      color: var(--lx-text);
-    }
-
-    .message-time {
-      color: var(--lx-muted);
-      font-size: 12px;
-    }
-  }
-
   .message-bubble {
     padding: 10px 14px;
     border-radius: 16px;
@@ -2712,40 +2678,16 @@ onBeforeUnmount(() => {
 
   > .message-content-wrapper {
     min-width: 0;
-    max-width: calc(100% - 48px);
-  }
-
-  .message-avatar {
-    .assistant-avatar {
-      width: 36px;
-      height: 36px;
-      border-radius: 12px;
-      background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      border: none;
-      box-shadow: 0 4px 12px rgba(15, 118, 110, 0.25);
-
-      .avatar-img {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        padding: 5px;
-        border: none;
-        box-shadow: none;
-        background: transparent;
-      }
-    }
+    max-width: 100%;
   }
 
   .assistant-bubble {
-    background: var(--lx-surface);
-    border: 1px solid var(--lx-border-soft);
-    border-radius: 4px 16px 16px 16px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
     color: var(--lx-text);
-    box-shadow: var(--lx-shadow-sm);
+    box-shadow: none;
+    padding: 0;
 
     .approval-card {
       margin: 14px 0;
@@ -2952,32 +2894,6 @@ onBeforeUnmount(() => {
     min-width: 0;
     max-width: min(72%, 620px);
     text-align: right;
-  }
-
-  .user-header {
-    justify-content: flex-end;
-
-    .message-sender {
-      color: var(--lx-primary);
-    }
-  }
-
-  .message-avatar {
-    align-self: flex-start;
-    padding-top: 26px;
-
-    .user-avatar-icon {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
-      color: white;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 16px;
-      box-shadow: 0 4px 12px rgba(15, 118, 110, 0.25);
-    }
   }
 
   .user-bubble {
@@ -3828,7 +3744,7 @@ onBeforeUnmount(() => {
   }
 
   .user-message-wrapper .user-wrapper {
-    max-width: calc(100% - 48px);
+    max-width: 100%;
   }
 
   .message-bubble :deep(.markdown-content img) {
