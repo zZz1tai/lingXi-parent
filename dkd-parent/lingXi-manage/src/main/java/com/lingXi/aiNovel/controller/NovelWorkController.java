@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import com.lingXi.common.annotation.Log;
 import com.lingXi.common.core.controller.BaseController;
 import com.lingXi.common.core.domain.AjaxResult;
@@ -26,6 +27,7 @@ import com.lingXi.aiNovel.domain.AiNovelForeshadow;
 import com.lingXi.aiNovel.domain.AiNovelOutline;
 import com.lingXi.aiNovel.domain.AiNovelSetting;
 import com.lingXi.aiNovel.domain.AiNovelWork;
+import com.lingXi.aiNovel.domain.dto.NovelPacingRequestDTO;
 import com.lingXi.aiNovel.service.IAiNovelChapterService;
 import com.lingXi.aiNovel.service.IAiNovelForeshadowService;
 import com.lingXi.aiNovel.service.IAiNovelOutlineService;
@@ -299,6 +301,16 @@ public class NovelWorkController extends BaseController
     }
 
     // ── 三层大纲 ──────────────────────────────────────
+
+    /** 分析章节节奏（评分/档位/维度/问题建议），与精修模板联动。 */
+    @Operation(summary = "分析小说章节节奏")
+    @PreAuthorize("@ss.hasPermi('novel:work:list')")
+    @Log(title = "AI小说节奏", businessType = BusinessType.OTHER)
+    @PostMapping("/pacing/analyze")
+    public AjaxResult analyzePacing(@RequestBody @Valid NovelPacingRequestDTO request)
+    {
+        return success(workService.analyzeChapterPacing(request));
+    }
 
     /** 获取作品三层大纲平铺列表（按层级与排序，前端据此组树）。 */
     @Operation(summary = "获取小说三层大纲")

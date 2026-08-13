@@ -41,15 +41,15 @@
           </span>
           <div class="nk-msg-bubble">
             <template v-if="message.role === 'user'">
-              {{ message.content }}
+              {{ polishLabel(message.content) }}
             </template>
             <template v-else>
               <div class="nk-msg-copy" v-html="renderNovelMarkdown(message.content)" />
               <span v-if="message.streaming" class="nk-typing-cursor" />
               <template v-if="message.role === 'ai' && !message.streaming && message.content">
                 <div class="nk-msg-actions">
-                  <button class="nk-chip" type="button" @click="emitInsert(message.content)">
-                    <el-icon><Download /></el-icon>采纳为正文
+                  <button class="nk-chip" type="button" @click="emitInsert(extractPolishBody(message.content))">
+                    <el-icon><Download /></el-icon>{{ isPolishReply(message) ? '采纳精修后正文' : '采纳为正文' }}
                   </button>
                   <button class="nk-chip" type="button" @click="handleRegenerate(message)">
                     <el-icon><RefreshRight /></el-icon>再写一次
@@ -74,7 +74,47 @@
         >
           {{ chip }}
         </button>
+        <button type="button" class="nk-chip nk-polish-toggle" :class="{ 'is-active': polishOpen }" @click="polishOpen = !polishOpen">
+          <el-icon><MagicStick /></el-icon>精修模板
+        </button>
       </div>
+
+      <div v-if="polishOpen && !streaming" class="nk-polish-panel">
+        <p class="nk-polish-hint">选择精修方向，AI 会对当前章节正文精修，并逐条标注修改点。全文过长时自动取开头部分。</p>
+        <div v-if="props.styleCards?.length" class="nk-polish-group">
+          <p class="nk-polish-category">作品文风 · 模板沉淀</p>
+          <div class="nk-polish-grid">
+            <button
+              v-for="styleCard in props.styleCards"
+              :key="styleCard.settingId"
+              type="button"
+              class="nk-polish-card"
+              :title="styleCard.content"
+              @click="sendStyle(styleCard)"
+            >
+              <span class="nk-polish-name">{{ styleCard.title }}</span>
+              <span class="nk-polish-desc">{{ (styleCard.content || '').slice(0, 24) }}</span>
+            </button>
+          </div>
+        </div>
+        <div v-for="group in polishGroups" :key="group.category" class="nk-polish-group">
+          <p class="nk-polish-category">{{ group.category }}</p>
+          <div class="nk-polish-grid">
+            <button
+              v-for="template in group.items"
+              :key="template.id"
+              type="button"
+              class="nk-polish-card"
+              :title="template.description"
+              @click="sendPolish(template)"
+            >
+              <span class="nk-polish-name">{{ template.name }}</span>
+              <span class="nk-polish-desc">{{ template.description }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <textarea
         v-model="draftText"
         rows="2"
@@ -109,11 +149,24 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { getChatHistory } from '@/api/ai'
 import { streamNovelWrite } from '@/api/novel/novel'
 import { renderNovelMarkdown } from '../novelMarkdown'
+import {
+  buildPolishMessage,
+  buildStyleMessage,
+  extractPolishBody,
+  parsePolishMessage,
+  parseStyleMessage,
+  polishLabel,
+  POLISH_TEMPLATES
+} from '@/utils/novelPolish'
+
+// 精修模板一次携带的目标文字上限（防止消息过长）
+const POLISH_TARGET_MAX_CHARS = 8000
 
 const props = defineProps({
   work: { type: Object, default: null },
   chapter: { type: Object, default: null },
   manuscript: { type: String, default: '' },
+  styleCards: { type: Array, default: () => [] },
   userId: { type: [String, Number], default: '' },
   userName: { type: String, default: '' }
 })
@@ -124,6 +177,7 @@ const messages = ref([])
 const draftText = ref('')
 const streaming = ref(false)
 const scrollRef = ref(null)
+const polishOpen = ref(false)
 let abortController = null
 
 // ── 会话：每个作品一个独立 AI 会话 ─────────────────────
@@ -201,6 +255,55 @@ const suggestionPrompts = computed(() => {
         '为短篇故事设计一个出人意料又合理的结局'
       ]
 })
+
+// ── 精修模板面板 ──────────────────────────────────────
+const polishGroups = computed(() => {
+  const groups = []
+  for (const template of POLISH_TEMPLATES) {
+    let group = groups.find(item => item.category === template.category)
+    if (!group) {
+      group = { category: template.category, items: [] }
+      groups.push(group)
+    }
+    group.items.push(template)
+  }
+  return groups
+})
+
+function isPolishReply(message) {
+  const index = messages.value.findIndex(item => item.id === message.id)
+  if (index <= 0) return false
+  const previous = messages.value[index - 1]
+  return previous?.role === 'user' && (
+    parsePolishMessage(previous.content) !== null || parseStyleMessage(previous.content) !== null
+  )
+}
+
+function sendPolish(template) {
+  const target = (props.manuscript || '').trim()
+  if (!target) {
+    ElMessage.warning('正文还是空的，先写几段再精修')
+    return
+  }
+  const trimmed = target.length > POLISH_TARGET_MAX_CHARS
+    ? target.slice(0, POLISH_TARGET_MAX_CHARS)
+    : target
+  send(buildPolishMessage(template.id, trimmed), false)
+  polishOpen.value = false
+}
+
+function sendStyle(styleCard) {
+  const target = (props.manuscript || '').trim()
+  if (!target) {
+    ElMessage.warning('正文还是空的，先写几段再按文风改写')
+    return
+  }
+  const trimmed = target.length > POLISH_TARGET_MAX_CHARS
+    ? target.slice(0, POLISH_TARGET_MAX_CHARS)
+    : target
+  send(buildStyleMessage(styleCard, trimmed), false)
+  polishOpen.value = false
+}
 
 // ── 发送 ─────────────────────────────────────────────
 const canSend = computed(() => !!(draftText.value.trim() || streaming.value) && !streaming.value)
@@ -324,5 +427,81 @@ defineExpose({ workSessionId, send })
   color: var(--nk-seal);
   border-left: 3px solid var(--nk-seal);
   padding-left: 8px;
+}
+
+.nk-polish-toggle {
+  margin-left: auto;
+
+  &.is-active {
+    background: var(--nk-sienna);
+    color: var(--nk-paper);
+  }
+}
+
+.nk-polish-panel {
+  border: 1px solid rgba(160, 86, 46, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 251, 244, 0.9);
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.nk-polish-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--nk-sienna);
+}
+
+.nk-polish-group {
+  margin-bottom: 8px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.nk-polish-category {
+  margin: 0 0 4px;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--nk-sienna);
+  font-weight: 700;
+}
+
+.nk-polish-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
+}
+
+.nk-polish-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(160, 86, 46, 0.4);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: var(--nk-sienna);
+    border-color: var(--nk-sienna);
+    color: var(--nk-paper);
+  }
+}
+
+.nk-polish-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.nk-polish-desc {
+  font-size: 11.5px;
+  opacity: 0.75;
 }
 </style>

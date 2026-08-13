@@ -1257,3 +1257,141 @@ $nk-gold: #b9922c;
   font-size: 13px;
   &:active { cursor: grabbing; }
 }
+
+// 作品弹窗：节奏档位选择
+.nk-pacing-select {
+  width: 100%;
+}
+
+.nk-form-hint {
+  font-size: 12px;
+  color: var(--nk-ink-faint);
+  margin-top: 4px;
+  letter-spacing: 0.5px;
+}
+
+// 节奏分析面板
+.nk-pacing-dialog {
+  .nk-pacing-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 32px 0;
+    color: var(--nk-ink-soft);
+    font-size: 14px;
+    letter-spacing: 2px;
+    .el-icon { font-size: 28px; color: var(--nk-sienna); }
+  }
+
+  .nk-pacing-head {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed rgba(110, 72, 34, 0.3);
+  }
+
+  .nk-pacing-score {
+    flex: none;
+    text-align: center;
+    strong {
+      display: block;
+      font-size: 44px;
+      line-height: 1.1;
+      color: var(--nk-sienna);
+    }
+    span {
+      display: block;
+      font-size: 12px;
+      color: var(--nk-ink-faint);
+      letter-spacing: 1px;
+    }
+  }
+
+  .nk-pacing-meta {
+    flex: 1;
+    .nk-pacing-level { font-size: 14px; font-weight: 700; color: var(--nk-ink); margin-bottom: 4px; }
+    .nk-pacing-note { font-size: 13px; color: var(--nk-ink-soft); margin: 0; }
+  }
+
+  .nk-pacing-levelnote {
+    margin: 12px 0 0;
+    font-size: 13px;
+    color: var(--nk-sienna);
+  }
+
+  .nk-pacing-summary {
+    margin: 8px 0 14px;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--nk-ink);
+    text-indent: 2em;
+  }
+
+  .nk-pacing-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .nk-pacing-dim {
+    background: rgba(255, 250, 235, 0.55);
+    border: 1px solid rgba(110, 72, 34, 0.18);
+    border-radius: 8px;
+    padding: 10px 12px;
+
+    .nk-pacing-dim-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      color: var(--nk-ink);
+      margin-bottom: 6px;
+      strong { color: var(--nk-sienna); font-size: 15px; }
+    }
+    .nk-pacing-dim-note {
+      margin: 6px 0 0;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--nk-ink-soft);
+    }
+  }
+
+  .nk-pacing-section-title {
+    margin: 8px 0 8px;
+    font-size: 14px;
+    color: var(--nk-ink);
+    letter-spacing: 1px;
+  }
+
+  .nk-pacing-issues {
+    list-style: none;
+    margin: 0 0 14px;
+    padding: 0;
+    li {
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--nk-ink);
+      padding: 6px 0;
+      border-bottom: 1px dashed rgba(110, 72, 34, 0.2);
+      .nk-pacing-pos { color: var(--nk-ink-faint); }
+    }
+    .nk-pacing-fix {
+      margin: 4px 0 0;
+      font-size: 12px;
+      color: var(--nk-ink-soft);
+    }
+  }
+
+  .nk-pacing-suggestions {
+    margin: 0;
+    padding-left: 1.2em;
+    li {
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--nk-ink);
+    }
+  }
+}

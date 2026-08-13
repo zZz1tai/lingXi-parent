@@ -2780,6 +2780,7 @@ CREATE TABLE IF NOT EXISTS ai_novel_work (
   synopsis TEXT DEFAULT NULL COMMENT '作品梗概',
   manuscript LONGTEXT DEFAULT NULL COMMENT '短篇正文（长篇按章节存储）',
   status VARCHAR(16) NOT NULL DEFAULT 'draft' COMMENT '状态:draft-草稿, writing-写作中, finished-已完成',
+  pacing_level VARCHAR(16) NOT NULL DEFAULT 'balanced' COMMENT '节奏档位:relaxed-舒缓, steady-平稳, balanced-均衡, intense-紧凑, rapid-激烈',
   owner_user_id BIGINT NOT NULL COMMENT '所属用户ID',
   create_by VARCHAR(64) DEFAULT '' COMMENT '创建者',
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

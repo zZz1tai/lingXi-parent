@@ -751,6 +751,35 @@ public class AgentClient {
     }
 
     /**
+     * 调用 Python 分析小说章节节奏。
+     * <p>直连白名单 LLM，不进入 Agent 图；请求携带作品节奏档位与章节正文，
+     * 响应包含节奏评分、实际档位、四维分析与问题建议列表。</p>
+     *
+     * @param pacingRequest 节奏分析请求（作品名/题材/章节标题/档位/正文）
+     * @return 分析结果 data 节点（score/level/dimensions/issues/suggestions）
+     */
+    public JsonNode analyzeNovelPacing(Object pacingRequest) {
+        try {
+            ObjectNode root = (ObjectNode) objectMapper.valueToTree(pacingRequest);
+            putLlmConfig(root);
+
+            JsonNode response = requestJson(
+                    "POST",
+                    config.getNovelPacingUrl(),
+                    objectMapper.writeValueAsString(root));
+            requireSuccess(response, "AGENT_PACING_FAILED", "AI 分析章节节奏失败");
+            JsonNode data = response.get("data");
+            if (data == null || data.get("score") == null || !data.get("score").isNumber()) {
+                throw new RuntimeException("AI 返回了空的节奏分析结果");
+            }
+            return data;
+        } catch (Exception e) {
+            log.error("AI 分析章节节奏失败，errorType={}", e.getClass().getSimpleName());
+            throw new RuntimeException("AI 分析章节节奏失败", e);
+        }
+    }
+
+    /**
      * 根据书名流式拟写故事梗概，将 Python 侧的 token 事件逐字转发给浏览器。
      * <p>与 {@link #generateNovelSynopsis} 同构，但不做聚合等待，
      * 前端可在梗概文本框中实时看到生成过程。</p>

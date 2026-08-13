@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 # ── 基础响应信封 ────────────────────────────────────────────────────────────
@@ -125,6 +125,30 @@ class NovelOutlineResponse(BaseResponse):
     """``POST /api/v1/novel/outline/generate``端点的响应。"""
 
     data: NovelOutlineData
+
+
+class NovelPacingData(BaseModel):
+    """章节节奏评分与建议。
+
+    ``score`` 为 1~100 总分；``level`` 为模型判断的实际节奏档位；
+    ``dimensions`` 为四个维度评分；``issues`` 为问题清单；
+    ``suggestions`` 为总体建议（与精修模板能力呼应）。
+    """
+
+    score: int
+    score_note: str = Field(validation_alias=AliasChoices("score_note", "scoreNote"))
+    level: str
+    level_note: str = Field(validation_alias=AliasChoices("level_note", "levelNote"))
+    summary: str
+    dimensions: list[dict[str, Any]] = Field(default_factory=list)
+    issues: list[dict[str, Any]] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+
+
+class NovelPacingResponse(BaseResponse):
+    """``POST /api/v1/novel/pacing/analyze``端点的响应。"""
+
+    data: NovelPacingData
 
 
 class MemoryListData(BaseModel):

@@ -20,7 +20,7 @@ import { Delete, Plus } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 
 const props = defineProps({
-  type: { type: String, required: true }, // character | world | outline
+  type: { type: String, required: true }, // character | world | outline | style
   cards: { type: Array, default: () => [] }
 })
 
@@ -29,13 +29,15 @@ const emit = defineEmits(['add', 'edit', 'delete'])
 const typeLabels = {
   character: '人物',
   world: '世界观',
-  outline: '大纲'
+  outline: '大纲',
+  style: '文风'
 }
 
 const addLabels = {
   character: '新立一位人物',
   world: '补一条设定',
-  outline: '记一节大纲'
+  outline: '记一节大纲',
+  style: '存一种文风'
 }
 
 function typeLabel(type) {

@@ -14,9 +14,15 @@ from langgraph.errors import GraphRecursionError
 from app.agents.builder import get_recursion_limit
 from app.agents.novel_prompts import (
     NOVEL_OUTLINE_SYSTEM_PROMPT,
+    NOVEL_PACING_ANALYSIS_SYSTEM_PROMPT,
     NOVEL_SYNOPSIS_SYSTEM_PROMPT,
     compose_novel_outline_prompt,
+    compose_novel_pacing_analysis_prompt,
+    compose_novel_polish_instruction,
+    compose_novel_style_instruction,
     compose_novel_synopsis_prompt,
+    parse_polish_message,
+    parse_style_message,
 )
 from app.agents.state import checkpoint_thread_id
 from app.api.dependencies import (
@@ -43,6 +49,7 @@ from app.observability.tracing import with_trace
 from app.schemas.request import (
     DeleteChatThreadRequest,
     NovelOutlineRequest,
+    NovelPacingRequest,
     NovelSynopsisRequest,
     NovelWriteRequest,
 )
@@ -50,6 +57,8 @@ from app.schemas.response import (
     BaseResponse,
     NovelOutlineData,
     NovelOutlineResponse,
+    NovelPacingData,
+    NovelPacingResponse,
     NovelSynopsisData,
     NovelSynopsisResponse,
     StreamEvent,
@@ -102,6 +111,26 @@ def _novel_context_data(
     return dict(context)
 
 
+def _expand_polish_message(message: str) -> str:
+    """把「【精修】<template_id>\\n<目标文字>」标记消息展开为完整精修指令。"""
+
+    parsed = parse_polish_message(message)
+    if parsed is None:
+        return message
+    template_id, target = parsed
+    return compose_novel_polish_instruction(template_id, target)
+
+
+def _expand_style_message(message: str) -> str:
+    """把「【文风】<标题>\\n<内容>\\n\\n<目标文字>」标记展开为按文风改写指令。"""
+
+    parsed = parse_style_message(message)
+    if parsed is None:
+        return message
+    title, body, target = parsed
+    return compose_novel_style_instruction(title, body, target)
+
+
 async def _stream_novel_events(
     request: NovelWriteRequest,
     request_id: str,
@@ -114,6 +143,7 @@ async def _stream_novel_events(
     final_response = ""
     agent_stream: Any = None
     try:
+        message = _expand_polish_message(_expand_style_message(request.message))
         context = create_novel_agent_context(
             llm_config=request.llm_config,
             user_id=request.user_id,
@@ -129,7 +159,7 @@ async def _stream_novel_events(
             model=context.model,
         )
         agent_stream = agent.astream(
-            {"messages": [{"role": "user", "content": request.message}]},
+            {"messages": [{"role": "user", "content": message}]},
             config=with_trace(
                 _build_novel_agent_config(request, request_id=request_id),
                 "generate-novel-stream",
@@ -525,6 +555,162 @@ async def novel_outline_generate(
         data=NovelOutlineData(
             tree=payload["tree"],
             gaps=payload["gaps"],
+        ),
+    )
+
+
+#: 节奏分析允许的问题类型白名单。
+_PACING_ISSUE_TYPES = {"PLODDING", "RUSHED", "MONOTONE", "PADDING", "NO_HOOK"}
+
+#: 节奏分析固定的四个评估维度。
+_PACING_DIMENSIONS = {"事件密度", "对话与动作", "情绪起伏", "段落节奏"}
+
+
+def _validate_pacing_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """校验并规范化模型输出的节奏分析载荷。"""
+
+    score = data.get("score")
+    if not isinstance(score, int) or not 1 <= score <= 100:
+        raise ValueError("score must be an integer between 1 and 100")
+    level = data.get("level")
+    if not isinstance(level, str) or level not in {
+        "relaxed", "steady", "balanced", "intense", "rapid",
+    }:
+        raise ValueError(f"invalid pacing level: {level!r}")
+    score_note = data.get("scoreNote") or data.get("score_note")
+    level_note = data.get("levelNote") or data.get("level_note")
+    summary = data.get("summary")
+    if not isinstance(score_note, str) or not score_note.strip():
+        raise ValueError("pacing analysis missing scoreNote")
+    if not isinstance(level_note, str) or not level_note.strip():
+        raise ValueError("pacing analysis missing levelNote")
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("pacing analysis missing summary")
+
+    dimensions = data.get("dimensions") or []
+    if not isinstance(dimensions, list):
+        raise ValueError("dimensions must be a list")
+    for dimension in dimensions:
+        if not isinstance(dimension, dict):
+            raise ValueError(f"dimension item must be an object, got {type(dimension).__name__}")
+        if dimension.get("name") not in _PACING_DIMENSIONS:
+            raise ValueError(f"invalid pacing dimension: {dimension.get('name')!r}")
+        dim_score = dimension.get("score")
+        if not isinstance(dim_score, int) or not 1 <= dim_score <= 100:
+            raise ValueError("dimension score must be an integer between 1 and 100")
+        if not isinstance(dimension.get("note"), str) or not dimension["note"].strip():
+            raise ValueError("dimension note must be non-empty")
+
+    issues = data.get("issues") or []
+    if not isinstance(issues, list):
+        raise ValueError("issues must be a list")
+    for issue in issues:
+        if not isinstance(issue, dict):
+            raise ValueError(f"issue item must be an object, got {type(issue).__name__}")
+        if issue.get("type") not in _PACING_ISSUE_TYPES:
+            raise ValueError(f"invalid pacing issue type: {issue.get('type')!r}")
+        if not isinstance(issue.get("issue"), str) or not issue["issue"].strip():
+            raise ValueError("pacing issue description must be non-empty")
+        if not isinstance(issue.get("suggestion"), str) or not issue["suggestion"].strip():
+            raise ValueError("pacing issue suggestion must be non-empty")
+
+    suggestions = data.get("suggestions") or []
+    if not isinstance(suggestions, list) or not all(
+        isinstance(item, str) and item.strip() for item in suggestions
+    ):
+        raise ValueError("suggestions must be a list of non-empty strings")
+
+    return {
+        "score": score,
+        "score_note": score_note,
+        "level": level,
+        "level_note": level_note,
+        "summary": summary,
+        "dimensions": dimensions,
+        "issues": issues,
+        "suggestions": suggestions,
+    }
+
+
+@router.post(
+    "/pacing/analyze",
+    response_model=NovelPacingResponse,
+    summary="Analyze chapter pacing with score and suggestions",
+)
+async def novel_pacing_analyze(
+    request: NovelPacingRequest,
+    request_id: str = Depends(get_request_id),
+) -> NovelPacingResponse:
+    """分析章节节奏：总分、实际档位、四维评分、问题清单与修改建议。
+
+    不走 Agent 图：直连白名单 LLM，一次性输出结构化节奏分析，
+    供前端节奏面板展示；建议与精修模板能力呼应，可一键跳转精修。
+    """
+    try:
+        llm = create_llm(
+            request.llm_config,
+            profile="novel-pacing",
+            temperature=0.3,
+            max_retries=2,
+        )
+        messages = [
+            ("system", NOVEL_PACING_ANALYSIS_SYSTEM_PROMPT),
+            (
+                "user",
+                compose_novel_pacing_analysis_prompt(
+                    work_name=request.work_name,
+                    genre=request.genre,
+                    chapter_title=request.chapter_title,
+                    pacing_level=request.pacing_level,
+                    content=request.content,
+                ),
+            ),
+        ]
+        response = await llm.ainvoke(messages)
+        content = getattr(response, "content", None)
+        if isinstance(content, list):
+            text_parts = [
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            content = "".join(text_parts)
+        raw_text = str(content or "").strip()
+        if not raw_text:
+            raise RuntimeError("model returned an empty pacing analysis")
+        parsed = JsonOutputParser().parse(raw_text)
+        payload = _validate_pacing_payload(parsed)
+    except AgentError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Novel pacing analysis failed | request_id=%s | error_type=%s | "
+            "content_chars=%d",
+            request_id,
+            type(exc).__name__,
+            len(request.content),
+        )
+        raise
+    logger.info(
+        "Novel pacing analyzed | request_id=%s | score=%d | level=%s | "
+        "issues=%d",
+        request_id,
+        payload["score"],
+        payload["level"],
+        len(payload["issues"]),
+    )
+    return NovelPacingResponse(
+        success=True,
+        message="analyzed",
+        data=NovelPacingData(
+            score=payload["score"],
+            score_note=payload["score_note"],
+            level=payload["level"],
+            level_note=payload["level_note"],
+            summary=payload["summary"],
+            dimensions=payload["dimensions"],
+            issues=payload["issues"],
+            suggestions=payload["suggestions"],
         ),
     )
 

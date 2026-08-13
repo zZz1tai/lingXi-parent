@@ -48,6 +48,15 @@
           </div>
 
           <div class="nk-header-actions">
+            <button
+              class="nk-btn"
+              type="button"
+              :disabled="!manuscript.trim()"
+              title="分析当前正文的节奏评分与修改建议"
+              @click="openPacingDialog"
+            >
+              <el-icon><MagicStick /></el-icon>节奏分析
+            </button>
             <button class="nk-btn" type="button" @click="handleExport">
               <el-icon><Download /></el-icon>导出手稿
             </button>
@@ -75,6 +84,7 @@
                 :work="selectedWork"
                 :chapter="currentChapter"
                 :manuscript="manuscript"
+                :style-cards="settingStyles"
                 :user-id="userStore.id"
                 :user-name="userStore.name"
                 @insert="handleInsert"
@@ -168,6 +178,16 @@
                       @delete="handleDeleteSetting"
                     />
                   </div>
+                  <div class="nk-settings-group">
+                    <p class="nk-settings-label">文风</p>
+                    <SettingNotebook
+                      type="style"
+                      :cards="settingStyles"
+                      @add="openSettingDialog"
+                      @edit="openSettingDialog"
+                      @delete="handleDeleteSetting"
+                    />
+                  </div>
                 </template>
 
                 <template v-else-if="drawerTab === 'foreshadows'">
@@ -238,6 +258,17 @@
         <el-form-item label="题材">
           <el-input v-model="workForm.genre" maxlength="32" placeholder="例如：悬疑、科幻、都市言情、古风武侠…" />
         </el-form-item>
+        <el-form-item label="节奏档位" prop="pacingLevel">
+          <el-select v-model="workForm.pacingLevel" class="nk-pacing-select">
+            <el-option
+              v-for="item in PACING_LEVELS"
+              :key="item.id"
+              :label="`${item.label} · ${item.desc}`"
+              :value="item.id"
+            />
+          </el-select>
+          <div class="nk-form-hint">AI 续写与精修会按所选节奏控制信息密度与推进速度。</div>
+        </el-form-item>
         <el-form-item label="故事梗概">
           <template #label>
             <span class="nk-synopsis-label">
@@ -268,6 +299,83 @@
       <template #footer>
         <el-button @click="workDialog.open = false">取消</el-button>
         <el-button type="primary" :loading="workDialog.submitting" @click="submitWork">落笔开书</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 章节节奏分析 -->
+    <el-dialog
+      v-model="pacingDialog.open"
+      title="章节节奏分析"
+      width="620px"
+      append-to-body
+      class="nk-dialog-paper nk-pacing-dialog"
+      @closed="pacingDialog.result = null"
+    >
+      <div v-if="pacingLoading" class="nk-pacing-loading">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <p>正在品读这一章的呼吸与脉动…</p>
+      </div>
+      <template v-else-if="pacingDialog.result">
+        <div class="nk-pacing-head">
+          <div class="nk-pacing-score">
+            <strong>{{ pacingDialog.result.score }}</strong>
+            <span>节奏分 / 100</span>
+          </div>
+          <div class="nk-pacing-meta">
+            <p class="nk-pacing-level">
+              目标档位 {{ pacingLabel(pacingDialog.level) }}
+              <el-tag size="small" type="warning">实际 {{ pacingDialog.result.levelLabel }}</el-tag>
+            </p>
+            <p class="nk-pacing-note">{{ pacingDialog.result.scoreNote }}</p>
+          </div>
+        </div>
+        <p class="nk-pacing-levelnote">{{ pacingDialog.result.levelNote }}</p>
+        <p class="nk-pacing-summary">{{ pacingDialog.result.summary }}</p>
+
+        <div class="nk-pacing-grid">
+          <div
+            v-for="dim in pacingDialog.result.dimensions"
+            :key="dim.name"
+            class="nk-pacing-dim"
+          >
+            <div class="nk-pacing-dim-head">
+              <span>{{ dim.name }}</span>
+              <strong>{{ dim.score }}</strong>
+            </div>
+            <el-progress :percentage="dim.score" :show-text="false" :stroke-width="8" />
+            <p class="nk-pacing-dim-note">{{ dim.note }}</p>
+          </div>
+        </div>
+
+        <template v-if="pacingDialog.result.issues.length">
+          <h4 class="nk-pacing-section-title">发现的问题</h4>
+          <ul class="nk-pacing-issues">
+            <li v-for="(issue, index) in pacingDialog.result.issues" :key="index">
+              <el-tag size="small" type="danger">{{ issue.typeLabel }}</el-tag>
+              <span v-if="issue.position" class="nk-pacing-pos">[{{ issue.position }}]</span>
+              {{ issue.issue }}
+              <p class="nk-pacing-fix">{{ issue.suggestion }}</p>
+            </li>
+          </ul>
+        </template>
+
+        <template v-if="pacingDialog.result.suggestions.length">
+          <h4 class="nk-pacing-section-title">优化建议</h4>
+          <ul class="nk-pacing-suggestions">
+            <li v-for="(item, index) in pacingDialog.result.suggestions" :key="index">{{ item }}</li>
+          </ul>
+        </template>
+      </template>
+      <template #footer>
+        <el-button @click="pacingDialog.open = false">关闭</el-button>
+        <el-button
+          type="primary"
+          :loading="pacingLoading"
+          :disabled="!manuscript.trim()"
+          @click="runPacingAnalysis"
+        >
+          重新分析
+        </el-button>
       </template>
     </el-dialog>
 
@@ -367,8 +475,8 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import useUserStore from '@/store/modules/user'
 import {
-  addNovelChapter, addNovelForeshadow, addNovelSetting, addNovelWork, delNovelChapter,
-  delNovelForeshadow, delNovelSetting,
+  addNovelChapter, addNovelForeshadow, addNovelSetting, addNovelWork, analyzeNovelPacing,
+  delNovelChapter, delNovelForeshadow, delNovelSetting,
   delNovelWork, exportNovelWorkText, getNovelWork, listNovelChapter, listNovelForeshadow, listNovelSetting,
   listNovelWork, saveNovelManuscript, streamNovelSynopsis,
   updateNovelChapter, updateNovelForeshadow, updateNovelSetting, updateNovelWork
@@ -381,6 +489,9 @@ import SettingNotebook from './components/SettingNotebook.vue'
 import ForeshadowBoard from './components/ForeshadowBoard.vue'
 import OutlinePanel from './components/OutlinePanel.vue'
 import { countNovelCharacters } from './novelWordCount'
+import {
+  DEFAULT_PACING_LEVEL, PACING_LEVELS, buildPacingRequest, normalizePacingResult, pacingLabel
+} from './novelPacing'
 import './novel-kraft.scss'
 
 defineOptions({ name: 'NovelWriting' })
@@ -424,7 +535,7 @@ function selectWork(work) {
   manuscript.value = ''
   chapters.value = []
   currentChapter.value = null
-  settings.value = { character: [], world: [], outline: [] }
+  settings.value = { character: [], world: [], outline: [], style: [] }
   foreshadows.value = []
   if (work.workType === 'novel') {
     loadChapters(work.workId)
@@ -435,7 +546,13 @@ function selectWork(work) {
 
 // ── 作品 CRUD ───────────────────────────────────────
 const workDialog = reactive({ open: false, isEdit: false, submitting: false, workId: null })
-const workForm = reactive({ workName: '', workType: 'short', genre: '', synopsis: '' })
+const workForm = reactive({
+  workName: '',
+  workType: 'short',
+  genre: '',
+  synopsis: '',
+  pacingLevel: DEFAULT_PACING_LEVEL
+})
 const workFormRef = ref(null)
 const workRules = {
   workName: [{ required: true, message: '请填写作品名称', trigger: 'blur' }]
@@ -493,12 +610,19 @@ function openWorkDialog(work = null) {
       workName: work.workName || '',
       workType: work.workType || 'short',
       genre: work.genre || '',
-      synopsis: work.synopsis || ''
+      synopsis: work.synopsis || '',
+      pacingLevel: work.pacingLevel || DEFAULT_PACING_LEVEL
     })
   } else {
     workDialog.isEdit = false
     workDialog.workId = null
-    Object.assign(workForm, { workName: '', workType: category.value, genre: '', synopsis: '' })
+    Object.assign(workForm, {
+      workName: '',
+      workType: category.value,
+      genre: '',
+      synopsis: '',
+      pacingLevel: DEFAULT_PACING_LEVEL
+    })
   }
   workDialog.open = true
 }
@@ -511,10 +635,14 @@ async function submitWork() {
       workName: workForm.workName,
       workType: workForm.workType,
       genre: workForm.genre,
-      synopsis: workForm.synopsis
+      synopsis: workForm.synopsis,
+      pacingLevel: workForm.pacingLevel
     }
     if (workDialog.isEdit) {
       await updateNovelWork({ ...payload, workId: workDialog.workId })
+      if (selectedWork.value?.workId === workDialog.workId) {
+        selectedWork.value.pacingLevel = payload.pacingLevel
+      }
       ElMessage.success('作品信息已更新')
     } else {
       await addNovelWork(payload)
@@ -542,6 +670,46 @@ function handleDeleteWork(work) {
       loadWorks()
     })
     .catch(() => {})
+}
+
+// ── 章节节奏分析 ─────────────────────────────────────
+const pacingDialog = reactive({ open: false, level: DEFAULT_PACING_LEVEL, result: null })
+const pacingLoading = ref(false)
+
+function openPacingDialog() {
+  if (!manuscript.value.trim()) {
+    ElMessage.warning('先写一点正文，才能分析节奏')
+    return
+  }
+  pacingDialog.level = selectedWork.value?.pacingLevel || DEFAULT_PACING_LEVEL
+  pacingDialog.result = null
+  pacingDialog.open = true
+  runPacingAnalysis()
+}
+
+async function runPacingAnalysis() {
+  if (!manuscript.value.trim()) return
+  pacingLoading.value = true
+  pacingDialog.result = null
+  try {
+    const { data } = await analyzeNovelPacing(
+      buildPacingRequest({
+        workName: selectedWork.value?.workName || '',
+        genre: selectedWork.value?.genre || '',
+        chapterTitle: currentChapter.value?.chapterTitle || '',
+        pacingLevel: selectedWork.value?.pacingLevel || DEFAULT_PACING_LEVEL,
+        content: manuscript.value
+      })
+    )
+    const result = normalizePacingResult(data)
+    if (!result) throw new Error('AI 返回了空的节奏分析结果')
+    pacingDialog.result = result
+  } catch (error) {
+    pacingDialog.open = false
+    ElMessage.error(error?.message || '节奏分析失败，请稍后再试')
+  } finally {
+    pacingLoading.value = false
+  }
 }
 
 // ── 短篇正文 / 长篇章节 ─────────────────────────────
@@ -700,22 +868,23 @@ function handleDeleteChapter(chapter) {
 }
 
 // ── 设定集 ──────────────────────────────────────────
-const settings = reactive({ character: [], world: [], outline: [] })
+const settings = reactive({ character: [], world: [], outline: [], style: [] })
 
 const settingCharacters = computed(() => settings.character)
 const settingWorlds = computed(() => settings.world)
 const settingOutlines = computed(() => settings.outline)
+const settingStyles = computed(() => settings.style)
 
 const settingDialog = reactive({ open: false, isEdit: false, submitting: false, type: 'character', settingId: null })
 const settingForm = reactive({ title: '', content: '' })
 
 const settingTypeLabel = computed(() => {
-  const labels = { character: '人物', world: '世界观', outline: '大纲' }
+  const labels = { character: '人物', world: '世界观', outline: '大纲', style: '文风' }
   return labels[settingDialog.type] || '设定'
 })
 
 async function loadSettings(workId) {
-  for (const type of ['character', 'world']) {
+  for (const type of ['character', 'world', 'style']) {
     try {
       const result = await listNovelSetting(workId, type)
       settings[type] = result?.rows || []

@@ -49,6 +49,8 @@ public class AgentConfig implements EnvironmentAware {
     private String novelSynopsisStreamUrl = "/api/v1/novel/synopsis/stream";
     /** 生成小说三层大纲（全书-卷-章）并执行断链检查接口路径 */
     private String novelOutlineUrl = "/api/v1/novel/outline/generate";
+    /** 分析章节节奏（评分/档位/问题与建议）接口路径 */
+    private String novelPacingUrl = "/api/v1/novel/pacing/analyze";
     /** 查看当前用户长期回答偏好接口路径。 */
     private String memoryListUrl = "/api/v1/chat/memory/list";
     /** 修改当前用户单项长期回答偏好接口路径。 */

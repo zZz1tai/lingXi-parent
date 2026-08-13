@@ -1,7 +1,9 @@
 package com.lingXi.aiNovel.service;
 
 import java.util.List;
+import tools.jackson.databind.JsonNode;
 import com.lingXi.aiNovel.domain.AiNovelWork;
+import com.lingXi.aiNovel.domain.dto.NovelPacingRequestDTO;
 import com.lingXi.aiNovel.domain.dto.NovelWorkContextDTO;
 
 /**
@@ -35,4 +37,7 @@ public interface IAiNovelWorkService
 
     /** 导出作品全文：长篇按章节顺序拼接标题与正文，短篇取整篇正文。 */
     String exportWorkText(Long workId);
+
+    /** 分析章节节奏（评分/档位/维度/问题建议），转发给 Python 节奏分析链。 */
+    JsonNode analyzeChapterPacing(NovelPacingRequestDTO request);
 }

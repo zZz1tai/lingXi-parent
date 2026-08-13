@@ -361,6 +361,14 @@ class NovelWorkContext(StrictRequestModel):
         max_length=MAX_NOVEL_FORESHADOWS,
         description="未解伏笔（已埋/待解），用于保持情节线索连续",
     )
+    pacing_level: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=16,
+        pattern=r"^(relaxed|steady|balanced|intense|rapid)$",
+        description="作品节奏档位：relaxed-舒缓, steady-平稳, balanced-均衡, intense-紧凑, rapid-激烈",
+        validation_alias=AliasChoices("pacing_level", "pacingLevel"),
+    )
 
     @model_validator(mode="after")
     def validate_total_bytes(self) -> "NovelWorkContext":
@@ -446,6 +454,52 @@ class NovelOutlineRequest(StrictRequestModel):
         """限制现有大纲树规模，避免请求体过大。"""
         if len(value) > 500:
             raise ValueError("outline_tree must not exceed 500 nodes")
+        return value
+
+
+MAX_NOVEL_PACING_CONTENT_CHARS = 100_000
+
+
+class NovelPacingRequest(StrictRequestModel):
+    """「章节节奏评分与建议」的请求，直接调用 LLM，不进入 Agent。
+
+    携带章节正文（与可选的目标节奏档位），输出结构化节奏评分、
+    问题清单与修改建议；建议与精修模板能力呼应。
+    """
+
+    work_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        validation_alias=AliasChoices("work_name", "workName"),
+    )
+    genre: str | None = Field(default=None, min_length=1, max_length=64)
+    chapter_title: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        validation_alias=AliasChoices("chapter_title", "chapterTitle"),
+    )
+    pacing_level: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=16,
+        pattern=r"^(relaxed|steady|balanced|intense|rapid)$",
+        validation_alias=AliasChoices("pacing_level", "pacingLevel"),
+    )
+    content: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_NOVEL_PACING_CONTENT_CHARS,
+        description="待分析章节正文",
+    )
+    llm_config: LLMConfig | None = None
+
+    @field_validator("content")
+    @classmethod
+    def reject_blank_content(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content must not be blank")
         return value
 
 

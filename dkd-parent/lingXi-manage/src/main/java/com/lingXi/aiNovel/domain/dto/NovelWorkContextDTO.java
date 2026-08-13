@@ -25,6 +25,9 @@ public class NovelWorkContextDTO {
     /** 作品梗概 */
     private String synopsis;
 
+    /** 作品节奏档位：relaxed-舒缓，steady-平稳，balanced-均衡，intense-紧凑，rapid-激烈 */
+    private String pacingLevel;
+
     /** 当前章节标题 */
     private String chapterTitle;
 

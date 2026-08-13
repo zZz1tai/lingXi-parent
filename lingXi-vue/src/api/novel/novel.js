@@ -257,6 +257,20 @@ export function sortNovelOutline(workId, parentId, outlineIds) {
 }
 
 /**
+ * 分析章节节奏（评分/实际档位/维度/问题清单与建议）。
+ * 请求体字段与 Python NovelPacingRequest 对齐：work_name/genre/chapter_title/pacing_level/content。
+ * @param {{workName: string, genre?: string, chapterTitle?: string, pacingLevel?: string, content: string}} data
+ */
+export function analyzeNovelPacing(data) {
+  return request({
+    url: '/novel/work/pacing/analyze',
+    method: 'post',
+    data: data,
+    timeout: 120000
+  })
+}
+
+/**
  * 流式调用小说创作智能体（独立智能体，自动联网核查）。
  * 服务端从作品库组装作品上下文（梗概/章节/正文末尾/设定卡），
  * 浏览器仅提交创作指令、作品会话与作品/章节标识。

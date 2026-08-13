@@ -34,6 +34,9 @@ public class AiNovelWork extends BaseEntity
     /** 作品状态：draft-草稿，writing-写作中，finished-已完成 */
     private String status;
 
+    /** 作品节奏档位：relaxed-舒缓，steady-平稳，balanced-均衡，intense-紧凑，rapid-激烈 */
+    private String pacingLevel;
+
     /** 创建者用户ID */
     private Long ownerUserId;
 

@@ -3,6 +3,8 @@ package com.lingXi.aiNovel.service.impl;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import tools.jackson.databind.JsonNode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.lingXi.common.exception.ServiceException;
@@ -14,6 +16,7 @@ import com.lingXi.aiNovel.domain.AiNovelForeshadow;
 import com.lingXi.aiNovel.domain.AiNovelSetting;
 import com.lingXi.aiNovel.domain.AiNovelWork;
 import com.lingXi.aiNovel.domain.dto.NovelForeshadowItemDTO;
+import com.lingXi.aiNovel.domain.dto.NovelPacingRequestDTO;
 import com.lingXi.aiNovel.domain.dto.NovelSettingItemDTO;
 import com.lingXi.aiNovel.domain.dto.NovelWorkContextDTO;
 import com.lingXi.aiNovel.mapper.AiNovelChapterMapper;
@@ -36,6 +39,8 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
     private static final int CONTEXT_FORESHADOW_LIMIT = 40;
     /** 注入智能体的正文末尾片段长度上限（字符）。 */
     private static final int CONTEXT_MANUSCRIPT_TAIL_CHARS = 3_000;
+    /** 节奏分析正文长度上限（字符，与 Python MAX_NOVEL_PACING_CONTENT_CHARS 一致）。 */
+    private static final int PACING_CONTENT_MAX_CHARS = 100_000;
     /** 单条设定卡内容长度上限（与 Python 契约一致）。 */
     private static final int SETTING_CONTENT_MAX_CHARS = 4_000;
     /** 单条伏笔详情长度上限（与 Python 契约一致）。 */
@@ -52,6 +57,9 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
 
     @Autowired
     private AiNovelForeshadowMapper foreshadowMapper;
+
+    @Autowired
+    private com.lingXi.ai.client.AgentClient agentClient;
 
     /** 根据作品ID查询作品，并校验当前用户为作品所有者。 */
     @Override
@@ -106,6 +114,10 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         {
             work.setWorkType("short");
         }
+        if (StringUtils.isBlank(work.getPacingLevel()))
+        {
+            work.setPacingLevel("balanced");
+        }
         work.setCreateBy(SecurityUtils.getUsername());
         work.setCreateTime(DateUtils.getNowDate());
         return workMapper.insertAiNovelWork(work);
@@ -125,6 +137,7 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         existing.setGenre(work.getGenre());
         existing.setSynopsis(work.getSynopsis());
         existing.setStatus(work.getStatus());
+        existing.setPacingLevel(work.getPacingLevel());
         existing.setUpdateBy(SecurityUtils.getUsername());
         existing.setUpdateTime(DateUtils.getNowDate());
         return workMapper.updateAiNovelWork(existing);
@@ -195,6 +208,7 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         context.setWorkType(work.getWorkType());
         context.setGenre(work.getGenre());
         context.setSynopsis(work.getSynopsis());
+        context.setPacingLevel(work.getPacingLevel());
 
         AiNovelChapter chapter = null;
         if (chapterId != null)
@@ -289,6 +303,32 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         return normalized.substring(normalized.length() - CONTEXT_MANUSCRIPT_TAIL_CHARS);
     }
 
+    /** 分析章节节奏：校验参数并转发给 Python 节奏分析链，返回结构化结果。 */
+    @Override
+    public JsonNode analyzeChapterPacing(NovelPacingRequestDTO request)
+    {
+        if (request == null)
+        {
+            throw new ServiceException("节奏分析请求不能为空");
+        }
+        if (StringUtils.isBlank(request.getWorkName()))
+        {
+            throw new ServiceException("作品名称不能为空");
+        }
+        if (StringUtils.isBlank(request.getContent()))
+        {
+            throw new ServiceException("章节正文不能为空");
+        }
+        if (StringUtils.isNotBlank(request.getPacingLevel())
+                && !Set.of("relaxed", "steady", "balanced", "intense", "rapid")
+                        .contains(request.getPacingLevel()))
+        {
+            throw new ServiceException("节奏档位无效");
+        }
+        request.setContent(truncate(request.getContent().trim(), PACING_CONTENT_MAX_CHARS));
+        return agentClient.analyzeNovelPacing(request);
+    }
+
     private static String truncate(String value, int maxChars)
     {
         if (value == null)
@@ -311,6 +351,12 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         if (!"short".equals(work.getWorkType()) && !"novel".equals(work.getWorkType()))
         {
             throw new ServiceException("作品类型无效");
+        }
+        if (StringUtils.isNotBlank(work.getPacingLevel())
+                && !Set.of("relaxed", "steady", "balanced", "intense", "rapid")
+                        .contains(work.getPacingLevel()))
+        {
+            throw new ServiceException("节奏档位无效");
         }
     }
 }
