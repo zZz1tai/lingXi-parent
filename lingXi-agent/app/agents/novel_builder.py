@@ -22,6 +22,10 @@ from app.agents.middleware import (
     handle_tool_errors,
     select_runtime_model,
 )
+from app.agents.novel_idea import (
+    NOVEL_IDEA_SUMMARY_PROMPT,
+    get_novel_idea_system_prompt,
+)
 from app.agents.novel_prompts import (
     NOVEL_GOAL_ORIENTED_SUMMARY_PROMPT,
     get_novel_system_prompt,
@@ -30,6 +34,54 @@ from app.agents.state import AgentContext, RetailAgentState
 from app.agents.tools.general import create_general_tools
 from app.agents.tools.web_search import get_default_tools
 from app.utils.logger import logger
+
+
+def build_novel_idea_agent(
+    model: BaseChatModel,
+    *,
+    tools: Sequence[BaseTool] | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
+    store: BaseStore | None = None,
+    middleware: Sequence[Any] | None = None,
+) -> CompiledStateGraph:
+    """编译小说构思 Agent，装配构思专用提示词与记忆中间件。
+
+    与创作 Agent 同构但使用独立的提示词与摘要，专注于
+    「模糊创意 → 追问补全 → 构思文档」任务；工具清单相同。
+    """
+
+    resolved_tools = list(get_default_tools() if tools is None else tools)
+    resolved_middleware = [
+        RuntimeModelSummarizationMiddleware(
+            model=model,
+            trigger=("tokens", 12_000),
+            keep=("tokens", 4_000),
+            summary_prompt=NOVEL_IDEA_SUMMARY_PROMPT,
+        ),
+        get_novel_idea_system_prompt,
+        select_runtime_model,
+        handle_tool_errors,
+    ]
+    if middleware:
+        resolved_middleware.extend(middleware)
+
+    logger.info(
+        "Building novel idea agent | model=%s | tools=%d | memory=%s",
+        getattr(model, "model_name", getattr(model, "model", "unknown")),
+        len(resolved_tools),
+        checkpointer is not None,
+    )
+
+    return create_agent(
+        model=model,
+        tools=resolved_tools,
+        middleware=resolved_middleware,
+        state_schema=RetailAgentState,
+        context_schema=AgentContext,
+        checkpointer=checkpointer,
+        store=store,
+        name="lingxi-novel-idea-agent",
+    )
 
 
 def build_novel_agent(

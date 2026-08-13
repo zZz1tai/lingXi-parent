@@ -248,6 +248,7 @@ class StreamEvent(BaseModel):
         "citation",
         "clarification",
         "memory_saved",
+        "idea_doc",
         "approval_required",
         "action_completed",
         "action_rejected",

@@ -3,6 +3,7 @@ package com.lingXi.aiNovel.service;
 import java.util.List;
 import tools.jackson.databind.JsonNode;
 import com.lingXi.aiNovel.domain.AiNovelWork;
+import com.lingXi.aiNovel.domain.dto.NovelIdeaDocVO;
 import com.lingXi.aiNovel.domain.dto.NovelPacingRequestDTO;
 import com.lingXi.aiNovel.domain.dto.NovelWorkContextDTO;
 
@@ -40,4 +41,7 @@ public interface IAiNovelWorkService
 
     /** 分析章节节奏（评分/档位/维度/问题建议），转发给 Python 节奏分析链。 */
     JsonNode analyzeChapterPacing(NovelPacingRequestDTO request);
+
+    /** 由构思文档一键开书：创建作品并生成首批设定卡，返回新作品ID。 */
+    Long createAiNovelWorkFromIdea(NovelIdeaDocVO idea);
 }

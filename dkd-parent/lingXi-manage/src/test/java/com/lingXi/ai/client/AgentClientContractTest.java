@@ -157,6 +157,7 @@ class AgentClientContractTest {
         config.setChatInvokeUrl("/invoke");
         config.setChatStreamUrl("/stream");
         config.setChatStreamV2Url("/stream");
+        config.setNovelIdeaStreamUrl("/stream");
         config.setThreadDeleteUrl("/thread");
         config.setSmartQuestionsUrl("/questions");
         config.setImageOcrUrl("/ocr");
@@ -469,6 +470,43 @@ class AgentClientContractTest {
         assertFalse(emitted.contains("tool_output"));
         assertFalse(emitted.contains("internal"));
         assertTrue(emitted.contains("\"elapsed_ms\":420"));
+    }
+
+    @Test
+    void novelIdeaStreamForwardsQuestionsAndDocumentWithoutInternalFields()
+            throws Exception {
+        String secret = "SENTINEL_PRIVATE_IDEA_VALUE";
+        streamResponse.set(
+                "data: {\"type\":\"clarification\",\"content\":\"请补充\","
+                        + "\"data\":{\"questions\":[{\"question\":\"主角是谁？\","
+                        + "\"hint\":\"例如侦探\",\"secret\":\"" + secret + "\"}]}}\n\n"
+                        + "data: {\"type\":\"idea_doc\",\"content\":\"构思完成\","
+                        + "\"data\":{\"doc\":{\"work_name\":\"雾都三界\","
+                        + "\"genre\":\"都市修仙\",\"protagonists\":[{\"name\":\"林川\","
+                        + "\"role\":\"侦探\",\"secret\":\"" + secret + "\"}],"
+                        + "\"supporting\":[],\"antagonists\":[],\"setting\":{},"
+                        + "\"key_scenes\":[],\"selling_points\":[\"三界同城\"],"
+                        + "\"secret\":\"" + secret + "\"}}}\n\n"
+                        + "data: {\"type\":\"done\"}\n\n"
+                        + "data: [DONE]\n\n");
+
+        SseEmitter emitter = client.streamNovelIdea(
+                "抖音通三界", "idea-session-1", "user-idea-1", null);
+        awaitClientTasks();
+
+        String emitted = emittedData(emitter);
+        assertTrue(emitted.contains("clarification"));
+        assertTrue(emitted.contains("主角是谁？"));
+        assertTrue(emitted.contains("例如侦探"));
+        assertTrue(emitted.contains("idea_doc"));
+        assertTrue(emitted.contains("雾都三界"));
+        assertTrue(emitted.contains("林川"));
+        assertTrue(emitted.contains("三界同城"));
+        assertFalse(emitted.contains(secret));
+        assertIdentityContract(
+                objectMapper.readTree(streamRequest.get()),
+                "idea-session-1",
+                "user-idea-1");
     }
 
     @Test

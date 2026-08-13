@@ -17,10 +17,14 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.lingXi.ai.client.AgentClient;
 import com.lingXi.ai.service.IChatSessionService;
 import com.lingXi.aiNovel.domain.dto.NovelWorkContextDTO;
+import com.lingXi.aiNovel.domain.dto.NovelIdeaDocVO;
+import com.lingXi.aiNovel.domain.dto.NovelIdeaRequestVO;
 import com.lingXi.aiNovel.domain.dto.NovelWriteRequestVO;
 import com.lingXi.aiNovel.domain.dto.NovelSynopsisRequestVO;
 import com.lingXi.aiNovel.service.IAiNovelWorkService;
+import com.lingXi.common.annotation.Log;
 import com.lingXi.common.core.domain.AjaxResult;
+import com.lingXi.common.enums.BusinessType;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.common.utils.SecurityUtils;
 import com.lingXi.manage.domain.ChatSession;
@@ -114,6 +118,91 @@ public class NovelController {
                 emitter.completeWithError(ex);
             }
             return emitter;
+        }
+    }
+
+    /**
+     * 流式调用小说构思智能体（模糊创意 → 追问补全 → 构思文档）
+     * <p>构思会话独立于作品创作会话：同一 sessionId 的多轮消息
+     * 被 Python checkpoint 自动续接；事件流中的 clarification 为
+     * 追问问题，idea_doc 为结构化构思文档。</p>
+     *
+     * @param request 构思请求，包含用户消息与会话ID
+     * @return 结构化 SSE 事件流
+     */
+    @Operation(summary = "流式调用小说构思智能体")
+    @PreAuthorize("@ss.hasPermi('novel:work:add')")
+    @PostMapping(value = "/idea/stream",
+            produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter ideaStream(@Validated @RequestBody NovelIdeaRequestVO request) {
+        try {
+            String userId = currentUserId();
+            String message = request.getMessage() == null ? "" : request.getMessage().trim();
+            if (message.isEmpty()) {
+                throw new ServiceException("构思描述不能为空");
+            }
+            String sessionId = request.getSessionId() == null
+                    ? null
+                    : request.getSessionId().trim();
+            if (sessionId == null || sessionId.isEmpty()) {
+                throw new ServiceException("会话ID不能为空");
+            }
+            return agentClient.streamNovelIdea(message, sessionId, userId, null);
+        } catch (Exception e) {
+            log.warn("小说构思流式调用失败，errorType={}",
+                    e.getClass().getSimpleName());
+            SseEmitter emitter = new SseEmitter();
+            try {
+                emitter.send(SseEmitter.event().name("error").data(
+                        "{\"type\":\"error\",\"content\":\""
+                                + safeSseText(e.getMessage()) + "\"}"));
+                emitter.complete();
+            } catch (Exception ex) {
+                emitter.completeWithError(ex);
+            }
+            return emitter;
+        }
+    }
+
+    @Operation(summary = "由构思文档一键开书")
+    @PreAuthorize("@ss.hasPermi('novel:work:add')")
+    @Log(title = "AI小说构思开书", businessType = BusinessType.INSERT)
+    @PostMapping("/idea/create-work")
+    public AjaxResult createWorkFromIdea(
+            @Validated @RequestBody NovelIdeaDocVO idea) {
+        try {
+            Long workId = workService.createAiNovelWorkFromIdea(idea);
+            return AjaxResult.success("开书成功", workId);
+        } catch (Exception e) {
+            log.warn("构思开书失败，errorType={}",
+                    e.getClass().getSimpleName());
+            return AjaxResult.error(e.getMessage() == null
+                    ? "构思开书失败"
+                    : e.getMessage());
+        }
+    }
+
+    /** 删除尚未绑定作品的构思会话 checkpoint，避免废弃构思长期占用存储。 */
+    @Operation(summary = "删除小说构思会话记忆")
+    @PreAuthorize("@ss.hasPermi('novel:work:add')")
+    @DeleteMapping("/idea/thread")
+    public AjaxResult deleteIdeaThread(@RequestParam String sessionId) {
+        try {
+            String normalizedSessionId = sessionId == null ? "" : sessionId.trim();
+            if (normalizedSessionId.isEmpty()) {
+                throw new ServiceException("会话ID不能为空");
+            }
+            if (!normalizedSessionId.matches("^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")) {
+                throw new ServiceException("会话ID格式无效");
+            }
+            agentClient.deleteNovelThreadMemory(normalizedSessionId, currentUserId());
+            return AjaxResult.success(true);
+        } catch (Exception e) {
+            log.warn("删除小说构思会话记忆失败，errorType={}",
+                    e.getClass().getSimpleName());
+            return AjaxResult.error(e.getMessage() == null
+                    ? "删除构思会话失败"
+                    : e.getMessage());
         }
     }
 

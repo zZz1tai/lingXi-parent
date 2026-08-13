@@ -12,6 +12,11 @@ from langchain_core.output_parsers import JsonOutputParser
 from langgraph.errors import GraphRecursionError
 
 from app.agents.builder import get_recursion_limit
+from app.agents.novel_idea import (
+    IdeaTagScrubber,
+    validate_idea_ask,
+    validate_idea_doc,
+)
 from app.agents.novel_prompts import (
     NOVEL_OUTLINE_SYSTEM_PROMPT,
     NOVEL_PACING_ANALYSIS_SYSTEM_PROMPT,
@@ -30,6 +35,7 @@ from app.api.dependencies import (
     create_novel_agent_context,
     delete_agent_thread,
     get_novel_agent,
+    get_novel_idea_agent,
     get_request_id,
 )
 from app.api.v1.chat import (
@@ -48,6 +54,7 @@ from app.api.v1.chat import (
 from app.observability.tracing import with_trace
 from app.schemas.request import (
     DeleteChatThreadRequest,
+    NovelIdeaRequest,
     NovelOutlineRequest,
     NovelPacingRequest,
     NovelSynopsisRequest,
@@ -82,11 +89,15 @@ class NovelMemoryDeleteError(AgentError):
 
 
 def _build_novel_agent_config(
-    request: NovelWriteRequest,
+    request: NovelWriteRequest | NovelIdeaRequest,
     *,
     request_id: str,
 ) -> dict[str, Any]:
-    """构建递归限制和作品会话的检查点命名空间。"""
+    """构建递归限制和会话检查点命名空间（创作/构思共用）。
+
+    构思会话与创作会话同样按 (user_id, thread_id) 哈希隔离，
+    因此同一用户可同时进行构思追问与正文创作而互不干扰。
+    """
 
     user_namespace = request.user_id or "anonymous"
     internal_thread_id = checkpoint_thread_id(user_namespace, request.thread_id)
@@ -334,6 +345,272 @@ async def novel_write_stream(
 
     async def event_generator() -> AsyncGenerator[str, None]:
         source: AsyncIterator[str] = _stream_novel_events(request, request_id)
+        async for event in _with_heartbeats(
+            source,
+            http_request=http_request,
+            request_id=request_id,
+            thread_id=request.thread_id,
+        ):
+            yield event
+        if not await http_request.is_disconnected():
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _stream_idea_events(
+    request: NovelIdeaRequest,
+    request_id: str,
+) -> AsyncGenerator[str, None]:
+    """将小说构思 Agent 的事件流转换为 SSE。
+
+    构思 Agent 通过 ``[IDEA_ASK]``/``[IDEA_DOC]`` 结构化块表达
+    追问与完成：普通对话文本按 token 转发，块被剥离成
+    ``clarification``（追问，携带 questions）与 ``idea_doc``
+    （构思文档）事件。
+    """
+
+    emitted_characters = 0
+    agent_stream: Any = None
+    try:
+        context = create_novel_agent_context(
+            llm_config=request.llm_config,
+            user_id=request.user_id,
+            thread_id=request.thread_id,
+        )
+        agent = get_novel_idea_agent(
+            checkpointed=True,
+            model=context.model,
+        )
+        agent_stream = agent.astream(
+            {"messages": [{"role": "user", "content": request.message}]},
+            config=with_trace(
+                _build_novel_agent_config(request, request_id=request_id),
+                "generate-novel-idea-stream",
+                user_id=request.user_id,
+                thread_id=request.thread_id,
+                tags=["novel-idea"],
+                metadata={"request_id": request_id},
+            ),
+            context=context,
+            stream_mode=["messages", "updates", "custom"],
+        )
+        scrubber = IdeaTagScrubber()
+        async for stream_mode, chunk in agent_stream:
+            if stream_mode == "messages":
+                if not isinstance(chunk, tuple) or len(chunk) != 2:
+                    continue
+                message, metadata = chunk
+                if not isinstance(message, AIMessage):
+                    continue
+                text = _message_text(message)
+                if not text:
+                    continue
+                clean_text = scrubber.push(text)
+                if clean_text:
+                    emitted_characters = _add_stream_text(
+                        emitted_characters, clean_text
+                    )
+                    yield _format_sse_event(
+                        StreamEvent(
+                            type="token",
+                            content=clean_text,
+                            # 只转发清洗后的文本，避免原始块协议 JSON
+                            # 通过 content_blocks 旁路泄露给前端。
+                            content_blocks=[{"type": "text", "text": clean_text}],
+                            data={
+                                "node": (
+                                    str(metadata.get("langgraph_node") or "model")
+                                    if isinstance(metadata, dict)
+                                    else "model"
+                                )
+                            },
+                            request_id=request_id,
+                            thread_id=request.thread_id,
+                        )
+                    )
+                continue
+
+            if stream_mode == "custom":
+                yield _format_sse_event(
+                    _safe_custom_event(
+                        chunk,
+                        request_id=request_id,
+                        thread_id=request.thread_id,
+                    )
+                )
+                continue
+
+            if stream_mode != "updates":
+                continue
+
+            update_messages = _messages_from_update(chunk)
+            for message in update_messages:
+                if isinstance(message, AIMessage) and message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        tool_name = str(tool_call.get("name") or "unknown")
+                        yield _format_sse_event(
+                            StreamEvent(
+                                type="tool_start",
+                                tool=tool_name,
+                                tool_input=_safe_tool_input(
+                                    tool_name,
+                                    tool_call.get("args"),
+                                ),
+                                request_id=request_id,
+                                thread_id=request.thread_id,
+                            )
+                        )
+                elif isinstance(message, ToolMessage):
+                    yield _format_sse_event(
+                        StreamEvent(
+                            type="tool_end",
+                            tool=message.name or "unknown",
+                            data={
+                                "status": getattr(message, "status", "success")
+                            },
+                            request_id=request_id,
+                            thread_id=request.thread_id,
+                        )
+                    )
+
+            nodes = list(chunk) if isinstance(chunk, dict) else []
+            yield _format_sse_event(
+                StreamEvent(
+                    type="update",
+                    data={"nodes": nodes},
+                    request_id=request_id,
+                    thread_id=request.thread_id,
+                )
+            )
+
+        # 流结束：处理残留文本与已收集的块。
+        tail = scrubber.flush_text()
+        if tail:
+            emitted_characters = _add_stream_text(emitted_characters, tail)
+            yield _format_sse_event(
+                StreamEvent(
+                    type="token",
+                    content=tail,
+                    request_id=request_id,
+                    thread_id=request.thread_id,
+                )
+            )
+
+        for kind, data in scrubber.blocks:
+            if kind == "ask":
+                try:
+                    payload = validate_idea_ask(data)
+                except ValueError:
+                    logger.warning(
+                        "Invalid idea ask block ignored | request_id=%s",
+                        request_id,
+                    )
+                    continue
+                yield _format_sse_event(
+                    StreamEvent(
+                        type="clarification",
+                        content="请回答以下问题，让我把构思补全。",
+                        data={"questions": payload["questions"]},
+                        request_id=request_id,
+                        thread_id=request.thread_id,
+                    )
+                )
+            else:
+                try:
+                    doc = validate_idea_doc(data)
+                except ValueError:
+                    logger.warning(
+                        "Invalid idea doc block ignored | request_id=%s",
+                        request_id,
+                    )
+                    continue
+                yield _format_sse_event(
+                    StreamEvent(
+                        type="idea_doc",
+                        content="构思已经完成，可以一键开书。",
+                        data={"doc": doc},
+                        request_id=request_id,
+                        thread_id=request.thread_id,
+                    )
+                )
+
+        yield _format_sse_event(
+            StreamEvent(
+                type="done",
+                request_id=request_id,
+                thread_id=request.thread_id,
+            )
+        )
+    except _StreamBudgetExceeded:
+        yield _format_sse_event(
+            StreamEvent(
+                type="error",
+                content="Stream output limit exceeded",
+                request_id=request_id,
+                thread_id=request.thread_id,
+            )
+        )
+    except GraphRecursionError:
+        yield _format_sse_event(
+            StreamEvent(
+                type="error",
+                content="Agent exceeded the configured iteration limit",
+                request_id=request_id,
+                thread_id=request.thread_id,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Novel idea stream failed | request_id=%s | error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        yield _format_sse_event(
+            StreamEvent(
+                type="error",
+                content="Agent stream failed",
+                request_id=request_id,
+                thread_id=request.thread_id,
+            )
+        )
+    finally:
+        await _aclose_source(agent_stream)
+
+
+@router.post(
+    "/idea/stream",
+    summary="SSE streaming novel idea brainstorming",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": (
+                "Token stream with clarification (questions) and "
+                "idea_doc events"
+            ),
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        }
+    },
+)
+async def novel_idea_stream(
+    request: NovelIdeaRequest,
+    http_request: Request,
+    request_id: str = Depends(get_request_id),
+) -> StreamingResponse:
+    # 与创作端点一致：先校验本次请求选择的模型，出站策略失败返回 422。
+    if request.llm_config is not None:
+        create_llm(request.llm_config, profile="novel-stream-preflight")
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        source: AsyncIterator[str] = _stream_idea_events(request, request_id)
         async for event in _with_heartbeats(
             source,
             http_request=http_request,

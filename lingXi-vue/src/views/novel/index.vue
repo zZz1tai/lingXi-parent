@@ -70,9 +70,14 @@
           <el-icon class="nk-quill-big"><EditPen /></el-icon>
           <h2>书斋空无一人</h2>
           <p>{{ apiReady ? '新建一部作品，开始你的创作之旅。' : '后端服务未就绪，无法加载作品列表。请先启动 Java 服务并完成菜单授权。' }}</p>
-          <button class="nk-btn is-primary" type="button" @click="openWorkDialog()">
-            <el-icon><Plus /></el-icon>新建作品
-          </button>
+          <div class="nk-empty-actions">
+            <button class="nk-btn is-primary" type="button" @click="openWorkDialog()">
+              <el-icon><Plus /></el-icon>新建作品
+            </button>
+            <button class="nk-btn nk-idea-entry" type="button" @click="ideaStudioOpen = true">
+              <el-icon><MagicStick /></el-icon>让 AI 帮我构思
+            </button>
+          </div>
         </div>
 
         <!-- 工作区：对话 + 手稿 + （长篇）抽屉 -->
@@ -188,6 +193,16 @@
                       @delete="handleDeleteSetting"
                     />
                   </div>
+                  <div v-if="settingOthers.length" class="nk-settings-group">
+                    <p class="nk-settings-label">构思档案</p>
+                    <SettingNotebook
+                      type="other"
+                      :cards="settingOthers"
+                      @add="openSettingDialog"
+                      @edit="openSettingDialog"
+                      @delete="handleDeleteSetting"
+                    />
+                  </div>
                 </template>
 
                 <template v-else-if="drawerTab === 'foreshadows'">
@@ -245,6 +260,16 @@
       append-to-body
       class="nk-dialog-paper"
     >
+      <button
+        v-if="!workDialog.isEdit"
+        class="nk-work-idea-bridge"
+        type="button"
+        @click="workDialog.open = false; ideaStudioOpen = true"
+      >
+        <el-icon><MagicStick /></el-icon>
+        <span><strong>还只有一个模糊念头？</strong>让构思编辑通过几轮追问整理人物、冲突与世界观</span>
+        <em>开始构思</em>
+      </button>
       <el-form ref="workFormRef" :model="workForm" :rules="workRules" label-position="top">
         <el-form-item label="书名 / 标题" prop="workName">
           <el-input v-model="workForm.workName" maxlength="64" show-word-limit placeholder="给作品起个名字" />
@@ -301,6 +326,8 @@
         <el-button type="primary" :loading="workDialog.submitting" @click="submitWork">落笔开书</el-button>
       </template>
     </el-dialog>
+
+    <IdeaStudioDialog v-model="ideaStudioOpen" @created="handleIdeaWorkCreated" />
 
     <!-- 章节节奏分析 -->
     <el-dialog
@@ -488,6 +515,7 @@ import ChapterTree from './components/ChapterTree.vue'
 import SettingNotebook from './components/SettingNotebook.vue'
 import ForeshadowBoard from './components/ForeshadowBoard.vue'
 import OutlinePanel from './components/OutlinePanel.vue'
+import IdeaStudioDialog from './components/IdeaStudioDialog.vue'
 import { countNovelCharacters } from './novelWordCount'
 import {
   DEFAULT_PACING_LEVEL, PACING_LEVELS, buildPacingRequest, normalizePacingResult, pacingLabel
@@ -505,6 +533,7 @@ const apiReady = ref(true)
 const category = ref('short')
 const keyword = ref('')
 const selectedWork = ref(null)
+const ideaStudioOpen = ref(false)
 
 onMounted(loadWorks)
 
@@ -535,7 +564,7 @@ function selectWork(work) {
   manuscript.value = ''
   chapters.value = []
   currentChapter.value = null
-  settings.value = { character: [], world: [], outline: [], style: [] }
+  settings.value = { character: [], world: [], outline: [], style: [], other: [] }
   foreshadows.value = []
   if (work.workType === 'novel') {
     loadChapters(work.workId)
@@ -655,6 +684,13 @@ async function submitWork() {
   } finally {
     workDialog.submitting = false
   }
+}
+
+async function handleIdeaWorkCreated(workId) {
+  category.value = 'novel'
+  await loadWorks()
+  const created = works.value.find(work => String(work.workId) === String(workId))
+  if (created) selectWork(created)
 }
 
 function handleDeleteWork(work) {
@@ -868,23 +904,24 @@ function handleDeleteChapter(chapter) {
 }
 
 // ── 设定集 ──────────────────────────────────────────
-const settings = reactive({ character: [], world: [], outline: [], style: [] })
+const settings = reactive({ character: [], world: [], outline: [], style: [], other: [] })
 
 const settingCharacters = computed(() => settings.character)
 const settingWorlds = computed(() => settings.world)
 const settingOutlines = computed(() => settings.outline)
 const settingStyles = computed(() => settings.style)
+const settingOthers = computed(() => settings.other)
 
 const settingDialog = reactive({ open: false, isEdit: false, submitting: false, type: 'character', settingId: null })
 const settingForm = reactive({ title: '', content: '' })
 
 const settingTypeLabel = computed(() => {
-  const labels = { character: '人物', world: '世界观', outline: '大纲', style: '文风' }
+  const labels = { character: '人物', world: '世界观', outline: '大纲', style: '文风', other: '构思档案' }
   return labels[settingDialog.type] || '设定'
 })
 
 async function loadSettings(workId) {
-  for (const type of ['character', 'world', 'style']) {
+  for (const type of ['character', 'world', 'style', 'other']) {
     try {
       const result = await listNovelSetting(workId, type)
       settings[type] = result?.rows || []

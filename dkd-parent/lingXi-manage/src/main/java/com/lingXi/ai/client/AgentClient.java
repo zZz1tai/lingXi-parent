@@ -672,7 +672,23 @@ public class AgentClient {
             String userId,
             Object workContext,
             Consumer<String> completedReplyConsumer) {
-        return streamNovel(message, sessionId, userId, workContext, completedReplyConsumer);
+        return streamNovel(message, sessionId, userId, workContext, completedReplyConsumer,
+                config.getNovelStreamUrl());
+    }
+
+    /**
+     * 调用小说构思智能体（模糊创意 → 追问补全 → 构思文档）。
+     * <p>构思会话不与任何作品绑定，按 sessionId 独立持久化；
+     * 事件协议与创作流一致，其中 ``clarification`` 事件携带追问问题，
+     * ``idea_doc`` 事件携带结构化构思文档。</p>
+     */
+    public SseEmitter streamNovelIdea(
+            String message,
+            String sessionId,
+            String userId,
+            Consumer<String> completedReplyConsumer) {
+        return streamNovel(message, sessionId, userId, null, completedReplyConsumer,
+                config.getNovelIdeaStreamUrl());
     }
 
     /**
@@ -1337,6 +1353,17 @@ public class AgentClient {
             String userId,
             Object workContext,
             Consumer<String> completedReplyConsumer) {
+        return streamNovel(message, sessionId, userId, workContext,
+                completedReplyConsumer, config.getNovelStreamUrl());
+    }
+
+    private SseEmitter streamNovel(
+            String message,
+            String sessionId,
+            String userId,
+            Object workContext,
+            Consumer<String> completedReplyConsumer,
+            String endpointPath) {
         long streamTimeout = config.getStreamTimeout() == null
                 || config.getStreamTimeout().longValue() <= 0L
                         ? 310_000L : config.getStreamTimeout().longValue();
@@ -1355,7 +1382,7 @@ public class AgentClient {
                     sendSafeStreamError(emitter, true, "AI 服务暂不可用，请稍后重试");
                     return;
                 }
-                URL url = new URL(config.getBaseUrl() + config.getNovelStreamUrl());
+                URL url = new URL(config.getBaseUrl() + endpointPath);
                 conn = (HttpURLConnection) url.openConnection();
                 connectionRef.set(conn);
                 conn.setRequestMethod("POST");
@@ -1548,6 +1575,7 @@ public class AgentClient {
                 || "ui_error".equals(eventType)
                 || "citation".equals(eventType)
                 || "clarification".equals(eventType)
+                || "idea_doc".equals(eventType)
                 || "memory_saved".equals(eventType)
                 || "approval_required".equals(eventType)
                 || "action_completed".equals(eventType)
@@ -1584,7 +1612,8 @@ public class AgentClient {
 
         if ("token".equals(eventType)
                 || "done".equals(eventType)
-                || "clarification".equals(eventType)) {
+                || "clarification".equals(eventType)
+                || "idea_doc".equals(eventType)) {
             String content = source.path("content").asText("");
             if (!content.isEmpty()) {
                 safe.put("content", content);
@@ -1641,6 +1670,10 @@ public class AgentClient {
             ObjectNode memory = safe.putObject("data");
             copyLabel(data, memory, "preference", 64);
             copyLabel(data, memory, "value", 64);
+        } else if ("clarification".equals(eventType) && data.isObject()) {
+            copyNovelIdeaQuestions(data, safe.putObject("data"));
+        } else if ("idea_doc".equals(eventType) && data.isObject()) {
+            copyNovelIdeaDocument(data, safe.putObject("data"));
         } else if (("approval_required".equals(eventType)
                 || "action_completed".equals(eventType)
                 || "action_rejected".equals(eventType)) && data.isObject()) {
@@ -2053,6 +2086,129 @@ public class AgentClient {
             String text = value.asText();
             if (text.matches("^[a-z_]{1," + maxLength + "}$")) {
                 target.put(field, text);
+            }
+        }
+    }
+
+    /** 复制构思追问的公开字段；问题数量和文本长度与 Python 校验契约保持一致。 */
+    private static void copyNovelIdeaQuestions(JsonNode source, ObjectNode target) {
+        JsonNode questions = source.path("questions");
+        if (!questions.isArray()) {
+            return;
+        }
+        ArrayNode safeQuestions = target.putArray("questions");
+        int count = 0;
+        for (JsonNode question : questions) {
+            if (count >= 2) {
+                break;
+            }
+            if (!question.isObject()) {
+                continue;
+            }
+            String text = question.path("question").asText("").trim();
+            if (text.isEmpty() || text.length() > 200) {
+                continue;
+            }
+            ObjectNode safeQuestion = safeQuestions.addObject();
+            safeQuestion.put("question", text);
+            copyDisplayText(question, safeQuestion, "hint", 300);
+            count++;
+        }
+    }
+
+    /**
+     * 复制已经由 Python 校验过的构思文档。
+     * <p>该事件只用于小说构思端点，字段仍按白名单递归重建，避免未来模型或
+     * Agent 扩展字段未经审查穿过 Java 边界。</p>
+     */
+    private static void copyNovelIdeaDocument(JsonNode source, ObjectNode target) {
+        JsonNode doc = source.path("doc");
+        if (!doc.isObject()) {
+            return;
+        }
+        ObjectNode safeDoc = target.putObject("doc");
+        copyNovelIdeaTextFields(doc, safeDoc);
+        copyNovelIdeaPeople(doc.path("protagonists"), safeDoc.putArray("protagonists"));
+        copyNovelIdeaPeople(doc.path("supporting"), safeDoc.putArray("supporting"));
+        copyNovelIdeaPeople(doc.path("antagonists"), safeDoc.putArray("antagonists"));
+
+        JsonNode setting = doc.path("setting");
+        if (setting.isObject()) {
+            ObjectNode safeSetting = safeDoc.putObject("setting");
+            copyDisplayText(setting, safeSetting, "world_building", 500);
+            copyDisplayText(setting, safeSetting, "time_period", 500);
+            copyDisplayText(setting, safeSetting, "location", 500);
+        }
+        copyNovelIdeaScenes(doc.path("key_scenes"), safeDoc.putArray("key_scenes"));
+        copyNovelIdeaStrings(doc.path("selling_points"), safeDoc.putArray("selling_points"));
+    }
+
+    private static void copyNovelIdeaTextFields(JsonNode source, ObjectNode target) {
+        String[] fields = {
+                "work_name", "genre", "one_liner", "logline", "core_conflict",
+                "theme", "tone", "magic_system", "ending_hint"
+        };
+        for (String field : fields) {
+            copyDisplayText(source, target, field, 500);
+        }
+    }
+
+    private static void copyNovelIdeaPeople(JsonNode source, ArrayNode target) {
+        if (!source.isArray()) {
+            return;
+        }
+        int count = 0;
+        for (JsonNode person : source) {
+            if (!person.isObject() || count >= 10) {
+                break;
+            }
+            String name = person.path("name").asText("").trim();
+            if (name.isEmpty() || name.length() > 500) {
+                continue;
+            }
+            ObjectNode safePerson = target.addObject();
+            safePerson.put("name", name);
+            copyDisplayText(person, safePerson, "role", 500);
+            copyDisplayText(person, safePerson, "trait", 500);
+            copyDisplayText(person, safePerson, "goal", 500);
+            copyDisplayText(person, safePerson, "gimmick", 500);
+            count++;
+        }
+    }
+
+    private static void copyNovelIdeaScenes(JsonNode source, ArrayNode target) {
+        if (!source.isArray()) {
+            return;
+        }
+        int count = 0;
+        for (JsonNode scene : source) {
+            if (!scene.isObject() || count >= 10) {
+                break;
+            }
+            String title = scene.path("title").asText("").trim();
+            if (title.isEmpty() || title.length() > 500) {
+                continue;
+            }
+            ObjectNode safeScene = target.addObject();
+            safeScene.put("title", title);
+            copyDisplayText(scene, safeScene, "description", 500);
+            count++;
+        }
+    }
+
+    private static void copyNovelIdeaStrings(JsonNode source, ArrayNode target) {
+        if (!source.isArray()) {
+            return;
+        }
+        int count = 0;
+        for (JsonNode item : source) {
+            if (count >= 10) {
+                break;
+            }
+            if (item.isTextual() && !item.asText().trim().isEmpty()) {
+                String text = item.asText().trim();
+                target.add(text.substring(0, Math.min(text.length(), 500)));
+                count++;
             }
         }
     }

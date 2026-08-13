@@ -18,7 +18,11 @@ from pydantic import SecretStr
 
 from app.agents.builder import build_search_agent
 from app.agents.checkpoints import create_in_memory_checkpointer
-from app.agents.novel_builder import build_novel_agent, get_novel_tools
+from app.agents.novel_builder import (
+    build_novel_agent,
+    build_novel_idea_agent,
+    get_novel_tools,
+)
 from app.agents.state import AgentContext, checkpoint_thread_id
 from app.agents.tools.business_data import create_business_data_tools
 from app.agents.tools.general import create_general_tools
@@ -44,6 +48,7 @@ _llm_instance: BaseChatModel | None = None
 _agent_instance: CompiledStateGraph | None = None
 _ephemeral_agent_instance: CompiledStateGraph | None = None
 _novel_agent_instance: CompiledStateGraph | None = None
+_novel_idea_agent_instance: CompiledStateGraph | None = None
 _checkpointer_instance: BaseCheckpointSaver | None = None
 _store_instance: BaseStore | None = None
 _knowledge_retriever_instance: KnowledgeRetriever | None = None
@@ -441,6 +446,41 @@ def get_novel_agent(
     )
 
 
+def get_novel_idea_agent(
+    *,
+    checkpointed: bool = True,
+    model: BaseChatModel | None = None,
+) -> CompiledStateGraph:
+    """返回小说构思 Agent，默认缓存共享图并携带持久检查点。"""
+
+    if model is not None:
+        return build_novel_idea_agent(
+            model=model,
+            tools=get_novel_tools(),
+            checkpointer=get_checkpointer() if checkpointed else None,
+            store=_store_instance,
+        )
+
+    global _novel_idea_agent_instance
+    if checkpointed:
+        if _novel_idea_agent_instance is None:
+            _novel_idea_agent_instance = build_novel_idea_agent(
+                model=get_llm(profile="agent-default"),
+                tools=get_novel_tools(),
+                checkpointer=get_checkpointer(),
+                store=_store_instance,
+            )
+            logger.info("Checkpointed novel idea agent initialized and cached")
+        return _novel_idea_agent_instance
+
+    return build_novel_idea_agent(
+        model=get_llm(profile="agent-default"),
+        tools=get_novel_tools(),
+        checkpointer=None,
+        store=_store_instance,
+    )
+
+
 def create_novel_agent_context(
     *,
     llm_config: LLMConfig | None,
@@ -485,13 +525,15 @@ def reset_singletons() -> None:
     """重置用于测试和应用程序关闭的进程本地缓存。"""
 
     global _llm_instance, _agent_instance, _ephemeral_agent_instance
-    global _novel_agent_instance, _checkpointer_instance, _store_instance
+    global _novel_agent_instance, _novel_idea_agent_instance
+    global _checkpointer_instance, _store_instance
     global _knowledge_retriever_instance, _agent_tool_client_instance
     global _memory_service_instance
     _llm_instance = None
     _agent_instance = None
     _ephemeral_agent_instance = None
     _novel_agent_instance = None
+    _novel_idea_agent_instance = None
     _checkpointer_instance = None
     _store_instance = None
     _knowledge_retriever_instance = None

@@ -7,6 +7,7 @@ import java.util.Set;
 import tools.jackson.databind.JsonNode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.common.utils.DateUtils;
 import com.lingXi.common.utils.SecurityUtils;
@@ -16,6 +17,10 @@ import com.lingXi.aiNovel.domain.AiNovelForeshadow;
 import com.lingXi.aiNovel.domain.AiNovelSetting;
 import com.lingXi.aiNovel.domain.AiNovelWork;
 import com.lingXi.aiNovel.domain.dto.NovelForeshadowItemDTO;
+import com.lingXi.aiNovel.domain.dto.NovelIdeaDocVO;
+import com.lingXi.aiNovel.domain.dto.NovelIdeaPersonVO;
+import com.lingXi.aiNovel.domain.dto.NovelIdeaSceneVO;
+import com.lingXi.aiNovel.domain.dto.NovelIdeaSettingVO;
 import com.lingXi.aiNovel.domain.dto.NovelPacingRequestDTO;
 import com.lingXi.aiNovel.domain.dto.NovelSettingItemDTO;
 import com.lingXi.aiNovel.domain.dto.NovelWorkContextDTO;
@@ -327,6 +332,227 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         }
         request.setContent(truncate(request.getContent().trim(), PACING_CONTENT_MAX_CHARS));
         return agentClient.analyzeNovelPacing(request);
+    }
+
+    /** 由构思文档一键开书：创建作品并生成首批设定卡。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long createAiNovelWorkFromIdea(NovelIdeaDocVO idea)
+    {
+        if (idea == null)
+        {
+            throw new ServiceException("构思文档不能为空");
+        }
+        if (StringUtils.isBlank(idea.getWorkName()))
+        {
+            throw new ServiceException("构思文档缺少书名");
+        }
+        if (StringUtils.isBlank(idea.getGenre()))
+        {
+            throw new ServiceException("构思文档缺少题材");
+        }
+
+        AiNovelWork work = new AiNovelWork();
+        work.setWorkName(truncate(idea.getWorkName().trim(), 128));
+        work.setWorkType("novel");
+        work.setGenre(truncate(idea.getGenre().trim(), 64));
+        StringBuilder synopsis = new StringBuilder();
+        if (StringUtils.isNotBlank(idea.getLogline()))
+        {
+            synopsis.append(idea.getLogline().trim());
+        }
+        if (StringUtils.isNotBlank(idea.getOneLiner()))
+        {
+            if (synopsis.length() > 0)
+            {
+                synopsis.append("\n");
+            }
+            synopsis.append(idea.getOneLiner().trim());
+        }
+        work.setSynopsis(truncate(synopsis.toString(), 4_000));
+        work.setPacingLevel("balanced");
+        if (insertAiNovelWork(work) != 1)
+        {
+            throw new ServiceException("开书失败，请重试");
+        }
+
+        Long workId = work.getWorkId();
+        if (workId == null)
+        {
+            throw new ServiceException("开书失败，请重试");
+        }
+
+        insertIdeaCharacters(workId, idea.getProtagonists(), "主角");
+        insertIdeaCharacters(workId, idea.getSupporting(), "配角");
+        insertIdeaCharacters(workId, idea.getAntagonists(), "反派");
+        insertIdeaWorldSettings(workId, idea);
+        insertIdeaStoryCards(workId, idea);
+        return workId;
+    }
+
+    /** 由构思文档生成人物设定卡。 */
+    private void insertIdeaCharacters(
+            Long workId, List<NovelIdeaPersonVO> persons, String label)
+    {
+        if (persons == null)
+        {
+            return;
+        }
+        int saved = 0;
+        for (NovelIdeaPersonVO person : persons)
+        {
+            if (person == null || StringUtils.isBlank(person.getName()))
+            {
+                continue;
+            }
+            if (saved >= 10)
+            {
+                break;
+            }
+            StringBuilder content = new StringBuilder(label);
+            if (StringUtils.isNotBlank(person.getRole()))
+            {
+                content.append("，").append(person.getRole().trim());
+            }
+            content.append("\n");
+            if (StringUtils.isNotBlank(person.getTrait()))
+            {
+                content.append("性格：").append(person.getTrait().trim()).append("\n");
+            }
+            if (StringUtils.isNotBlank(person.getGoal()))
+            {
+                content.append("目标：").append(person.getGoal().trim()).append("\n");
+            }
+            if (StringUtils.isNotBlank(person.getGimmick()))
+            {
+                content.append("金手指：").append(person.getGimmick().trim()).append("\n");
+            }
+            insertSetting(workId, "character", truncate(person.getName().trim(), 128),
+                    truncate(content.toString(), SETTING_CONTENT_MAX_CHARS));
+            saved++;
+        }
+    }
+
+    /** 由构思文档生成世界观与金手指设定卡。 */
+    private void insertIdeaWorldSettings(Long workId, NovelIdeaDocVO idea)
+    {
+        NovelIdeaSettingVO setting = idea.getSetting();
+        StringBuilder world = new StringBuilder();
+        if (setting != null)
+        {
+            if (StringUtils.isNotBlank(setting.getWorldBuilding()))
+            {
+                world.append("世界观：").append(setting.getWorldBuilding().trim()).append("\n");
+            }
+            if (StringUtils.isNotBlank(setting.getTimePeriod()))
+            {
+                world.append("时代背景：").append(setting.getTimePeriod().trim()).append("\n");
+            }
+            if (StringUtils.isNotBlank(setting.getLocation()))
+            {
+                world.append("主要地点：").append(setting.getLocation().trim()).append("\n");
+            }
+        }
+        if (world.length() > 0)
+        {
+            insertSetting(workId, "world", "世界观与背景",
+                    truncate(world.toString(), SETTING_CONTENT_MAX_CHARS));
+        }
+        if (StringUtils.isNotBlank(idea.getMagicSystem()))
+        {
+            insertSetting(workId, "world", "金手指/特殊设定",
+                    truncate(idea.getMagicSystem().trim(), SETTING_CONTENT_MAX_CHARS));
+        }
+    }
+
+    /** 由构思文档生成故事骨架类设定卡（冲突/主题/基调/关键场景/卖点）。 */
+    private void insertIdeaStoryCards(Long workId, NovelIdeaDocVO idea)
+    {
+        StringBuilder skeleton = new StringBuilder();
+        if (StringUtils.isNotBlank(idea.getCoreConflict()))
+        {
+            skeleton.append("核心冲突：").append(idea.getCoreConflict().trim()).append("\n");
+        }
+        if (StringUtils.isNotBlank(idea.getTheme()))
+        {
+            skeleton.append("主题立意：").append(idea.getTheme().trim()).append("\n");
+        }
+        if (StringUtils.isNotBlank(idea.getTone()))
+        {
+            skeleton.append("基调：").append(idea.getTone().trim()).append("\n");
+        }
+        if (StringUtils.isNotBlank(idea.getEndingHint()))
+        {
+            skeleton.append("收束方向：").append(idea.getEndingHint().trim()).append("\n");
+        }
+        if (skeleton.length() > 0)
+        {
+            insertSetting(workId, "other", "故事骨架",
+                    truncate(skeleton.toString(), SETTING_CONTENT_MAX_CHARS));
+        }
+
+        if (idea.getKeyScenes() != null && !idea.getKeyScenes().isEmpty())
+        {
+            StringBuilder scenes = new StringBuilder();
+            for (int i = 0; i < Math.min(10, idea.getKeyScenes().size()); i++)
+            {
+                NovelIdeaSceneVO scene = idea.getKeyScenes().get(i);
+                if (scene == null)
+                {
+                    continue;
+                }
+                scenes.append(i + 1).append(". ");
+                if (StringUtils.isNotBlank(scene.getTitle()))
+                {
+                    scenes.append(scene.getTitle().trim());
+                }
+                if (StringUtils.isNotBlank(scene.getDescription()))
+                {
+                    scenes.append("：").append(scene.getDescription().trim());
+                }
+                scenes.append("\n");
+            }
+            if (scenes.length() > 0)
+            {
+                insertSetting(workId, "other", "关键场景规划",
+                        truncate(scenes.toString(), SETTING_CONTENT_MAX_CHARS));
+            }
+        }
+
+        if (idea.getSellingPoints() != null && !idea.getSellingPoints().isEmpty())
+        {
+            StringBuilder points = new StringBuilder();
+            for (int i = 0; i < Math.min(10, idea.getSellingPoints().size()); i++)
+            {
+                if (StringUtils.isNotBlank(idea.getSellingPoints().get(i)))
+                {
+                    points.append(i + 1).append(". ")
+                            .append(idea.getSellingPoints().get(i).trim()).append("\n");
+                }
+            }
+            if (points.length() > 0)
+            {
+                insertSetting(workId, "other", "卖点与钩子",
+                        truncate(points.toString(), SETTING_CONTENT_MAX_CHARS));
+            }
+        }
+    }
+
+    /** 插入一条设定卡并设置审计字段。 */
+    private void insertSetting(Long workId, String settingType, String title, String content)
+    {
+        AiNovelSetting setting = new AiNovelSetting();
+        setting.setSettingId(null);
+        setting.setWorkId(workId);
+        setting.setSettingType(settingType);
+        setting.setTitle(title);
+        setting.setContent(content);
+        setting.setCreateBy(SecurityUtils.getUsername());
+        setting.setCreateTime(DateUtils.getNowDate());
+        if (settingMapper.insertAiNovelSetting(setting) != 1)
+        {
+            throw new ServiceException("构思设定保存失败，请重试");
+        }
     }
 
     private static String truncate(String value, int maxChars)

@@ -41,6 +41,8 @@ public class AgentConfig implements EnvironmentAware {
     private String threadDeleteUrl = "/api/v1/chat/thread";
     /** 小说创作智能体流式创作接口路径 */
     private String novelStreamUrl = "/api/v1/novel/write/stream";
+    /** 小说构思智能体流式构思（追问补全 → 构思文档）接口路径 */
+    private String novelIdeaStreamUrl = "/api/v1/novel/idea/stream";
     /** 删除小说作品会话记忆接口路径 */
     private String novelThreadDeleteUrl = "/api/v1/novel/thread";
     /** 根据书名自动生成故事梗概接口路径 */

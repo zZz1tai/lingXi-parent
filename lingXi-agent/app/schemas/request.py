@@ -533,6 +533,35 @@ class NovelWriteRequest(StrictRequestModel):
         return normalized
 
 
+class NovelIdeaRequest(StrictRequestModel):
+    """小说构思智能体的流式请求（模糊创意 → 追问补全 → 构思文档）。"""
+
+    message: str = Field(..., min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
+    user_id: str = Field(..., min_length=1, max_length=128)
+    thread_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$",
+        validation_alias=AliasChoices("thread_id", "session_id"),
+        description=(
+            "Per-idea conversation identifier used by the checkpointer; "
+            "distinct from user_id"
+        ),
+    )
+    max_iterations: int | None = Field(default=None, ge=1, le=20)
+    llm_config: LLMConfig | None = None
+
+    @field_validator("message")
+    @classmethod
+    def reject_blank_message(cls, value: str) -> str:
+        """拒绝空白构思输入。"""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("message must not be blank")
+        return normalized
+
+
 class ActionResumeRequest(StrictRequestModel):
     """Java 登录端确认后恢复同一 LangGraph checkpoint 的严格请求。"""
 

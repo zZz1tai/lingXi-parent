@@ -73,6 +73,40 @@ export function streamNovelSynopsis(data, { signal, onChunk } = {}) {
   })
 }
 
+/**
+ * 对话式小说构思：模糊创意经过多轮追问后返回结构化构思文档。
+ * @param {{message: string, sessionId: string}} data
+ */
+export function streamNovelIdea(data, { signal, onChunk, onEvent } = {}) {
+  return streamSse('/novel/idea/stream', {
+    body: {
+      message: data.message,
+      sessionId: data.sessionId
+    },
+    signal,
+    onChunk,
+    onEvent
+  })
+}
+
+/** 由已经确认的构思文档创建长篇作品及首批设定卡。 */
+export function createNovelWorkFromIdea(data) {
+  return request({
+    url: '/novel/idea/create-work',
+    method: 'post',
+    data
+  })
+}
+
+/** 清理不再继续使用的构思会话 checkpoint。 */
+export function deleteNovelIdeaThread(sessionId) {
+  return request({
+    url: '/novel/idea/thread',
+    method: 'delete',
+    params: { sessionId }
+  })
+}
+
 // ── 章节（长篇） ──────────────────────────────────────
 
 export function listNovelChapter(workId) {
