@@ -81,8 +81,9 @@ lingXi-parent/
 
 - **终端运营**：售货设备、货道、商品、库存、订单、维修/运营工单、合作商及区域管理。
 - **平台能力**：用户、角色、菜单、部门、参数、字典、日志、代码生成和定时任务。
-- **AI 对话与分析**：Java 负责权限、业务数据和事务；Agent 负责 Prompt、模型调用、结构化输出与短期记忆。
-- **AI 视频创作**：从小说章节生成章节规划、场景、分镜、人物/场景/关键帧提示词，并提交图片、视频任务。用户确认关键帧后才允许提交视频任务。
+- **AI 对话与分析**：Java 负责权限、业务数据和事务；Agent 负责 Prompt、模型调用、结构化输出与短期记忆。Agent 连接层带熔断降级：连续连接故障快速失败，熔断期间同步/流式对话返回固定兜底回复（SUCCEEDED + `AGENT_DEGRADED`），半开窗口自动恢复探测。
+- **AI 小说创作**：作品设定卡管理、三层大纲（全书→卷→章）AI 生成与断链检查报告、伏笔登记与追踪（按状态/优先级管理，未解伏笔随创作请求注入智能体）。
+- **AI 视频创作**：从小说章节生成章节规划、场景、分镜、人物/场景/关键帧提示词，并异步提交图片、视频任务（outbox 事件投递、指数退避重试、重启恢复扫描）。用户确认关键帧后才允许提交视频任务；支持供应商回调（HMAC 验签、时间戳防重放、eventId 幂等）与生成队列页（筛选、详情、重试、自动刷新）。
 - **内部知识检索**：Agent 按登录角色、文档有效期和版本过滤后检索 JSONL 知识索引，默认关闭。
 - **业务数据工具**：启用后 Agent 可调用 Java 网关查询销售汇总、任务统计、异常设备等只读数据。
 - **人工确认受控写操作**：模型只能生成维修工单提案，用户在登录端批准后才由 Java 执行创建。
@@ -130,11 +131,7 @@ lingXi-parent/
 | Agent 服务 API Key | Java 调用 Python Agent 的认证密钥（可选，也可通过环境变量提供） |
 | Tavily API Key | 联网搜索凭据（可选，离线部署时通过 `lingXi-agent/.env` 兜底） |
 
-首次部署时需执行数据库迁移脚本初始化配置项：
-
-```powershell
-mysql -u root -p dkd < dkd-parent/sql/system_security_config_migration.sql
-```
+首次部署时 `lingxi_all.sql` 已自动初始化安全配置项；既有环境也可通过参数管理界面（系统管理 → 参数管理 → 系统安全配置）手工维护或补录。
 
 ### Java 与 Agent 的服务认证
 
@@ -148,7 +145,7 @@ Agent 默认只允许向 `OUTBOUND_ALLOWED_HOSTS` 指定的 HTTPS 主机发送�
 
 ## 数据库初始化
 
-使用 [`dkd-parent/sql/lingxi_all.sql`](dkd-parent/sql/lingxi_all.sql) 完成一站式初始化：它会创建并切换到 `dkd` 数据库，导入系统表和种子数据，创建 AI 视频工作流表，调整章节软删除字段，并写入 AI 视频菜单及管理员角色授权。
+使用 [`dkd-parent/sql/lingxi_all.sql`](dkd-parent/sql/lingxi_all.sql) 完成一站式初始化：它会创建并切换到 `dkd` 数据库，导入系统表和种子数据，创建 AI 视频工作流、小说大纲/伏笔、任务尝试记录等表，写入 AI 视频菜单及管理员角色授权，并初始化安全配置项。
 
 ```powershell
 mysql -u root -p < dkd-parent/sql/lingxi_all.sql
@@ -160,14 +157,10 @@ mysql -u root -p < dkd-parent/sql/lingxi_all.sql
 
 | 脚本 | 用途 |
 | --- | --- |
-| `lingxi_all.sql` / `dkd_complete.sql` | 新环境一站式初始化（系统表、种子数据、AI 视频工作流等） |
-| `system_security_config_migration.sql` | 初始化 OSS / Agent 密钥等安全配置项 |
-| `ai_video_workflow.sql` | 创建 AI 视频工作流表 |
-| `ai_video_menu.sql` | 写入 AI 视频菜单及管理员角色授权 |
-| `ai_video_chapter_soft_delete_migration.sql` | 章节软删除字段调整 |
-| `ai_video_project_cover_migration.sql` | AI 视频项目封面字段迁移 |
-| `ai_chat_attachment_migration.sql` | AI 对话附件支持 |
-| `ai_agent_action_migration.sql` | 人工确认受控写操作（维修工单）所需表，启用前必须执行 |
+| `lingxi_all.sql` | 新环境一站式初始化（系统表、种子数据、AI 视频工作流、小说大纲/伏笔、任务尝试记录、安全配置项等） |
+| `migration_ai_novel_outline.sql` | 创建 AI 小说三层大纲表 `ai_novel_outline`（既有环境补齐用） |
+| `migration_ai_model_history_ui_json.sql` | AI 对话历史表增加 OpenUI 渲染历史 `ui_json` 字段 |
+| `migration_ai_video_generation_task_recover_count.sql` | 生成任务表增加 `recover_count` 字段并修复异常租约数据 |
 
 ## 首次安装
 
