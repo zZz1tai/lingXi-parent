@@ -292,7 +292,7 @@ export function sortNovelOutline(workId, parentId, outlineIds) {
 
 /**
  * 分析章节节奏（评分/实际档位/维度/问题清单与建议）。
- * 请求体字段与 Python NovelPacingRequest 对齐：work_name/genre/chapter_title/pacing_level/content。
+ * 请求体字段与 Java NovelPacingRequestDTO 对齐：workName/genre/chapterTitle/pacingLevel/content。
  * @param {{workName: string, genre?: string, chapterTitle?: string, pacingLevel?: string, content: string}} data
  */
 export function analyzeNovelPacing(data) {

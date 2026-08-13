@@ -16,6 +16,39 @@ export const PACING_LEVELS = [
 /** 默认档位。 */
 export const DEFAULT_PACING_LEVEL = 'balanced'
 
+/** 浏览器端节奏分析缓存命名空间。 */
+export const PACING_CACHE_STORAGE_KEY = 'lingxi:novel:pacing-analysis:v1'
+
+/**
+ * 构造按用户、作品和章节隔离的节奏分析缓存键。
+ * 短篇正文使用 work 作用域，长篇章节使用 chapter:<chapterId> 作用域。
+ */
+export function buildPacingCacheKey({ userId, workId, chapterId }) {
+  const normalizedWorkId = String(workId ?? '').trim()
+  if (!normalizedWorkId) return ''
+  const normalizedUserId = String(userId ?? '').trim() || 'anonymous'
+  const normalizedChapterId = String(chapterId ?? '').trim()
+  const scope = normalizedChapterId ? `chapter:${normalizedChapterId}` : 'work'
+  return `${normalizedUserId}:${normalizedWorkId}:${scope}`
+}
+
+/** 安全解析浏览器缓存，只保留包含分析结果的记录。 */
+export function parsePacingCache(raw) {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([key, record]) =>
+        key && record && typeof record === 'object' &&
+        record.result && typeof record.result === 'object' && !Array.isArray(record.result)
+      )
+    )
+  } catch {
+    return {}
+  }
+}
+
 /** 档位中文名映射（含容错：未知档位回退到均衡）。 */
 export function pacingLabel(level) {
   return PACING_LEVELS.find(item => item.id === level)?.label || '均衡'
@@ -40,10 +73,10 @@ export const PACING_ISSUE_LABELS = {
  * @param {{workName: string, genre?: string, chapterTitle?: string, pacingLevel?: string, content: string}} params
  */
 export function buildPacingRequest({ workName, genre, chapterTitle, pacingLevel, content }) {
-  const request = { work_name: workName || '', content: content || '' }
+  const request = { workName: workName || '', content: content || '' }
   if (genre) request.genre = genre
-  if (chapterTitle) request.chapter_title = chapterTitle
-  request.pacing_level = pacingLevel || DEFAULT_PACING_LEVEL
+  if (chapterTitle) request.chapterTitle = chapterTitle
+  request.pacingLevel = pacingLevel || DEFAULT_PACING_LEVEL
   return request
 }
 

@@ -55,7 +55,8 @@
               title="分析当前正文的节奏评分与修改建议"
               @click="openPacingDialog"
             >
-              <el-icon><MagicStick /></el-icon>节奏分析
+              <el-icon><MagicStick /></el-icon>
+              {{ currentPacingRecord ? `节奏分析 ${currentPacingRecord.result.score} 分` : '节奏分析' }}
             </button>
             <button class="nk-btn" type="button" @click="handleExport">
               <el-icon><Download /></el-icon>导出手稿
@@ -336,7 +337,6 @@
       width="620px"
       append-to-body
       class="nk-dialog-paper nk-pacing-dialog"
-      @closed="pacingDialog.result = null"
     >
       <div v-if="pacingLoading" class="nk-pacing-loading">
         <el-icon class="is-loading"><Loading /></el-icon>
@@ -518,7 +518,8 @@ import OutlinePanel from './components/OutlinePanel.vue'
 import IdeaStudioDialog from './components/IdeaStudioDialog.vue'
 import { countNovelCharacters } from './novelWordCount'
 import {
-  DEFAULT_PACING_LEVEL, PACING_LEVELS, buildPacingRequest, normalizePacingResult, pacingLabel
+  DEFAULT_PACING_LEVEL, PACING_CACHE_STORAGE_KEY, PACING_LEVELS,
+  buildPacingCacheKey, buildPacingRequest, normalizePacingResult, pacingLabel, parsePacingCache
 } from './novelPacing'
 import './novel-kraft.scss'
 
@@ -711,20 +712,47 @@ function handleDeleteWork(work) {
 // ── 章节节奏分析 ─────────────────────────────────────
 const pacingDialog = reactive({ open: false, level: DEFAULT_PACING_LEVEL, result: null })
 const pacingLoading = ref(false)
+const pacingRecords = reactive(parsePacingCache(localStorage.getItem(PACING_CACHE_STORAGE_KEY)))
+
+function currentPacingCacheKey() {
+  return buildPacingCacheKey({
+    userId: userStore.id,
+    workId: selectedWork.value?.workId,
+    chapterId: selectedWork.value?.workType === 'novel' ? currentChapter.value?.chapterId : null
+  })
+}
+
+const currentPacingRecord = computed(() => {
+  const cacheKey = currentPacingCacheKey()
+  return cacheKey ? pacingRecords[cacheKey] || null : null
+})
+
+function persistPacingRecords() {
+  try {
+    localStorage.setItem(PACING_CACHE_STORAGE_KEY, JSON.stringify(pacingRecords))
+  } catch {
+    ElMessage.warning('节奏分析已保留在当前页面，但浏览器缓存写入失败')
+  }
+}
 
 function openPacingDialog() {
   if (!manuscript.value.trim()) {
     ElMessage.warning('先写一点正文，才能分析节奏')
     return
   }
-  pacingDialog.level = selectedWork.value?.pacingLevel || DEFAULT_PACING_LEVEL
-  pacingDialog.result = null
+  const cached = currentPacingRecord.value
+  pacingDialog.level = cached?.level || selectedWork.value?.pacingLevel || DEFAULT_PACING_LEVEL
+  pacingDialog.result = cached ? normalizePacingResult(cached.result) : null
   pacingDialog.open = true
-  runPacingAnalysis()
+  if (!pacingDialog.result) runPacingAnalysis()
 }
 
 async function runPacingAnalysis() {
   if (!manuscript.value.trim()) return
+  const cacheKey = currentPacingCacheKey()
+  if (!cacheKey) return
+  const previousResult = pacingDialog.result
+  const targetLevel = selectedWork.value?.pacingLevel || DEFAULT_PACING_LEVEL
   pacingLoading.value = true
   pacingDialog.result = null
   try {
@@ -733,16 +761,24 @@ async function runPacingAnalysis() {
         workName: selectedWork.value?.workName || '',
         genre: selectedWork.value?.genre || '',
         chapterTitle: currentChapter.value?.chapterTitle || '',
-        pacingLevel: selectedWork.value?.pacingLevel || DEFAULT_PACING_LEVEL,
+        pacingLevel: targetLevel,
         content: manuscript.value
       })
     )
     const result = normalizePacingResult(data)
     if (!result) throw new Error('AI 返回了空的节奏分析结果')
+    pacingDialog.level = targetLevel
     pacingDialog.result = result
+    pacingRecords[cacheKey] = {
+      level: targetLevel,
+      analyzedAt: new Date().toISOString(),
+      result
+    }
+    persistPacingRecords()
   } catch (error) {
-    pacingDialog.open = false
-    ElMessage.error(error?.message || '节奏分析失败，请稍后再试')
+    pacingDialog.result = previousResult
+    if (!previousResult) pacingDialog.open = false
+    ElMessage.error(previousResult ? '重新分析失败，已保留上次结果' : (error?.message || '节奏分析失败，请稍后再试'))
   } finally {
     pacingLoading.value = false
   }

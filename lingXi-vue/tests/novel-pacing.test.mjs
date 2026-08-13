@@ -5,8 +5,10 @@ import {
   DEFAULT_PACING_LEVEL,
   PACING_ISSUE_LABELS,
   PACING_LEVELS,
+  buildPacingCacheKey,
   buildPacingRequest,
   normalizePacingResult,
+  parsePacingCache,
   pacingDesc,
   pacingLabel
 } from '../src/views/novel/novelPacing.js'
@@ -39,11 +41,13 @@ test('pacingDesc returns description for known id', () => {
 
 test('buildPacingRequest fills required fields and applies default level', () => {
   const request = buildPacingRequest({ workName: '夜航', content: '正文' })
-  assert.equal(request.work_name, '夜航')
+  assert.equal(request.workName, '夜航')
   assert.equal(request.content, '正文')
-  assert.equal(request.pacing_level, 'balanced')
+  assert.equal(request.pacingLevel, 'balanced')
   assert.equal(request.genre, undefined)
-  assert.equal(request.chapter_title, undefined)
+  assert.equal(request.chapterTitle, undefined)
+  assert.equal(request.work_name, undefined)
+  assert.equal(request.pacing_level, undefined)
 })
 
 test('buildPacingRequest passes optional fields when provided', () => {
@@ -55,8 +59,37 @@ test('buildPacingRequest passes optional fields when provided', () => {
     content: '正文'
   })
   assert.equal(request.genre, '悬疑')
-  assert.equal(request.chapter_title, '第一章')
-  assert.equal(request.pacing_level, 'rapid')
+  assert.equal(request.chapterTitle, '第一章')
+  assert.equal(request.pacingLevel, 'rapid')
+})
+
+test('buildPacingCacheKey isolates short works, chapters and users', () => {
+  assert.equal(
+    buildPacingCacheKey({ userId: 7, workId: 12 }),
+    '7:12:work'
+  )
+  assert.equal(
+    buildPacingCacheKey({ userId: 7, workId: 12, chapterId: 3 }),
+    '7:12:chapter:3'
+  )
+  assert.equal(
+    buildPacingCacheKey({ userId: 8, workId: 12, chapterId: 3 }),
+    '8:12:chapter:3'
+  )
+  assert.equal(buildPacingCacheKey({ userId: 7 }), '')
+})
+
+test('parsePacingCache tolerates invalid JSON and drops malformed records', () => {
+  assert.deepEqual(parsePacingCache('not json'), {})
+  assert.deepEqual(parsePacingCache('[]'), {})
+  assert.deepEqual(
+    parsePacingCache(JSON.stringify({
+      valid: { level: 'balanced', result: { score: 82 } },
+      missingResult: { level: 'rapid' },
+      arrayResult: { result: [] }
+    })),
+    { valid: { level: 'balanced', result: { score: 82 } } }
+  )
 })
 
 test('normalizePacingResult returns null for non-object input', () => {
