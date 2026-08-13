@@ -32,4 +32,7 @@ public interface IAiNovelWorkService
 
     /** 组装提交给创作智能体的作品上下文。 */
     NovelWorkContextDTO buildNovelWorkContext(Long workId, Long chapterId);
+
+    /** 导出作品全文：长篇按章节顺序拼接标题与正文，短篇取整篇正文。 */
+    String exportWorkText(Long workId);
 }

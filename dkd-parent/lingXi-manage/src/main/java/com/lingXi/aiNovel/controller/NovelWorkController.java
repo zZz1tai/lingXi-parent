@@ -13,11 +13,14 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import jakarta.servlet.http.HttpServletResponse;
 import com.lingXi.common.annotation.Log;
 import com.lingXi.common.core.controller.BaseController;
 import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.common.core.page.TableDataInfo;
 import com.lingXi.common.enums.BusinessType;
+import com.lingXi.common.utils.file.FileUtils;
 import com.lingXi.aiNovel.domain.AiNovelChapter;
 import com.lingXi.aiNovel.domain.AiNovelForeshadow;
 import com.lingXi.aiNovel.domain.AiNovelOutline;
@@ -169,6 +172,23 @@ public class NovelWorkController extends BaseController
             @PathVariable Long workId, @RequestBody Map<String, List<Long>> body)
     {
         return toAjax(chapterService.sortAiNovelChapter(workId, body.get("chapterIds")));
+    }
+
+    // ── 导出 ──────────────────────────────────────────
+
+    /** 导出作品全文为 txt 下载，长篇含全部章节正文。 */
+    @Operation(summary = "导出小说作品全文")
+    @PreAuthorize("@ss.hasPermi('novel:work:list')")
+    @PostMapping("/{workId}/export")
+    public void export(@PathVariable Long workId, HttpServletResponse response)
+            throws Exception
+    {
+        String text = workService.exportWorkText(workId);
+        String fileName = workService.selectAiNovelWorkByWorkId(workId).getWorkName() + ".txt";
+        response.setContentType("text/plain;charset=utf-8");
+        response.setCharacterEncoding("utf-8");
+        FileUtils.setAttachmentResponseHeader(response, fileName);
+        response.getWriter().write(text);
     }
 
     // ── 设定集 ────────────────────────────────────────

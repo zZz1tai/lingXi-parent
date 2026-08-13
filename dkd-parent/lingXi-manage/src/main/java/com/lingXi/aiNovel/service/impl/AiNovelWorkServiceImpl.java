@@ -246,6 +246,34 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         return context;
     }
 
+    /** 导出作品全文：长篇按章节顺序拼接标题与正文，短篇取整篇正文。 */
+    @Override
+    public String exportWorkText(Long workId)
+    {
+        AiNovelWork work = checkWorkOwner(workId);
+        StringBuilder sb = new StringBuilder("《").append(work.getWorkName()).append("》");
+        if ("novel".equals(work.getWorkType()))
+        {
+            List<AiNovelChapter> chapters =
+                    chapterMapper.selectAiNovelChapterListByWorkId(workId);
+            for (AiNovelChapter chapter : chapters)
+            {
+                sb.append("\n\n")
+                        .append(StringUtils.isNotBlank(chapter.getChapterTitle())
+                                ? chapter.getChapterTitle() : "第 " + chapter.getChapterNo() + " 章");
+                if (StringUtils.isNotBlank(chapter.getContent()))
+                {
+                    sb.append("\n\n").append(chapter.getContent());
+                }
+            }
+        }
+        else if (StringUtils.isNotBlank(work.getManuscript()))
+        {
+            sb.append("\n\n").append(work.getManuscript());
+        }
+        return sb.toString();
+    }
+
     /** 截取正文末尾片段，用于无缝续写。 */
     private static String manuscriptTail(String content)
     {

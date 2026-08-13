@@ -365,12 +365,11 @@ import {
   Delete, Download, EditPen, Loading, MagicStick, Plus, Check, CircleCheckFilled, WarningFilled
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { saveAs } from 'file-saver'
 import useUserStore from '@/store/modules/user'
 import {
   addNovelChapter, addNovelForeshadow, addNovelSetting, addNovelWork, delNovelChapter,
   delNovelForeshadow, delNovelSetting,
-  delNovelWork, getNovelWork, listNovelChapter, listNovelForeshadow, listNovelSetting,
+  delNovelWork, exportNovelWorkText, getNovelWork, listNovelChapter, listNovelForeshadow, listNovelSetting,
   listNovelWork, saveNovelManuscript, streamNovelSynopsis,
   updateNovelChapter, updateNovelForeshadow, updateNovelSetting, updateNovelWork
 } from '@/api/novel/novel'
@@ -937,25 +936,14 @@ watch(manuscript, () => {
 async function handleExport() {
   const work = selectedWork.value
   if (!work) return
-  let text = ''
-  if (work.workType === 'novel') {
-    const rows = chapters.value
-    if (!rows.length) {
-      ElMessage.warning('暂无章节可导出')
+  if (saveState.value === 'dirty') {
+    await saveCurrent()
+    if (saveState.value !== 'saved') {
+      ElMessage.warning('自动保存失败，暂无法导出最新内容，请稍后重试')
       return
     }
-    text = rows
-      .map((chapter, index) => `${chapter.chapterTitle || `第 ${index + 1} 章`}\n\n${chapter.content || ''}`)
-      .join('\n\n')
-  } else {
-    text = manuscript.value
   }
-  if (!text.trim()) {
-    ElMessage.warning('手稿还是空的')
-    return
-  }
-  const blob = new Blob([`《${work.workName}》\n\n${text}`], { type: 'text/plain;charset=utf-8' })
-  saveAs(blob, `${work.workName}.txt`)
+  exportNovelWorkText(work.workId, `${work.workName}.txt`)
   ElMessage.success('手稿已导出')
 }
 

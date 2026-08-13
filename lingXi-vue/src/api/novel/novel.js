@@ -1,4 +1,4 @@
-import request from '@/utils/request'
+import request, { download } from '@/utils/request'
 import { streamSse } from '@/api/ai'
 
 /**
@@ -118,6 +118,13 @@ export function sortNovelChapter(workId, chapterIds) {
     method: 'put',
     data: { chapterIds }
   })
+}
+
+/**
+ * 导出作品全文为 txt（后端按章节顺序完整拼接，长篇不依赖前端已加载章节）。
+ */
+export function exportNovelWorkText(workId, fileName) {
+  return download('/novel/work/' + workId + '/export', {}, fileName)
 }
 
 // ── 设定集（长篇：人物/世界观/大纲索引卡） ────────────
