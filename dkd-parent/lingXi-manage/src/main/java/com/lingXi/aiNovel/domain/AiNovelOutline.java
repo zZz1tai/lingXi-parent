@@ -37,6 +37,6 @@ public class AiNovelOutline extends BaseEntity
     /** 关联章节ID（章级大纲） */
     private Long chapterId;
 
-    /** 关联章节号（展示用，章级大纲冗余查询字段） */
+    /** 计划章节号；关联正文后优先展示正文的最新章节号 */
     private Integer chapterNo;
 }

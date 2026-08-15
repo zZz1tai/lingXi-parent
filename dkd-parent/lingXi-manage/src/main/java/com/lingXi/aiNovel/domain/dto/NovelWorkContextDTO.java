@@ -31,6 +31,9 @@ public class NovelWorkContextDTO {
     /** 当前章节标题 */
     private String chapterTitle;
 
+    /** 当前章节序号，用于与章纲和伏笔回收计划对齐 */
+    private Integer chapterNo;
+
     /** 本章梗概 */
     private String chapterSynopsis;
 
@@ -42,4 +45,7 @@ public class NovelWorkContextDTO {
 
     /** 未解伏笔列表 */
     private List<NovelForeshadowItemDTO> foreshadows;
+
+    /** 与当前章节相关的精简树形大纲上下文 */
+    private List<NovelOutlineContextItemDTO> outlineContext;
 }

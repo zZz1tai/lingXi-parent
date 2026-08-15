@@ -18,9 +18,11 @@ from app.agents.novel_idea import (
     validate_idea_doc,
 )
 from app.agents.novel_prompts import (
+    NOVEL_CONTEXT_ANALYSIS_SYSTEM_PROMPT,
     NOVEL_OUTLINE_SYSTEM_PROMPT,
     NOVEL_PACING_ANALYSIS_SYSTEM_PROMPT,
     NOVEL_SYNOPSIS_SYSTEM_PROMPT,
+    compose_novel_context_analysis_prompt,
     compose_novel_outline_prompt,
     compose_novel_pacing_analysis_prompt,
     compose_novel_polish_instruction,
@@ -54,6 +56,7 @@ from app.api.v1.chat import (
 from app.observability.tracing import with_trace
 from app.schemas.request import (
     DeleteChatThreadRequest,
+    NovelContextAnalyzeRequest,
     NovelIdeaRequest,
     NovelOutlineRequest,
     NovelPacingRequest,
@@ -62,6 +65,9 @@ from app.schemas.request import (
 )
 from app.schemas.response import (
     BaseResponse,
+    NovelContextAnalyzeData,
+    NovelContextAnalyzeResponse,
+    NovelContextChange,
     NovelOutlineData,
     NovelOutlineResponse,
     NovelPacingData,
@@ -989,6 +995,114 @@ async def novel_pacing_analyze(
             issues=payload["issues"],
             suggestions=payload["suggestions"],
         ),
+    )
+
+
+def _validate_context_changes_payload(
+    data: dict[str, Any],
+    request: NovelContextAnalyzeRequest,
+) -> list[NovelContextChange]:
+    """校验模型候选变更的结构、目标归属与重复项。"""
+
+    raw_changes = data.get("changes")
+    if not isinstance(raw_changes, list):
+        raise ValueError("changes must be a list")
+    if len(raw_changes) > 20:
+        raise ValueError("changes must not exceed 20 items")
+
+    setting_ids = {item.setting_id for item in request.settings}
+    foreshadow_ids = {item.foreshadow_id for item in request.foreshadows}
+    existing_titles = {
+        ("setting", item.title.strip().casefold()) for item in request.settings
+    } | {
+        ("foreshadow", item.title.strip().casefold())
+        for item in request.foreshadows
+    }
+    seen_updates: set[tuple[str, int]] = set()
+    seen_adds: set[tuple[str, str]] = set()
+    changes: list[NovelContextChange] = []
+    for raw_change in raw_changes:
+        change = NovelContextChange.model_validate(raw_change)
+        if change.operation == "UPDATE":
+            allowed_ids = setting_ids if change.resource_type == "setting" else foreshadow_ids
+            if change.target_id not in allowed_ids:
+                raise ValueError(
+                    f"unknown {change.resource_type} targetId: {change.target_id}"
+                )
+            update_key = (change.resource_type, int(change.target_id))
+            if update_key in seen_updates:
+                raise ValueError("the same target must not be updated twice")
+            seen_updates.add(update_key)
+        else:
+            add_key = (change.resource_type, change.title.strip().casefold())
+            if add_key in existing_titles or add_key in seen_adds:
+                raise ValueError("ADD change duplicates an existing or proposed title")
+            seen_adds.add(add_key)
+        changes.append(change)
+    return changes
+
+
+@router.post(
+    "/context/analyze",
+    response_model=NovelContextAnalyzeResponse,
+    summary="Analyze chapter changes to settings and foreshadows",
+)
+async def novel_context_analyze(
+    request: NovelContextAnalyzeRequest,
+    request_id: str = Depends(get_request_id),
+) -> NovelContextAnalyzeResponse:
+    """分析章节产生的长期资料变化，只返回待人工确认的 ADD/UPDATE 清单。"""
+
+    try:
+        llm = create_llm(
+            request.llm_config,
+            profile="novel-context-analysis",
+            temperature=0.1,
+            max_retries=2,
+        )
+        prompt_data = request.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude={"llm_config"},
+            exclude_none=True,
+        )
+        response = await llm.ainvoke([
+            ("system", NOVEL_CONTEXT_ANALYSIS_SYSTEM_PROMPT),
+            ("user", compose_novel_context_analysis_prompt(prompt_data)),
+        ])
+        content = getattr(response, "content", None)
+        if isinstance(content, list):
+            content = "".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        raw_text = str(content or "").strip()
+        if not raw_text:
+            raise RuntimeError("model returned an empty context analysis")
+        parsed = JsonOutputParser().parse(raw_text)
+        changes = _validate_context_changes_payload(parsed, request)
+    except AgentError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Novel context analysis failed | request_id=%s | error_type=%s | "
+            "chapter_id=%d",
+            request_id,
+            type(exc).__name__,
+            request.chapter_id,
+        )
+        raise
+    logger.info(
+        "Novel context analyzed | request_id=%s | chapter_id=%d | changes=%d",
+        request_id,
+        request.chapter_id,
+        len(changes),
+    )
+    return NovelContextAnalyzeResponse(
+        success=True,
+        message="analyzed",
+        data=NovelContextAnalyzeData(changes=changes),
     )
 
 

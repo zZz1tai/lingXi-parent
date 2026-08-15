@@ -112,7 +112,7 @@ $nk-gold: #b9922c;
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 16px;
+  gap: 0;
   padding: 16px;
 }
 
@@ -120,8 +120,9 @@ $nk-gold: #b9922c;
 // 左侧作品栏 —— 书架
 // ════════════════════════════════════════════════════════
 .nk-rail {
-  width: 292px;
+  width: var(--nk-rail-width, 292px);
   flex: 0 0 auto;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   border-radius: 10px;
@@ -144,12 +145,14 @@ $nk-gold: #b9922c;
   .nk-rail-title {
     display: flex;
     align-items: center;
+    min-width: 0;
     gap: 8px;
     font-size: 17px;
     font-weight: 700;
     letter-spacing: 2px;
     color: var(--nk-ink);
     text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+    white-space: nowrap;
 
     .nk-quill {
       font-size: 15px;
@@ -164,6 +167,7 @@ $nk-gold: #b9922c;
   border: none;
   cursor: pointer;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 4px;
   padding: 5px 12px;
@@ -174,6 +178,7 @@ $nk-gold: #b9922c;
   background: linear-gradient(180deg, #b06a3a, #8f4f26);
   box-shadow: 0 2px 0 #6e3a17, inset 0 1px 0 rgba(255, 255, 255, 0.3);
   transition: transform 0.12s, box-shadow 0.12s;
+  white-space: nowrap;
 
   &:hover { transform: translateY(1px); box-shadow: 0 1px 0 #6e3a17, inset 0 1px 0 rgba(255, 255, 255, 0.3); }
   &:active { transform: translateY(2px); box-shadow: none; }
@@ -315,6 +320,18 @@ $nk-gold: #b9922c;
       font-size: 11.5px;
       color: var(--nk-ink-faint);
 
+      > span {
+        white-space: nowrap;
+      }
+
+      // 题材过长时省略，避免中文在窄栏里被逐字压成竖排。
+      > span:nth-child(2):not(.nk-book-seal) {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
       .nk-book-seal {
         font-size: 9.5px;
         color: var(--nk-seal);
@@ -342,6 +359,17 @@ $nk-gold: #b9922c;
   }
 
   &:hover .nk-book-more { opacity: 1; }
+}
+
+// 作品栏接近最小宽度时收紧装帧留白，但仍保持横向文字节奏。
+@container (max-width: 275px) {
+  .nk-rail-head { padding-inline: 12px; }
+  .nk-rail-new { padding-inline: 10px; }
+  .nk-rail-tabs { padding-inline: 10px; }
+  .nk-rail-search { padding-inline: 10px; }
+  .nk-rail-search .nk-search-icon { left: 18px; }
+  .nk-rail-list { padding-inline: 9px; }
+  .nk-book { gap: 8px; padding: 6px; }
 }
 
 .nk-rail-empty {
@@ -553,7 +581,75 @@ $nk-gold: #b9922c;
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 14px;
+  gap: 0;
+}
+
+// 分栏拖拽手柄：保留原有留白，同时提供明确但克制的抓取反馈。
+.nk-layout-splitter {
+  position: relative;
+  z-index: 2;
+  width: 14px;
+  flex: 0 0 14px;
+  align-self: stretch;
+  border: 0;
+  outline: none;
+  cursor: col-resize;
+  touch-action: none;
+
+  &.is-outer {
+    width: 16px;
+    flex-basis: 16px;
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 10px;
+    bottom: 10px;
+    left: 50%;
+    width: 1px;
+    background: rgba(110, 72, 34, 0.2);
+    transform: translateX(-50%);
+    transition: background-color 180ms ease, box-shadow 180ms ease;
+  }
+
+  .nk-layout-splitter-grip {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 5px;
+    height: 46px;
+    border-radius: 5px;
+    opacity: 0.52;
+    background: radial-gradient(circle, rgba(110, 72, 34, 0.82) 1.2px, transparent 1.4px) center / 5px 8px;
+    transform: translate(-50%, -50%);
+    transition: opacity 180ms ease, background-color 180ms ease;
+  }
+
+  &:hover,
+  &:focus-visible,
+  &.is-active {
+    &::before {
+      background: var(--nk-sienna);
+      box-shadow: 0 0 0 3px rgba(160, 86, 46, 0.1);
+    }
+
+    .nk-layout-splitter-grip {
+      opacity: 1;
+    }
+  }
+
+  &:focus-visible {
+    box-shadow: inset 0 0 0 2px rgba(160, 86, 46, 0.35);
+    border-radius: 5px;
+  }
+}
+
+.nk-page.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+
+  * { cursor: col-resize !important; }
 }
 
 .nk-paper {
@@ -962,7 +1058,7 @@ $nk-gold: #b9922c;
 
 // ── 右侧抽屉：章节目录 + 设定集 ────────────────────
 .nk-drawer {
-  width: 272px;
+  width: var(--nk-drawer-width, 272px);
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;

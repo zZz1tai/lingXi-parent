@@ -2806,7 +2806,7 @@ CREATE TABLE IF NOT EXISTS ai_novel_chapter (
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_by VARCHAR(64) DEFAULT '',
   update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  del_flag CHAR(1) NOT NULL DEFAULT '0' COMMENT '删除标志:0存在 2删除',
+  del_flag CHAR(1) NULL DEFAULT '0' COMMENT '删除标志：0为正常，NULL为已删除',
   remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
   PRIMARY KEY (chapter_id),
   UNIQUE KEY uk_novel_chapter_work_no (work_id, chapter_no, del_flag),
@@ -2837,6 +2837,7 @@ CREATE TABLE IF NOT EXISTS ai_novel_outline (
   outline_title VARCHAR(128) NOT NULL COMMENT '大纲标题',
   outline_content TEXT DEFAULT NULL COMMENT '概述/梗概内容',
   chapter_id BIGINT DEFAULT NULL COMMENT '关联章节ID（章级大纲）',
+  chapter_no INT DEFAULT NULL COMMENT '计划章节号（含尚未创建正文的未来章节）',
   create_by VARCHAR(64) DEFAULT '',
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_by VARCHAR(64) DEFAULT '',
@@ -2960,22 +2961,36 @@ ON DUPLICATE KEY UPDATE menu_id = VALUES(menu_id);
 
 -- AI 小说创作模块菜单与权限。
 -- 该脚本仅向管理员角色（role_id = 1）授权；其他角色请在“角色管理”中按需分配。
+-- 小说菜单树挂在 AI视频创作目录（/aiVedio）下，写作台路径为 /aiVedio/novel/writing。
+
+-- 兼容：历史遗留的顶级 novel 目录先移到 aiVedio 下
+SET @ai_vedio_parent_id := (
+    SELECT menu_id FROM sys_menu WHERE parent_id = 0 AND path = 'aiVedio' LIMIT 1
+);
+
+UPDATE sys_menu
+SET parent_id = @ai_vedio_parent_id, order_num = 3
+WHERE parent_id = 0 AND path = 'novel'
+  AND @ai_vedio_parent_id IS NOT NULL;
 
 SET @novel_parent_id := (
-    SELECT menu_id FROM sys_menu WHERE parent_id = 0 AND path = 'novel' LIMIT 1
+    SELECT menu_id FROM sys_menu WHERE parent_id = @ai_vedio_parent_id AND path = 'novel' LIMIT 1
 );
 
 INSERT INTO sys_menu
     (menu_name, parent_id, order_num, path, component, query, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time, remark)
-SELECT 'AI小说创作', 0, 16, 'novel', NULL, '', 1, 0, 'M', '0', '0', '', 'edit', 'admin', NOW(), 'AI小说创作目录'
+SELECT 'AI小说创作', @ai_vedio_parent_id, 3, 'novel', NULL, '', 1, 0, 'M', '0', '0', '', 'edit', 'admin', NOW(), 'AI小说创作目录（挂载于AI视频创作下）'
 WHERE @novel_parent_id IS NULL;
 
 SET @novel_parent_id := (
-    SELECT menu_id FROM sys_menu WHERE parent_id = 0 AND path = 'novel' LIMIT 1
+    SELECT menu_id FROM sys_menu WHERE parent_id = @ai_vedio_parent_id AND path = 'novel' LIMIT 1
 );
 
 SET @novel_writing_menu_id := (
-    SELECT menu_id FROM sys_menu WHERE parent_id = @novel_parent_id AND path = 'writing' LIMIT 1
+    SELECT menu_id FROM sys_menu
+    WHERE parent_id = @novel_parent_id
+      AND (path = 'writing' OR component = 'novel/index' OR perms = 'novel:writing:list')
+    LIMIT 1
 );
 
 INSERT INTO sys_menu
@@ -2984,8 +2999,16 @@ SELECT '小说写作台', @novel_parent_id, 1, 'writing', 'novel/index', '', 1, 
 WHERE @novel_writing_menu_id IS NULL;
 
 SET @novel_writing_menu_id := (
-    SELECT menu_id FROM sys_menu WHERE parent_id = @novel_parent_id AND path = 'writing' LIMIT 1
+    SELECT menu_id FROM sys_menu
+    WHERE parent_id = @novel_parent_id
+      AND (path = 'writing' OR component = 'novel/index' OR perms = 'novel:writing:list')
+    LIMIT 1
 );
+
+-- 规范化历史空路径，避免后端生成空路由名导致页面入口丢失。
+UPDATE sys_menu
+SET path = 'writing', component = 'novel/index', perms = 'novel:writing:list'
+WHERE menu_id = @novel_writing_menu_id;
 
 INSERT INTO sys_menu
     (menu_name, parent_id, order_num, path, component, query, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time, remark)

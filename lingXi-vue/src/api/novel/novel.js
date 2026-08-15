@@ -154,6 +154,25 @@ export function sortNovelChapter(workId, chapterIds) {
   })
 }
 
+/** 分析已保存章节产生的设定与伏笔候选变化；不会直接写库。 */
+export function analyzeNovelContext(workId, chapterId) {
+  return request({
+    url: '/novel/work/' + workId + '/context/analyze',
+    method: 'post',
+    data: { chapterId },
+    timeout: 1000000
+  })
+}
+
+/** 应用用户在确认框中勾选的资料变化。 */
+export function applyNovelContextChanges(workId, data) {
+  return request({
+    url: '/novel/work/' + workId + '/context/apply',
+    method: 'post',
+    data
+  })
+}
+
 /**
  * 导出作品全文为 txt（后端按章节顺序完整拼接，长篇不依赖前端已加载章节）。
  */

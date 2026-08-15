@@ -28,7 +28,10 @@ import com.lingXi.aiNovel.domain.AiNovelOutline;
 import com.lingXi.aiNovel.domain.AiNovelSetting;
 import com.lingXi.aiNovel.domain.AiNovelWork;
 import com.lingXi.aiNovel.domain.dto.NovelPacingRequestDTO;
+import com.lingXi.aiNovel.domain.dto.NovelContextAnalyzeRequestDTO;
+import com.lingXi.aiNovel.domain.dto.NovelContextApplyRequestDTO;
 import com.lingXi.aiNovel.service.IAiNovelChapterService;
+import com.lingXi.aiNovel.service.IAiNovelContextSyncService;
 import com.lingXi.aiNovel.service.IAiNovelForeshadowService;
 import com.lingXi.aiNovel.service.IAiNovelOutlineService;
 import com.lingXi.aiNovel.service.IAiNovelSettingService;
@@ -60,6 +63,9 @@ public class NovelWorkController extends BaseController
 
     @Autowired
     private IAiNovelOutlineService outlineService;
+
+    @Autowired
+    private IAiNovelContextSyncService contextSyncService;
 
     // ── 作品 ──────────────────────────────────────────
 
@@ -174,6 +180,32 @@ public class NovelWorkController extends BaseController
             @PathVariable Long workId, @RequestBody Map<String, List<Long>> body)
     {
         return toAjax(chapterService.sortAiNovelChapter(workId, body.get("chapterIds")));
+    }
+
+    // ── 章节资料同步（AI建议 → 人工确认 → 事务写回） ──
+
+    /** 分析已保存章节产生的设定与伏笔变化；本接口不写业务库。 */
+    @Operation(summary = "AI 分析章节设定与伏笔变化")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @Log(title = "AI小说资料分析", businessType = BusinessType.OTHER)
+    @PostMapping("/{workId}/context/analyze")
+    public AjaxResult analyzeContext(
+            @PathVariable Long workId,
+            @RequestBody NovelContextAnalyzeRequestDTO request)
+    {
+        return success(contextSyncService.analyze(workId, request));
+    }
+
+    /** 应用用户勾选的设定与伏笔建议；正文版本变化时拒绝应用。 */
+    @Operation(summary = "确认应用章节设定与伏笔建议")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @Log(title = "AI小说资料同步", businessType = BusinessType.UPDATE)
+    @PostMapping("/{workId}/context/apply")
+    public AjaxResult applyContext(
+            @PathVariable Long workId,
+            @RequestBody NovelContextApplyRequestDTO request)
+    {
+        return success(contextSyncService.apply(workId, request));
     }
 
     // ── 导出 ──────────────────────────────────────────

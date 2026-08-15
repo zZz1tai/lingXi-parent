@@ -14,6 +14,7 @@ import com.lingXi.common.utils.SecurityUtils;
 import com.lingXi.common.utils.StringUtils;
 import com.lingXi.aiNovel.domain.AiNovelChapter;
 import com.lingXi.aiNovel.domain.AiNovelForeshadow;
+import com.lingXi.aiNovel.domain.AiNovelOutline;
 import com.lingXi.aiNovel.domain.AiNovelSetting;
 import com.lingXi.aiNovel.domain.AiNovelWork;
 import com.lingXi.aiNovel.domain.dto.NovelForeshadowItemDTO;
@@ -26,10 +27,13 @@ import com.lingXi.aiNovel.domain.dto.NovelSettingItemDTO;
 import com.lingXi.aiNovel.domain.dto.NovelWorkContextDTO;
 import com.lingXi.aiNovel.mapper.AiNovelChapterMapper;
 import com.lingXi.aiNovel.mapper.AiNovelForeshadowMapper;
+import com.lingXi.aiNovel.mapper.AiNovelOutlineMapper;
 import com.lingXi.aiNovel.mapper.AiNovelSettingMapper;
 import com.lingXi.aiNovel.mapper.AiNovelWorkMapper;
 import com.lingXi.aiNovel.service.IAiNovelWorkService;
+import com.lingXi.aiNovel.util.NovelChapterContinuationSelector;
 import com.lingXi.aiNovel.util.NovelWordCounter;
+import com.lingXi.aiNovel.util.NovelOutlineContextSelector;
 
 /**
  * AI 小说作品服务实现类。
@@ -62,6 +66,9 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
 
     @Autowired
     private AiNovelForeshadowMapper foreshadowMapper;
+
+    @Autowired
+    private AiNovelOutlineMapper outlineMapper;
 
     @Autowired
     private com.lingXi.ai.client.AgentClient agentClient;
@@ -161,7 +168,7 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         return workMapper.updateAiNovelWork(update);
     }
 
-    /** 批量删除作品及其章节、设定卡。 */
+    /** 批量删除作品及其章节、设定卡、伏笔和大纲。 */
     @Override
     public int deleteAiNovelWorkByWorkIds(Long[] workIds)
     {
@@ -178,6 +185,7 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         {
             return 0;
         }
+        outlineMapper.deleteAiNovelOutlineByWorkIds(owned);
         chapterMapper.deleteAiNovelChapterByWorkIds(owned);
         settingMapper.deleteAiNovelSettingByWorkIds(owned);
         foreshadowMapper.deleteAiNovelForeshadowByWorkIds(owned);
@@ -226,9 +234,17 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         }
         if (chapter != null)
         {
+            context.setChapterNo(chapter.getChapterNo());
             context.setChapterTitle(chapter.getChapterTitle());
             context.setChapterSynopsis(chapter.getChapterBrief());
-            context.setManuscriptTail(manuscriptTail(chapter.getContent()));
+            String continuationSource = chapter.getContent();
+            if (StringUtils.isBlank(continuationSource))
+            {
+                continuationSource = NovelChapterContinuationSelector.selectPreviousContent(
+                        chapter,
+                        chapterMapper.selectAiNovelChapterListByWorkId(workId));
+            }
+            context.setManuscriptTail(manuscriptTail(continuationSource));
         }
         else
         {
@@ -262,6 +278,9 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
             foreshadows.add(item);
         }
         context.setForeshadows(foreshadows);
+
+        List<AiNovelOutline> outlines = outlineMapper.selectAiNovelOutlineListByWorkId(workId);
+        context.setOutlineContext(NovelOutlineContextSelector.selectRelevant(outlines, chapter));
         return context;
     }
 

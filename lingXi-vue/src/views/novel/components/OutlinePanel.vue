@@ -94,6 +94,15 @@
         <el-form-item label="标题">
           <el-input v-model="dialog.form.title" maxlength="128" placeholder="如：第一卷 · 青云起势" />
         </el-form-item>
+        <el-form-item v-if="dialogLevel === 'CHAPTER'" label="计划章节号">
+          <el-input-number
+            v-model="dialog.form.chapterNo"
+            :min="1"
+            :max="99999"
+            controls-position="right"
+            style="width: 100%"
+          />
+        </el-form-item>
         <el-form-item label="大纲内容">
           <el-input
             v-model="dialog.form.content"
@@ -153,13 +162,18 @@ const dialog = reactive({
   submitting: false,
   mode: 'edit', // edit | add
   node: null,
-  form: { title: '', content: '' }
+  targetLevel: '',
+  form: { title: '', content: '', chapterNo: null }
 })
+
+const dialogLevel = computed(() =>
+  dialog.mode === 'add' ? dialog.targetLevel : dialog.node?.outlineLevel
+)
 
 const dialogTitle = computed(() => {
   if (!dialog.node) return '大纲节点'
   const names = { BOOK: '全书总纲', VOLUME: '卷纲', CHAPTER: '章纲' }
-  return dialog.mode === 'add' ? `新增${names[dialog.node.outlineLevel] || '节点'}` : `编辑${names[dialog.node.outlineLevel] || '节点'}`
+  return dialog.mode === 'add' ? `新增${names[dialog.targetLevel] || '节点'}` : `编辑${names[dialog.node.outlineLevel] || '节点'}`
 })
 
 const gapLabels = { ORPHAN_CHAPTER: '游离章节', MISSING_CHAPTER: '大纲缺章', MISMATCH: '标题不一致' }
@@ -204,17 +218,35 @@ function handleCommand(command, node) {
 }
 
 function openAddDialog(parent) {
+  const childLevel = { BOOK: 'VOLUME', VOLUME: 'CHAPTER' }[parent.outlineLevel]
+  if (!childLevel) return
   dialog.mode = 'add'
   dialog.node = parent
-  const defaults = { BOOK: '全书', VOLUME: '新一卷', CHAPTER: '新一章' }
-  dialog.form = { title: defaults[parent.outlineLevel] || '新节点', content: '' }
+  dialog.targetLevel = childLevel
+  const nextChapterNo = Math.max(
+    0,
+    ...outlines.value
+      .filter(node => node.outlineLevel === 'CHAPTER')
+      .map(node => Number(node.chapterNo) || 0)
+  ) + 1
+  const defaults = { VOLUME: '新一卷', CHAPTER: '新一章' }
+  dialog.form = {
+    title: defaults[childLevel] || '新节点',
+    content: '',
+    chapterNo: childLevel === 'CHAPTER' ? nextChapterNo : null
+  }
   dialog.open = true
 }
 
 function openEditDialog(node) {
   dialog.mode = 'edit'
   dialog.node = node
-  dialog.form = { title: node.outlineTitle || '', content: node.outlineContent || '' }
+  dialog.targetLevel = ''
+  dialog.form = {
+    title: node.outlineTitle || '',
+    content: node.outlineContent || '',
+    chapterNo: node.chapterNo || null
+  }
   dialog.open = true
 }
 
@@ -223,16 +255,23 @@ async function submitDialog() {
     ElMessage.warning('请填写标题')
     return
   }
+  if (dialogLevel.value === 'CHAPTER' && (!dialog.form.chapterNo || dialog.form.chapterNo < 1)) {
+    ElMessage.warning('请填写有效的计划章节号')
+    return
+  }
   dialog.submitting = true
   try {
+    const isAdd = dialog.mode === 'add'
     const payload = {
       outlineId: dialog.node.outlineId,
       outlineTitle: dialog.form.title,
       outlineContent: dialog.form.content,
-      outlineLevel: dialog.node.outlineLevel,
-      parentId: dialog.node.outlineLevel === 'BOOK' ? 0 : dialog.node.parentId
+      outlineLevel: dialogLevel.value,
+      parentId: isAdd ? dialog.node.outlineId : dialog.node.parentId,
+      chapterNo: dialogLevel.value === 'CHAPTER' ? dialog.form.chapterNo : null
     }
-    if (dialog.mode === 'add') {
+    if (isAdd) {
+      payload.outlineId = null
       await addNovelOutline(props.workId, payload)
       ElMessage.success('已挂入大纲')
     } else {

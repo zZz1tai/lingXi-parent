@@ -137,6 +137,7 @@ export const dynamicRoutes = [
   {
     path: '/novel/writing',
     component: Layout,
+    redirect: '/novel/writing/index',
     hidden: true,
     permissions: ['novel:writing:list'],
     children: [
@@ -144,7 +145,7 @@ export const dynamicRoutes = [
         path: 'index',
         component: () => import('@/views/novel/index'),
         name: 'NovelWriting',
-        meta: { title: 'AI小说创作', activeMenu: '/novel/writing', noCache: true }
+        meta: { title: 'AI小说创作', activeMenu: '/aiVedio/novel/writing', noCache: true }
       }
     ]
   },

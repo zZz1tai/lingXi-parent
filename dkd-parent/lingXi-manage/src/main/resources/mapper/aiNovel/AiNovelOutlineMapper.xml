@@ -22,7 +22,7 @@
     <sql id="selectAiNovelOutlineVo">
         select o.outline_id, o.work_id, o.outline_level, o.parent_id, o.seq_no,
                o.outline_title, o.outline_content, o.chapter_id,
-               c.chapter_no,
+               coalesce(c.chapter_no, o.chapter_no) as chapter_no,
                o.create_by, o.create_time, o.update_by, o.update_time, o.remark
         from ai_novel_outline o
         left join ai_novel_chapter c on c.chapter_id = o.chapter_id and c.del_flag = '0'
@@ -53,9 +53,11 @@
 
     <insert id="insertAiNovelOutline" parameterType="AiNovelOutline" useGeneratedKeys="true" keyProperty="outlineId">
         insert into ai_novel_outline
-        (work_id, outline_level, parent_id, seq_no, outline_title, outline_content, chapter_id, create_by, create_time, remark)
+        (work_id, outline_level, parent_id, seq_no, outline_title, outline_content,
+         chapter_id, chapter_no, create_by, create_time, remark)
         values
-        (#{workId}, #{outlineLevel}, #{parentId}, #{seqNo}, #{outlineTitle}, #{outlineContent}, #{chapterId}, #{createBy}, #{createTime}, #{remark})
+        (#{workId}, #{outlineLevel}, #{parentId}, #{seqNo}, #{outlineTitle}, #{outlineContent},
+         #{chapterId}, #{chapterNo}, #{createBy}, #{createTime}, #{remark})
     </insert>
 
     <update id="updateAiNovelOutline" parameterType="AiNovelOutline">
@@ -67,6 +69,7 @@
             <if test="outlineTitle != null">outline_title = #{outlineTitle},</if>
             <if test="outlineContent != null">outline_content = #{outlineContent},</if>
             <if test="chapterId != null">chapter_id = #{chapterId},</if>
+            <if test="chapterNo != null">chapter_no = #{chapterNo},</if>
             update_by = #{updateBy},
             update_time = #{updateTime}
         </set>

@@ -2093,6 +2093,35 @@ public class AgentClient {
         }
     }
 
+    /**
+     * 调用 Python 分析章节导致的设定与伏笔变化。
+     * <p>仅返回经过 Agent 结构校验的 ADD/UPDATE 建议，不执行任何数据库写入。</p>
+     *
+     * @param contextRequest Java 从当前用户作品库组装的章节与资料快照
+     * @return 分析结果 data 节点（changes）
+     */
+    public JsonNode analyzeNovelContext(Object contextRequest) {
+        try {
+            ObjectNode root = (ObjectNode) objectMapper.valueToTree(contextRequest);
+            putLlmConfig(root, novelSyncProviderTimeoutSeconds());
+
+            JsonNode response = requestJson(
+                    "POST",
+                    config.getNovelContextAnalyzeUrl(),
+                    objectMapper.writeValueAsString(root),
+                    novelSyncReadTimeout());
+            requireSuccess(response, "AGENT_CONTEXT_ANALYSIS_FAILED", "AI 整理设定与伏笔失败");
+            JsonNode data = response.get("data");
+            if (data == null || !data.path("changes").isArray()) {
+                throw new RuntimeException("AI 返回了无效的资料变更清单");
+            }
+            return data;
+        } catch (Exception e) {
+            log.error("AI 整理设定与伏笔失败，errorType={}", e.getClass().getSimpleName());
+            throw new RuntimeException("AI 整理设定与伏笔失败", e);
+        }
+    }
+
     /** 复制构思追问的公开字段；问题数量和文本长度与 Python 校验契约保持一致。 */
     private static void copyNovelIdeaQuestions(JsonNode source, ObjectNode target) {
         JsonNode questions = source.path("questions");

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 # ── 基础响应信封 ────────────────────────────────────────────────────────────
@@ -149,6 +149,64 @@ class NovelPacingResponse(BaseResponse):
     """``POST /api/v1/novel/pacing/analyze``端点的响应。"""
 
     data: NovelPacingData
+
+
+class NovelContextChange(BaseModel):
+    """一条待人工确认的设定或伏笔变更；模型无权返回删除操作。"""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    resource_type: Literal["setting", "foreshadow"] = Field(alias="resourceType")
+    operation: Literal["ADD", "UPDATE"]
+    target_id: int | None = Field(default=None, ge=1, alias="targetId")
+    setting_type: Literal[
+        "character", "world", "outline", "item", "organization", "event", "style", "other"
+    ] | None = Field(default=None, alias="settingType")
+    title: str = Field(..., min_length=1, max_length=128)
+    content: str | None = Field(default=None, min_length=1, max_length=4_000)
+    description: str | None = Field(default=None, max_length=4_000)
+    status: Literal["buried", "pending", "resolved"] | None = None
+    priority: Literal["high", "medium", "low"] | None = None
+    keyword: str | None = Field(default=None, max_length=128)
+    resolve_chapter_no: int | None = Field(default=None, ge=1, alias="resolveChapterNo")
+    evidence: str = Field(..., min_length=1, max_length=500)
+    reason: str = Field(..., min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_resource_shape(self) -> "NovelContextChange":
+        if self.operation == "ADD" and self.target_id is not None:
+            raise ValueError("ADD change must not carry targetId")
+        if self.operation == "UPDATE" and self.target_id is None:
+            raise ValueError("UPDATE change requires targetId")
+        if self.resource_type == "setting":
+            if self.setting_type is None or self.content is None:
+                raise ValueError("setting change requires settingType and content")
+            if any(value is not None for value in (
+                self.description,
+                self.status,
+                self.priority,
+                self.keyword,
+                self.resolve_chapter_no,
+            )):
+                raise ValueError("setting change contains foreshadow-only fields")
+        else:
+            if self.status is None or self.priority is None:
+                raise ValueError("foreshadow change requires status and priority")
+            if self.setting_type is not None or self.content is not None:
+                raise ValueError("foreshadow change contains setting-only fields")
+        return self
+
+
+class NovelContextAnalyzeData(BaseModel):
+    """章节资料同步候选清单。"""
+
+    changes: list[NovelContextChange] = Field(default_factory=list, max_length=40)
+
+
+class NovelContextAnalyzeResponse(BaseResponse):
+    """``POST /api/v1/novel/context/analyze``端点的响应。"""
+
+    data: NovelContextAnalyzeData
 
 
 class MemoryListData(BaseModel):

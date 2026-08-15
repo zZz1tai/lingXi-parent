@@ -63,12 +63,12 @@
     </update>
 
     <update id="deleteAiNovelChapterByChapterId">
-        update ai_novel_chapter set del_flag = '2', update_time = now()
+        update ai_novel_chapter set del_flag = null, update_time = now()
         where chapter_id = #{chapterId} and del_flag = '0'
     </update>
 
     <update id="deleteAiNovelChapterByWorkIds">
-        update ai_novel_chapter set del_flag = '2', update_time = now()
+        update ai_novel_chapter set del_flag = null, update_time = now()
         where del_flag = '0' and work_id in
         <foreach collection="workIds" item="workId" open="(" separator="," close=")">
             #{workId}

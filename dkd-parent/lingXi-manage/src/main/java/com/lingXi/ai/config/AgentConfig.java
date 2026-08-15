@@ -53,6 +53,8 @@ public class AgentConfig implements EnvironmentAware {
     private String novelOutlineUrl = "/api/v1/novel/outline/generate";
     /** 分析章节节奏（评分/档位/问题与建议）接口路径 */
     private String novelPacingUrl = "/api/v1/novel/pacing/analyze";
+    /** 分析已保存章节产生的设定与伏笔候选变更 */
+    private String novelContextAnalyzeUrl = "/api/v1/novel/context/analyze";
     /** 查看当前用户长期回答偏好接口路径。 */
     private String memoryListUrl = "/api/v1/chat/memory/list";
     /** 修改当前用户单项长期回答偏好接口路径。 */

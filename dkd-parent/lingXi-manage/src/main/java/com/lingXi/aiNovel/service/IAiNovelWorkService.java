@@ -27,7 +27,7 @@ public interface IAiNovelWorkService
     /** 更新作品正文（短篇）。 */
     int updateAiNovelWorkManuscript(Long workId, String content);
 
-    /** 批量删除作品及其章节、设定卡。 */
+    /** 批量删除作品及其章节、设定卡、伏笔和大纲。 */
     int deleteAiNovelWorkByWorkIds(Long[] workIds);
 
     /** 校验当前用户是否为作品所有者，不存在或无权时抛出异常。 */

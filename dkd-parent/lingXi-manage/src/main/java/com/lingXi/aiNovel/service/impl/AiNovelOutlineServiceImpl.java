@@ -1,6 +1,7 @@
 package com.lingXi.aiNovel.service.impl;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -20,6 +21,7 @@ import com.lingXi.aiNovel.domain.AiNovelOutline;
 import com.lingXi.aiNovel.domain.dto.NovelOutlineGeneratedDTO;
 import com.lingXi.aiNovel.domain.dto.NovelOutlineGapDTO;
 import com.lingXi.aiNovel.domain.dto.NovelOutlineNodeDTO;
+import com.lingXi.aiNovel.domain.dto.NovelWorkContextDTO;
 import com.lingXi.aiNovel.mapper.AiNovelChapterMapper;
 import com.lingXi.aiNovel.mapper.AiNovelOutlineMapper;
 import com.lingXi.aiNovel.service.IAiNovelOutlineService;
@@ -80,6 +82,7 @@ public class AiNovelOutlineServiceImpl implements IAiNovelOutlineService
         {
             throw new ServiceException("大纲标题不能为空");
         }
+        bindChapterByNumber(workId, outline);
         if (outline.getSeqNo() == null)
         {
             List<AiNovelOutline> siblings = outlineMapper.selectAiNovelOutlineListByParentId(
@@ -110,6 +113,11 @@ public class AiNovelOutlineServiceImpl implements IAiNovelOutlineService
         if (outline.getChapterId() != null)
         {
             existing.setChapterId(outline.getChapterId());
+        }
+        if (outline.getChapterNo() != null)
+        {
+            existing.setChapterNo(outline.getChapterNo());
+            bindChapterByNumber(workId, existing);
         }
         if (outline.getSeqNo() != null)
         {
@@ -181,8 +189,11 @@ public class AiNovelOutlineServiceImpl implements IAiNovelOutlineService
         List<AiNovelChapter> chapters = chapterMapper.selectAiNovelChapterListByWorkId(workId);
         List<AiNovelOutline> existing = outlineMapper.selectAiNovelOutlineListByWorkId(workId);
 
+        NovelWorkContextDTO workContext = workService.buildNovelWorkContext(workId, null);
+        // 大纲生成接口已单独携带完整现有树，避免重复注入精简创作大纲。
+        workContext.setOutlineContext(List.of());
         JsonNode data = agentClient.generateNovelOutline(
-                workService.buildNovelWorkContext(workId, null),
+                workContext,
                 buildChapterPayload(chapters),
                 buildExistingTree(existing));
 
@@ -200,11 +211,25 @@ public class AiNovelOutlineServiceImpl implements IAiNovelOutlineService
         return generated;
     }
 
-    /** 把现有平铺大纲组装成树，供模型参考（不携带 ID）。 */
+    /** 把现有平铺大纲组装成真正的三层树，供模型参考（不携带 ID）。 */
     private List<NovelOutlineNodeDTO> buildExistingTree(List<AiNovelOutline> outlines)
     {
         List<NovelOutlineNodeDTO> tree = new ArrayList<>();
-        for (AiNovelOutline outline : outlines)
+        if (outlines == null || outlines.isEmpty())
+        {
+            return tree;
+        }
+
+        List<AiNovelOutline> ordered = new ArrayList<>(outlines);
+        ordered.sort(Comparator
+                .comparingInt((AiNovelOutline item) -> levelRank(item.getOutlineLevel()))
+                .thenComparing(AiNovelOutline::getSeqNo,
+                        Comparator.nullsLast(Integer::compareTo))
+                .thenComparing(AiNovelOutline::getOutlineId,
+                        Comparator.nullsLast(Long::compareTo)));
+
+        Map<Long, NovelOutlineNodeDTO> nodeById = new HashMap<>();
+        for (AiNovelOutline outline : ordered)
         {
             NovelOutlineNodeDTO node = new NovelOutlineNodeDTO();
             node.setLevel(outline.getOutlineLevel());
@@ -214,9 +239,37 @@ public class AiNovelOutlineServiceImpl implements IAiNovelOutlineService
             {
                 node.setChapterNo(outline.getChapterNo());
             }
-            tree.add(node);
+            node.setChildren(new ArrayList<>());
+            nodeById.put(outline.getOutlineId(), node);
+        }
+
+        for (AiNovelOutline outline : ordered)
+        {
+            NovelOutlineNodeDTO node = nodeById.get(outline.getOutlineId());
+            NovelOutlineNodeDTO parent = nodeById.get(outline.getParentId());
+            if (parent == null)
+            {
+                tree.add(node);
+            }
+            else
+            {
+                parent.getChildren().add(node);
+            }
         }
         return tree;
+    }
+
+    private int levelRank(String level)
+    {
+        if (LEVEL_BOOK.equals(level))
+        {
+            return 0;
+        }
+        if (LEVEL_VOLUME.equals(level))
+        {
+            return 1;
+        }
+        return 2;
     }
 
     /** 章节列表载荷：只携带生成大纲所需的编号/标题/梗概。 */
@@ -272,10 +325,14 @@ public class AiNovelOutlineServiceImpl implements IAiNovelOutlineService
             AiNovelOutline outline = new AiNovelOutline();
             outline.setWorkId(workId);
             outline.setOutlineLevel(node.getLevel());
+            // BOOK 层为顶层，父级约定为 0；列 NOT NULL，不能缺省为 null。
+            outline.setParentId(0L);
+            outline.setSeqNo(1);
             outline.setOutlineTitle(node.getTitle());
             outline.setOutlineContent(node.getContent());
             if (node.getChapterNo() != null)
             {
+                outline.setChapterNo(node.getChapterNo());
                 outline.setChapterId(chapterIdByNo.get(node.getChapterNo()));
             }
             outline.setCreateBy("ai-outline-generator");
@@ -308,6 +365,7 @@ public class AiNovelOutlineServiceImpl implements IAiNovelOutlineService
             outline.setOutlineContent(node.getContent());
             if (node.getChapterNo() != null)
             {
+                outline.setChapterNo(node.getChapterNo());
                 outline.setChapterId(chapterIdByNo.get(node.getChapterNo()));
             }
             outline.setCreateBy("ai-outline-generator");
@@ -326,6 +384,28 @@ public class AiNovelOutlineServiceImpl implements IAiNovelOutlineService
     private boolean isValidLevel(String level)
     {
         return LEVEL_BOOK.equals(level) || LEVEL_VOLUME.equals(level) || LEVEL_CHAPTER.equals(level);
+    }
+
+    /** 章纲必须有正整数章号；已有正文时同时建立章节关联。 */
+    private void bindChapterByNumber(Long workId, AiNovelOutline outline)
+    {
+        if (!LEVEL_CHAPTER.equals(outline.getOutlineLevel()))
+        {
+            return;
+        }
+        if (outline.getChapterNo() == null || outline.getChapterNo() < 1)
+        {
+            throw new ServiceException("章纲必须填写有效章节号");
+        }
+        outline.setChapterId(null);
+        for (AiNovelChapter chapter : chapterMapper.selectAiNovelChapterListByWorkId(workId))
+        {
+            if (outline.getChapterNo().equals(chapter.getChapterNo()))
+            {
+                outline.setChapterId(chapter.getChapterId());
+                break;
+            }
+        }
     }
 
     private void requireParent(Long workId, AiNovelOutline outline)

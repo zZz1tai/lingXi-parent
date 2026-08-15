@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS ai_novel_outline (
   outline_title VARCHAR(128) NOT NULL COMMENT '大纲标题',
   outline_content TEXT DEFAULT NULL COMMENT '概述/梗概内容',
   chapter_id BIGINT DEFAULT NULL COMMENT '关联章节ID（章级大纲）',
+  chapter_no INT DEFAULT NULL COMMENT '计划章节号（含尚未创建正文的未来章节）',
   create_by VARCHAR(64) DEFAULT '',
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_by VARCHAR(64) DEFAULT '',

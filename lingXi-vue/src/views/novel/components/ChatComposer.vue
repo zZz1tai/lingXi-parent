@@ -421,7 +421,7 @@ async function scrollToBottom(soft = false) {
 }
 
 // 父组件暴露作品变化时更新会话上下文
-defineExpose({ workSessionId, send })
+defineExpose({ workSessionId, send, isStreaming: () => streaming.value })
 </script>
 
 <style scoped>

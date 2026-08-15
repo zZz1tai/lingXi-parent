@@ -271,6 +271,8 @@ MAX_NOVEL_SETTINGS = 60
 MAX_NOVEL_SETTING_CHARS = 4_000
 MAX_NOVEL_FORESHADOWS = 40
 MAX_NOVEL_FORESHADOW_DESCRIPTION_CHARS = 1_000
+MAX_NOVEL_OUTLINE_CONTEXT_ITEMS = 10
+MAX_NOVEL_OUTLINE_CONTENT_CHARS = 2_000
 MAX_NOVEL_WORK_CONTEXT_JSON_BYTES = 256 * 1024
 
 
@@ -316,6 +318,32 @@ class NovelForeshadowItem(StrictRequestModel):
     )
 
 
+class NovelOutlineContextItem(StrictRequestModel):
+    """与当前创作位置相关的精简三层大纲条目。"""
+
+    level: Literal["BOOK", "VOLUME", "CHAPTER"]
+    relevance: Literal[
+        "global",
+        "current_volume",
+        "related_volume",
+        "previous_chapter",
+        "current_chapter",
+        "next_chapter",
+        "planned_chapter",
+    ]
+    title: str = Field(..., min_length=1, max_length=128)
+    content: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_NOVEL_OUTLINE_CONTENT_CHARS,
+    )
+    chapter_no: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("chapter_no", "chapterNo"),
+    )
+
+
 class NovelWorkContext(StrictRequestModel):
     """小说创作的作品上下文，由受信任 Java 服务从作品库组装。"""
 
@@ -339,6 +367,11 @@ class NovelWorkContext(StrictRequestModel):
         max_length=128,
         validation_alias=AliasChoices("chapter_title", "chapterTitle"),
     )
+    chapter_no: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("chapter_no", "chapterNo"),
+    )
     chapter_synopsis: str | None = Field(
         default=None,
         min_length=1,
@@ -361,6 +394,12 @@ class NovelWorkContext(StrictRequestModel):
         max_length=MAX_NOVEL_FORESHADOWS,
         description="未解伏笔（已埋/待解），用于保持情节线索连续",
     )
+    outline_context: list[NovelOutlineContextItem] = Field(
+        default_factory=list,
+        max_length=MAX_NOVEL_OUTLINE_CONTEXT_ITEMS,
+        description="全书总纲、相关卷纲与当前章节附近章纲",
+        validation_alias=AliasChoices("outline_context", "outlineContext"),
+    )
     pacing_level: str | None = Field(
         default=None,
         min_length=1,
@@ -378,6 +417,8 @@ class NovelWorkContext(StrictRequestModel):
             payload.pop("settings", None)
         if not payload.get("foreshadows"):
             payload.pop("foreshadows", None)
+        if not payload.get("outline_context"):
+            payload.pop("outline_context", None)
         substantive = set(payload) - {"work_id", "work_type", "work_name"}
         if not substantive:
             raise ValueError("work_context must carry at least one piece of work data")
@@ -458,6 +499,8 @@ class NovelOutlineRequest(StrictRequestModel):
 
 
 MAX_NOVEL_PACING_CONTENT_CHARS = 100_000
+MAX_NOVEL_CONTEXT_ITEMS = 100
+MAX_NOVEL_CONTEXT_CONTENT_CHARS = 100_000
 
 
 class NovelPacingRequest(StrictRequestModel):
@@ -500,6 +543,102 @@ class NovelPacingRequest(StrictRequestModel):
     def reject_blank_content(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("content must not be blank")
+        return value
+
+
+class NovelContextSettingItem(StrictRequestModel):
+    """参与章节资料同步分析的现有设定卡，携带可信数据库主键。"""
+
+    setting_id: int = Field(
+        ...,
+        ge=1,
+        validation_alias=AliasChoices("setting_id", "settingId"),
+    )
+    setting_type: str = Field(
+        ...,
+        pattern=r"^(character|world|outline|item|organization|event|style|other)$",
+        validation_alias=AliasChoices("setting_type", "settingType"),
+    )
+    title: str = Field(..., min_length=1, max_length=128)
+    content: str | None = Field(default=None, max_length=MAX_NOVEL_SETTING_CHARS)
+
+
+class NovelContextForeshadowItem(StrictRequestModel):
+    """参与章节资料同步分析的现有伏笔，携带可信数据库主键。"""
+
+    foreshadow_id: int = Field(
+        ...,
+        ge=1,
+        validation_alias=AliasChoices("foreshadow_id", "foreshadowId"),
+    )
+    title: str = Field(..., min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=4_000)
+    status: Literal["buried", "pending", "resolved"] = "buried"
+    priority: Literal["high", "medium", "low"] = "medium"
+    keyword: str | None = Field(default=None, max_length=128)
+    resolve_chapter_no: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("resolve_chapter_no", "resolveChapterNo"),
+    )
+
+
+class NovelContextAnalyzeRequest(StrictRequestModel):
+    """章节保存后分析设定与伏笔候选变更的请求，不产生会话记忆。"""
+
+    work_id: int = Field(
+        ...,
+        ge=1,
+        validation_alias=AliasChoices("work_id", "workId"),
+    )
+    work_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        validation_alias=AliasChoices("work_name", "workName"),
+    )
+    work_type: Literal["short", "novel"] = Field(
+        default="novel",
+        validation_alias=AliasChoices("work_type", "workType"),
+    )
+    genre: str | None = Field(default=None, max_length=64)
+    synopsis: str | None = Field(default=None, max_length=4_000)
+    chapter_id: int = Field(
+        ...,
+        ge=1,
+        validation_alias=AliasChoices("chapter_id", "chapterId"),
+    )
+    chapter_no: int = Field(
+        ...,
+        ge=1,
+        validation_alias=AliasChoices("chapter_no", "chapterNo"),
+    )
+    chapter_title: str | None = Field(
+        default=None,
+        max_length=128,
+        validation_alias=AliasChoices("chapter_title", "chapterTitle"),
+    )
+    chapter_content: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_NOVEL_CONTEXT_CONTENT_CHARS,
+        validation_alias=AliasChoices("chapter_content", "chapterContent"),
+    )
+    settings: list[NovelContextSettingItem] = Field(
+        default_factory=list,
+        max_length=MAX_NOVEL_CONTEXT_ITEMS,
+    )
+    foreshadows: list[NovelContextForeshadowItem] = Field(
+        default_factory=list,
+        max_length=MAX_NOVEL_CONTEXT_ITEMS,
+    )
+    llm_config: LLMConfig | None = None
+
+    @field_validator("chapter_content")
+    @classmethod
+    def reject_blank_chapter_content(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("chapter_content must not be blank")
         return value
 
 

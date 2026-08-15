@@ -1,6 +1,6 @@
 <template>
-  <div class="nk-page">
-    <div class="nk-body">
+  <div class="nk-page" :class="{ 'is-resizing': activeResizePanel }">
+    <div ref="layoutBodyRef" class="nk-body" :style="bodyLayoutStyle">
       <WorksRail
         :works="works"
         :selected-id="selectedWork?.workId"
@@ -14,6 +14,24 @@
         @edit="openWorkDialog($event)"
         @delete="handleDeleteWork"
       />
+
+      <div
+        class="nk-layout-splitter is-outer"
+        :class="{ 'is-active': activeResizePanel === 'rail' }"
+        role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-label="调整书斋与创作区宽度"
+        :aria-valuemin="NOVEL_LAYOUT_LIMITS.railMin"
+        :aria-valuemax="NOVEL_LAYOUT_LIMITS.railMax"
+        :aria-valuenow="Math.round(novelLayout.railWidth)"
+        title="拖动调整书斋宽度；双击恢复默认"
+        @pointerdown="startPanelResize('rail', $event)"
+        @keydown="handleSplitterKeydown('rail', $event)"
+        @dblclick="resetPanelWidth('rail')"
+      >
+        <span class="nk-layout-splitter-grip" aria-hidden="true"></span>
+      </div>
 
       <div class="nk-stage">
         <!-- 顶部作品信息 -->
@@ -49,6 +67,19 @@
 
           <div class="nk-header-actions">
             <button
+              v-if="selectedWork.workType === 'novel'"
+              class="nk-btn"
+              type="button"
+              :disabled="!currentChapter || !manuscript.trim() || contextSyncApplying"
+              :title="contextSyncError || '分析已保存章节中的设定与伏笔变化，确认后再写回'"
+              @click="handleContextSyncClick"
+            >
+              <el-icon :class="{ 'is-loading': contextSyncLoading }">
+                <component :is="contextSyncLoading ? Loading : MagicStick" />
+              </el-icon>
+              {{ contextSyncStatusText }}
+            </button>
+            <button
               class="nk-btn"
               type="button"
               :disabled="!manuscript.trim()"
@@ -83,7 +114,7 @@
 
         <!-- 工作区：对话 + 手稿 + （长篇）抽屉 -->
         <template v-if="selectedWork">
-          <div class="nk-workspace">
+          <div ref="workspaceRef" class="nk-workspace" :style="workspaceLayoutStyle">
             <div class="nk-chat-col">
               <ChatComposer
                 ref="chatComposerRef"
@@ -97,6 +128,24 @@
               />
             </div>
 
+            <div
+              class="nk-layout-splitter"
+              :class="{ 'is-active': activeResizePanel === 'chat' }"
+              role="separator"
+              tabindex="0"
+              aria-orientation="vertical"
+              aria-label="调整 AI 对话与正文编辑宽度"
+              :aria-valuemin="NOVEL_LAYOUT_LIMITS.chatMin"
+              :aria-valuemax="NOVEL_LAYOUT_LIMITS.chatMax"
+              :aria-valuenow="Math.round(novelLayout.chatWidth)"
+              title="拖动调整 AI 对话宽度；双击恢复默认"
+              @pointerdown="startPanelResize('chat', $event)"
+              @keydown="handleSplitterKeydown('chat', $event)"
+              @dblclick="resetPanelWidth('chat')"
+            >
+              <span class="nk-layout-splitter-grip" aria-hidden="true"></span>
+            </div>
+
             <div class="nk-paper-col">
               <ManuscriptEditor
                 v-model="manuscript"
@@ -104,6 +153,24 @@
                 :word-count="manuscriptWordCount"
                 :placeholder="selectedWork.workType === 'novel' ? '在右侧目录中新起一章，或让 AI 续写下一章…' : '提笔，写下属于你的故事…'"
               />
+            </div>
+
+            <div
+              class="nk-layout-splitter"
+              :class="{ 'is-active': activeResizePanel === 'drawer' }"
+              role="separator"
+              tabindex="0"
+              aria-orientation="vertical"
+              aria-label="调整正文编辑与资料栏宽度"
+              :aria-valuemin="NOVEL_LAYOUT_LIMITS.drawerMin"
+              :aria-valuemax="NOVEL_LAYOUT_LIMITS.drawerMax"
+              :aria-valuenow="Math.round(novelLayout.drawerWidth)"
+              title="拖动调整右侧资料栏宽度；双击恢复默认"
+              @pointerdown="startPanelResize('drawer', $event)"
+              @keydown="handleSplitterKeydown('drawer', $event)"
+              @dblclick="resetPanelWidth('drawer')"
+            >
+              <span class="nk-layout-splitter-grip" aria-hidden="true"></span>
             </div>
 
             <aside v-if="selectedWork.workType === 'novel'" class="nk-drawer">
@@ -147,7 +214,7 @@
                   <button
                     class="nk-btn nk-ai-next-chapter"
                     type="button"
-                    :disabled="!chapters.length"
+                    :disabled="!chapters.length || aiNextChapterLoading"
                     title="自动新起一章，并让 AI 衔接上一章结尾续写"
                     @click="handleAiNextChapter"
                   >
@@ -491,6 +558,14 @@
         <el-button type="primary" :loading="foreshadowDialog.submitting" @click="submitForeshadow">保存伏笔</el-button>
       </template>
     </el-dialog>
+
+    <NovelContextSyncDialog
+      v-model="contextSyncDialog.open"
+      :suggestions="contextSyncDialog.suggestions"
+      :chapter-title="contextSyncDialog.chapterTitle"
+      :applying="contextSyncApplying"
+      @apply="handleApplyContextChanges"
+    />
   </div>
 </template>
 
@@ -502,7 +577,8 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import useUserStore from '@/store/modules/user'
 import {
-  addNovelChapter, addNovelForeshadow, addNovelSetting, addNovelWork, analyzeNovelPacing,
+  addNovelChapter, addNovelForeshadow, addNovelSetting, addNovelWork, analyzeNovelContext, analyzeNovelPacing,
+  applyNovelContextChanges,
   delNovelChapter, delNovelForeshadow, delNovelSetting,
   delNovelWork, exportNovelWorkText, getNovelWork, listNovelChapter, listNovelForeshadow, listNovelSetting,
   listNovelWork, saveNovelManuscript, streamNovelSynopsis,
@@ -516,16 +592,148 @@ import SettingNotebook from './components/SettingNotebook.vue'
 import ForeshadowBoard from './components/ForeshadowBoard.vue'
 import OutlinePanel from './components/OutlinePanel.vue'
 import IdeaStudioDialog from './components/IdeaStudioDialog.vue'
+import NovelContextSyncDialog from './components/NovelContextSyncDialog.vue'
 import { countNovelCharacters } from './novelWordCount'
 import {
   DEFAULT_PACING_LEVEL, PACING_CACHE_STORAGE_KEY, PACING_LEVELS,
   buildPacingCacheKey, buildPacingRequest, normalizePacingResult, pacingLabel, parsePacingCache
 } from './novelPacing'
+import {
+  DEFAULT_NOVEL_LAYOUT, NOVEL_LAYOUT_LIMITS, NOVEL_LAYOUT_STORAGE_KEY,
+  fitNovelLayout, parseNovelLayout, resizeNovelPanel
+} from './novelLayout'
+import {
+  CONTEXT_SYNC_HASH_STORAGE_KEY, buildContextSyncKey, fingerprintNovelContent,
+  normalizeContextChanges, parseContextSyncHashes, toContextApplyChanges
+} from './novelContextSync'
+import { nextNovelChapterNo, pickNovelChapter, planNovelContinuation } from './novelChapter'
 import './novel-kraft.scss'
 
 defineOptions({ name: 'NovelWriting' })
 
 const userStore = useUserStore()
+
+// ── 可拖拽分栏 ──────────────────────────────────────
+const layoutBodyRef = ref(null)
+const workspaceRef = ref(null)
+const chatComposerRef = ref(null)
+const activeResizePanel = ref('')
+const novelLayout = reactive(parseNovelLayout(localStorage.getItem(NOVEL_LAYOUT_STORAGE_KEY)))
+
+const bodyLayoutStyle = computed(() => ({
+  '--nk-rail-width': `${novelLayout.railWidth}px`
+}))
+
+const workspaceLayoutStyle = computed(() => ({
+  '--nk-chat-width': `${novelLayout.chatWidth}px`,
+  '--nk-drawer-width': `${novelLayout.drawerWidth}px`
+}))
+
+function contentWidth(element) {
+  if (!element) return Number.POSITIVE_INFINITY
+  const style = window.getComputedStyle(element)
+  return element.clientWidth - parseFloat(style.paddingLeft || 0) - parseFloat(style.paddingRight || 0)
+}
+
+function currentLayoutDimensions() {
+  return {
+    bodyWidth: contentWidth(layoutBodyRef.value),
+    workspaceWidth: workspaceRef.value?.clientWidth ?? Number.POSITIVE_INFINITY
+  }
+}
+
+function applyFittedLayout() {
+  if (activeResizePanel.value) return
+  Object.assign(novelLayout, fitNovelLayout(novelLayout, currentLayoutDimensions()))
+}
+
+function persistNovelLayout() {
+  try {
+    localStorage.setItem(NOVEL_LAYOUT_STORAGE_KEY, JSON.stringify(novelLayout))
+  } catch (error) {
+    console.warn('小说工作台分栏尺寸保存失败', error)
+  }
+}
+
+let resizeSession = null
+
+function startPanelResize(panel, event) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  resizeSession = {
+    panel,
+    pointerId: event.pointerId,
+    handle: event.currentTarget,
+    startX: event.clientX,
+    startLayout: { ...novelLayout },
+    ...currentLayoutDimensions()
+  }
+  activeResizePanel.value = panel
+  event.currentTarget.setPointerCapture?.(event.pointerId)
+  window.addEventListener('pointermove', handlePanelResize)
+  window.addEventListener('pointerup', finishPanelResize)
+  window.addEventListener('pointercancel', finishPanelResize)
+}
+
+function handlePanelResize(event) {
+  if (!resizeSession || event.pointerId !== resizeSession.pointerId) return
+  Object.assign(novelLayout, resizeNovelPanel({
+    panel: resizeSession.panel,
+    startLayout: resizeSession.startLayout,
+    deltaX: event.clientX - resizeSession.startX,
+    bodyWidth: resizeSession.bodyWidth,
+    workspaceWidth: resizeSession.workspaceWidth
+  }))
+}
+
+function finishPanelResize(event) {
+  if (!resizeSession || (event?.pointerId != null && event.pointerId !== resizeSession.pointerId)) return
+  const { handle, pointerId } = resizeSession
+  if (handle?.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId)
+  resizeSession = null
+  activeResizePanel.value = ''
+  window.removeEventListener('pointermove', handlePanelResize)
+  window.removeEventListener('pointerup', finishPanelResize)
+  window.removeEventListener('pointercancel', finishPanelResize)
+  persistNovelLayout()
+}
+
+function handleSplitterKeydown(panel, event) {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+  event.preventDefault()
+  const step = event.shiftKey ? 48 : 16
+  Object.assign(novelLayout, resizeNovelPanel({
+    panel,
+    startLayout: novelLayout,
+    deltaX: event.key === 'ArrowRight' ? step : -step,
+    ...currentLayoutDimensions()
+  }))
+  persistNovelLayout()
+}
+
+function resetPanelWidth(panel) {
+  const propertyByPanel = {
+    rail: 'railWidth',
+    chat: 'chatWidth',
+    drawer: 'drawerWidth'
+  }
+  const property = propertyByPanel[panel]
+  novelLayout[property] = DEFAULT_NOVEL_LAYOUT[property]
+  Object.assign(novelLayout, fitNovelLayout(novelLayout, currentLayoutDimensions()))
+  persistNovelLayout()
+}
+
+let layoutObserver = null
+
+onMounted(() => {
+  nextTick(() => {
+    applyFittedLayout()
+    if (typeof ResizeObserver !== 'undefined' && layoutBodyRef.value) {
+      layoutObserver = new ResizeObserver(applyFittedLayout)
+      layoutObserver.observe(layoutBodyRef.value)
+    }
+  })
+})
 
 // ── 作品列表 ─────────────────────────────────────────
 const works = ref([])
@@ -563,6 +771,8 @@ function selectWork(work) {
   if (selectedWork.value?.workId === work.workId) return
   selectedWork.value = { ...work, manuscript: '' }
   manuscript.value = ''
+  lastSavedContent.value = ''
+  saveState.value = 'saved'
   chapters.value = []
   currentChapter.value = null
   settings.value = { character: [], world: [], outline: [], style: [], other: [] }
@@ -786,8 +996,10 @@ async function runPacingAnalysis() {
 
 // ── 短篇正文 / 长篇章节 ─────────────────────────────
 const manuscript = ref('')
+const lastSavedContent = ref('')
 const currentChapter = ref(null)
 const chapters = ref([])
+const aiNextChapterLoading = ref(false)
 
 const manuscriptWordCount = computed(() =>
   countNovelCharacters(manuscript.value)
@@ -824,15 +1036,18 @@ async function loadManuscript(workId) {
   } catch {
     manuscript.value = ''
   }
+  lastSavedContent.value = manuscript.value
+  saveState.value = 'saved'
   syncSelectedWorkWordCount()
 }
 
-async function loadChapters(workId) {
+async function loadChapters(workId, preferredChapter = {}) {
   try {
     const result = await listNovelChapter(workId)
     chapters.value = result?.rows || []
-    if (chapters.value.length) {
-      await selectChapter(chapters.value[0])
+    const selected = pickNovelChapter(chapters.value, preferredChapter)
+    if (selected) {
+      await selectChapter(selected)
     }
   } catch {
     chapters.value = []
@@ -840,9 +1055,19 @@ async function loadChapters(workId) {
 }
 
 async function selectChapter(chapter) {
+  clearTimeout(saveTimer)
+  clearTimeout(contextAnalysisTimer)
+  if (contextSyncDialog.chapterId !== chapter.chapterId) {
+    contextSyncDialog.open = false
+    contextSyncDialog.suggestions = []
+    contextSyncDialog.contentHash = ''
+    contextSyncDialog.contentFingerprint = ''
+  }
+  contextSyncError.value = ''
   currentChapter.value = chapter
   manuscript.value = chapter.content || ''
-  markDirty()
+  lastSavedContent.value = manuscript.value
+  saveState.value = 'saved'
 }
 
 function handleInsert(text) {
@@ -853,7 +1078,7 @@ function handleInsert(text) {
 }
 
 async function handleAddChapter() {
-  const order = chapters.value.length + 1
+  const order = nextNovelChapterNo(chapters.value)
   try {
     await addNovelChapter(selectedWork.value.workId, {
       chapterNo: order,
@@ -861,7 +1086,7 @@ async function handleAddChapter() {
       content: ''
     })
     ElMessage.success(`已新起第 ${order} 章`)
-    await loadChapters(selectedWork.value.workId)
+    await loadChapters(selectedWork.value.workId, { chapterNo: order })
   } catch (error) {
     ElMessage.error(error?.message || '新建章节失败，请检查后端服务')
   }
@@ -874,27 +1099,50 @@ function chapterLabel(chapter) {
 
 async function handleAiNextChapter() {
   const work = selectedWork.value
-  if (!work) return
-  const lastChapter = chapters.value[chapters.value.length - 1]
-  if (!lastChapter || !(lastChapter.content || '').trim()) {
+  if (!work || aiNextChapterLoading.value) return
+  const composer = chatComposerRef.value
+  if (!composer?.send) {
+    ElMessage.error('AI 创作面板尚未就绪，请稍后重试')
+    return
+  }
+  if (composer.isStreaming?.()) {
+    ElMessage.warning('AI 正在创作，请等待当前续写完成')
+    return
+  }
+  const plan = planNovelContinuation(chapters.value)
+  if (!plan) {
     ElMessage.warning('先完成当前章节的正文，AI 才好接着往下写')
     return
   }
-  const order = chapters.value.length + 1
+  const { chapterNo: order, createNew, sourceChapter, targetChapter } = plan
+  aiNextChapterLoading.value = true
   try {
-    await addNovelChapter(work.workId, {
-      chapterNo: order,
-      chapterTitle: `第 ${order} 章`,
-      content: ''
-    })
-    ElMessage.success(`已新起第 ${order} 章，AI 正在续写…`)
-    await loadChapters(work.workId)
-    chatComposerRef.value?.send(
-      `续写下一章：衔接上一章《${lastChapter.chapterTitle || `第 ${order - 1} 章`}》的结尾，自然地开启新章节，保持人物口吻与叙事风格一致。`,
+    if (createNew) {
+      await addNovelChapter(work.workId, {
+        chapterNo: order,
+        chapterTitle: `第 ${order} 章`,
+        content: ''
+      })
+    }
+    await loadChapters(work.workId, targetChapter
+      ? { chapterId: targetChapter.chapterId }
+      : { chapterNo: order })
+    await nextTick()
+    const activeComposer = chatComposerRef.value
+    if (!activeComposer?.send) {
+      throw new Error('AI 创作面板尚未就绪，请稍后重试')
+    }
+    ElMessage.success(createNew
+      ? `已新起第 ${order} 章，AI 正在续写…`
+      : `正在第 ${order} 章重试 AI 续写…`)
+    activeComposer.send(
+      `续写下一章：衔接上一章《${sourceChapter.chapterTitle || `第 ${sourceChapter.chapterNo} 章`}》的结尾，自然地开启新章节，保持人物口吻与叙事风格一致。`,
       true
     )
   } catch (error) {
-    ElMessage.error(error?.message || '新起章节失败，请检查后端服务')
+    ElMessage.error(error?.message || '自动续写下一章失败，请检查后端服务')
+  } finally {
+    aiNextChapterLoading.value = false
   }
 }
 
@@ -917,7 +1165,9 @@ async function submitRenameChapter() {
     })
     ElMessage.success('章节已更名')
     chapterDialog.open = false
-    await loadChapters(selectedWork.value.workId)
+    await loadChapters(selectedWork.value.workId, {
+      chapterId: chapterDialog.chapter.chapterId
+    })
   } catch (error) {
     ElMessage.error(error?.message || '更名失败')
   } finally {
@@ -1122,6 +1372,171 @@ async function handleResolveForeshadow(card) {
   }
 }
 
+// ── 章节资料同步：保存 → AI 建议 → 人工确认 → 写回 ──
+const analyzedContextHashes = reactive(
+  parseContextSyncHashes(localStorage.getItem(CONTEXT_SYNC_HASH_STORAGE_KEY))
+)
+const contextSyncLoading = ref(false)
+const contextSyncApplying = ref(false)
+const contextSyncError = ref('')
+const contextSyncDialog = reactive({
+  open: false,
+  workId: null,
+  chapterId: null,
+  chapterTitle: '',
+  contentHash: '',
+  contentFingerprint: '',
+  suggestions: []
+})
+const contextSyncStatusText = computed(() => {
+  if (contextSyncLoading.value) return 'AI 正在整理资料…'
+  if (contextSyncDialog.suggestions.length) {
+    return contextSyncDialog.suggestions.length + ' 条资料建议'
+  }
+  if (contextSyncError.value) return '资料同步失败'
+  return '资料同步'
+})
+let contextAnalysisTimer = null
+
+function persistContextSyncHashes() {
+  try {
+    const entries = Object.entries(analyzedContextHashes).slice(-500)
+    localStorage.setItem(CONTEXT_SYNC_HASH_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)))
+  } catch (error) {
+    console.warn('小说资料同步去重记录保存失败', error)
+  }
+}
+
+function currentContextSnapshot() {
+  if (selectedWork.value?.workType !== 'novel' || !currentChapter.value || !manuscript.value.trim()) {
+    return null
+  }
+  return {
+    workId: selectedWork.value.workId,
+    chapterId: currentChapter.value.chapterId,
+    chapterTitle: currentChapter.value.chapterTitle || chapterLabel(currentChapter.value),
+    content: manuscript.value
+  }
+}
+
+function scheduleContextAnalysis(snapshot = currentContextSnapshot()) {
+  clearTimeout(contextAnalysisTimer)
+  if (!snapshot) return
+  contextAnalysisTimer = setTimeout(() => {
+    runContextAnalysis({ snapshot, quiet: true })
+  }, 8000)
+}
+
+async function runContextAnalysis({ force = false, quiet = false, snapshot = null } = {}) {
+  const target = snapshot || currentContextSnapshot()
+  if (!target || contextSyncLoading.value) return
+  const syncKey = buildContextSyncKey({
+    userId: userStore.id,
+    workId: target.workId,
+    chapterId: target.chapterId
+  })
+  const browserHash = fingerprintNovelContent(target.content)
+  if (!force && syncKey && analyzedContextHashes[syncKey] === browserHash) return
+
+  contextSyncLoading.value = true
+  contextSyncError.value = ''
+  try {
+    const response = await analyzeNovelContext(target.workId, target.chapterId)
+    const data = response?.data || response
+    if (!data?.contentHash || !Array.isArray(data?.changes)) {
+      throw new Error('AI 返回了无效的资料建议')
+    }
+    if (syncKey) {
+      analyzedContextHashes[syncKey] = browserHash
+      persistContextSyncHashes()
+    }
+
+    const stillCurrent = selectedWork.value?.workId === target.workId
+      && currentChapter.value?.chapterId === target.chapterId
+      && manuscript.value === target.content
+    if (!stillCurrent) return
+
+    const suggestions = normalizeContextChanges(data.changes)
+    if (!suggestions.length) {
+      contextSyncDialog.suggestions = []
+      if (!quiet) ElMessage.info('本章没有发现需要写入设定集或伏笔的新变化')
+      return
+    }
+    Object.assign(contextSyncDialog, {
+      open: true,
+      workId: target.workId,
+      chapterId: target.chapterId,
+      chapterTitle: target.chapterTitle,
+      contentHash: data.contentHash,
+      contentFingerprint: browserHash,
+      suggestions
+    })
+  } catch (error) {
+    contextSyncError.value = error?.message || 'AI 资料同步分析失败'
+    if (!quiet) ElMessage.error(contextSyncError.value)
+    else console.warn('章节已保存，但 AI 资料同步分析失败', error)
+  } finally {
+    contextSyncLoading.value = false
+    const latest = currentContextSnapshot()
+    if (latest && (latest.workId !== target.workId
+      || latest.chapterId !== target.chapterId
+      || latest.content !== target.content)) {
+      scheduleContextAnalysis(latest)
+    }
+  }
+}
+
+async function handleContextSyncClick() {
+  const current = currentContextSnapshot()
+  if (!current) return
+  const pendingMatches = contextSyncDialog.suggestions.length
+    && contextSyncDialog.workId === current.workId
+    && contextSyncDialog.chapterId === current.chapterId
+    && contextSyncDialog.contentFingerprint === fingerprintNovelContent(current.content)
+    && manuscript.value === lastSavedContent.value
+  if (pendingMatches) {
+    contextSyncDialog.open = true
+    return
+  }
+  if (saveState.value === 'saving') {
+    ElMessage.info('正文正在保存，请稍后再整理资料')
+    return
+  }
+  if (manuscript.value !== lastSavedContent.value || saveState.value !== 'saved') {
+    const saved = await saveCurrent({ scheduleAnalysis: false })
+    if (!saved) return
+  }
+  await runContextAnalysis({ force: true, quiet: false })
+}
+
+async function handleApplyContextChanges(selectedSuggestions) {
+  if (!selectedSuggestions.length || !contextSyncDialog.workId) return
+  contextSyncApplying.value = true
+  try {
+    const response = await applyNovelContextChanges(contextSyncDialog.workId, {
+      chapterId: contextSyncDialog.chapterId,
+      contentHash: contextSyncDialog.contentHash,
+      changes: toContextApplyChanges(selectedSuggestions)
+    })
+    const affected = response?.data?.affected ?? selectedSuggestions.length
+    if (selectedWork.value?.workId === contextSyncDialog.workId) {
+      await Promise.all([
+        loadSettings(contextSyncDialog.workId),
+        loadForeshadows(contextSyncDialog.workId)
+      ])
+    }
+    contextSyncDialog.open = false
+    contextSyncDialog.suggestions = []
+    contextSyncDialog.contentHash = ''
+    contextSyncDialog.contentFingerprint = ''
+    ElMessage.success('已确认并同步 ' + affected + ' 条设定/伏笔变化')
+  } catch (error) {
+    ElMessage.error(error?.message || '资料同步失败，请重新分析后重试')
+  } finally {
+    contextSyncApplying.value = false
+  }
+}
+
 // ── 自动保存 ────────────────────────────────────────
 const saveState = ref('saved') // dirty | saving | saved
 const saveIcon = computed(() => {
@@ -1139,11 +1554,12 @@ let saveTimer = null
 function markDirty() {
   saveState.value = 'dirty'
   clearTimeout(saveTimer)
+  clearTimeout(contextAnalysisTimer)
   saveTimer = setTimeout(saveCurrent, 1500)
 }
 
-async function saveCurrent() {
-  if (!selectedWork.value || saveState.value === 'saving') return
+async function saveCurrent({ scheduleAnalysis = true } = {}) {
+  if (!selectedWork.value || saveState.value === 'saving') return false
   const work = selectedWork.value
   saveState.value = 'saving'
   try {
@@ -1159,17 +1575,33 @@ async function saveCurrent() {
       currentChapter.value.content = manuscript.value
       currentChapter.value.wordCount = wordCount
     }
+    lastSavedContent.value = manuscript.value
     syncSelectedWorkWordCount()
     saveState.value = 'saved'
+    if (scheduleAnalysis && work.workType === 'novel' && currentChapter.value) {
+      scheduleContextAnalysis(currentContextSnapshot())
+    }
+    return true
   } catch {
     saveState.value = 'dirty'
     ElMessage.warning('自动保存失败：后端接口未就绪')
+    return false
   }
 }
 
-watch(manuscript, () => {
+watch(manuscript, value => {
   if (selectedWork.value) {
     syncSelectedWorkWordCount()
+    if (value === lastSavedContent.value) {
+      saveState.value = 'saved'
+      return
+    }
+    if (contextSyncDialog.suggestions.length) {
+      contextSyncDialog.open = false
+      contextSyncDialog.suggestions = []
+      contextSyncDialog.contentHash = ''
+      contextSyncDialog.contentFingerprint = ''
+    }
     markDirty()
   }
 })
@@ -1200,21 +1632,42 @@ function formatWordCount(count) {
 
 watch(
   () => selectedWork.value?.workId,
-  async () => {
+  async (workId, previousWorkId) => {
+    if (workId !== previousWorkId) {
+      clearTimeout(contextAnalysisTimer)
+      contextSyncDialog.open = false
+      contextSyncDialog.suggestions = []
+      contextSyncDialog.contentHash = ''
+      contextSyncDialog.contentFingerprint = ''
+      contextSyncError.value = ''
+    }
     drawerTab.value = 'chapters'
     if (selectedWork.value?.workType === 'novel') {
       await loadSettings(selectedWork.value.workId)
       await loadForeshadows(selectedWork.value.workId)
     }
+    await nextTick()
+    if (workspaceRef.value) {
+      layoutObserver?.disconnect()
+      layoutObserver?.observe(layoutBodyRef.value)
+      layoutObserver?.observe(workspaceRef.value)
+    }
+    applyFittedLayout()
   }
 )
 
-onBeforeUnmount(() => clearTimeout(saveTimer))
+onBeforeUnmount(() => {
+  clearTimeout(saveTimer)
+  clearTimeout(contextAnalysisTimer)
+  finishPanelResize()
+  layoutObserver?.disconnect()
+})
 </script>
 
 <style scoped>
 .nk-chat-col {
-  flex: 3;
+  width: var(--nk-chat-width, 520px);
+  flex: 0 0 auto;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -1222,7 +1675,7 @@ onBeforeUnmount(() => clearTimeout(saveTimer))
 }
 
 .nk-paper-col {
-  flex: 4;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   display: flex;

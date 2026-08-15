@@ -85,7 +85,7 @@ public class NovelController {
                 throw new ServiceException("会话ID不能为空");
             }
 
-            // 1. 校验作品归属并组装作品上下文（书名/梗概/章节/尾文/设定卡）。
+            // 1. 校验作品归属并组装持久上下文（章节尾文/设定/伏笔/相关大纲）。
             workService.checkWorkOwner(workId);
             NovelWorkContextDTO workContext = workService.buildNovelWorkContext(
                     workId, request.getChapterId());
