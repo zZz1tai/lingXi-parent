@@ -37,18 +37,15 @@ public class NovelIdeaDocVO
     /** 主角（至少一位） */
     @NotEmpty(message = "构思文档至少需要一位主角")
     @Size(max = 10, message = "主角不能超过10位")
-    @Valid
-    private List<NovelIdeaPersonVO> protagonists;
+    private List<@Valid NovelIdeaPersonVO> protagonists;
 
     /** 配角 */
     @Size(max = 10, message = "配角不能超过10位")
-    @Valid
-    private List<NovelIdeaPersonVO> supporting;
+    private List<@Valid NovelIdeaPersonVO> supporting;
 
     /** 反派 */
     @Size(max = 10, message = "反派不能超过10位")
-    @Valid
-    private List<NovelIdeaPersonVO> antagonists;
+    private List<@Valid NovelIdeaPersonVO> antagonists;
 
     /** 核心冲突 */
     private String coreConflict;

@@ -191,6 +191,16 @@ function workSessionId(work) {
   return sessionId
 }
 
+// 服务端仅在首次发送创作消息时创建会话（ensureNovelSession），
+// 未创建前历史必然为空，直接跳过拉取，避免无谓的“会话不存在”告警。
+function isServerSessionCreated(work) {
+  return localStorage.getItem(`novel_session_created_${work.workId}`) === '1'
+}
+
+function markServerSessionCreated(work) {
+  localStorage.setItem(`novel_session_created_${work.workId}`, '1')
+}
+
 watch(
   () => props.work?.workId,
   async workId => {
@@ -206,6 +216,7 @@ watch(
   async function loadHistory(workId) {
   const work = props.work
   if (!work) return
+  if (!isServerSessionCreated(work)) return
   try {
     const result = await getChatHistory(workSessionId(work))
     const history = result?.data || result?.rows || []
@@ -327,6 +338,7 @@ async function send(rawText, asInstruction) {
   abortController = new AbortController()
 
   try {
+    markServerSessionCreated(props.work)
     await streamNovelWrite(
       {
         message: content,

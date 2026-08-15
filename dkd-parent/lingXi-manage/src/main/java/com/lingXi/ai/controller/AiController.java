@@ -482,7 +482,13 @@ public class AiController {
      * @return 错误的AjaxResult
      */
     private AjaxResult safeError(String message, Exception error) {
-        log.warn("{}，errorType={}", message, error.getClass().getSimpleName());
+        // ServiceException 的提示信息本身就是面向用户的文案，记录便于定位根因。
+        if (error instanceof ServiceException) {
+            log.warn("{}，errorType={}，reason={}",
+                    message, error.getClass().getSimpleName(), error.getMessage());
+        } else {
+            log.warn("{}，errorType={}", message, error.getClass().getSimpleName());
+        }
         return AjaxResult.error(message);
     }
 
