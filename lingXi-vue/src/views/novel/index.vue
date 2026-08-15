@@ -1136,7 +1136,7 @@ async function handleAiNextChapter() {
       ? `已新起第 ${order} 章，AI 正在续写…`
       : `正在第 ${order} 章重试 AI 续写…`)
     activeComposer.send(
-      `续写下一章：衔接上一章《${sourceChapter.chapterTitle || `第 ${sourceChapter.chapterNo} 章`}》的结尾，自然地开启新章节，保持人物口吻与叙事风格一致。`,
+      `续写下一章：衔接上一章《${sourceChapter.chapterTitle || `第 ${sourceChapter.chapterNo} 章`}》的结尾，自然地开启新章节，保持人物口吻与叙事风格一致。请直接输出完整章节正文，目标约 2500 字（建议 2300～2700 字），不要添加解释、章节号或作者按语。`,
       true
     )
   } catch (error) {

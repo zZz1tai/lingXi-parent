@@ -43,6 +43,9 @@ def test_novel_prompt_declares_role_and_fact_checking_behavior() -> None:
     assert "联网核查事实" in prompt
     assert "公网搜索（事实核查）：可用" in prompt
     assert "本地通用工具（时间、日期、计算、单位换算）：可用" in prompt
+    assert "正文目标约 2500 字" in prompt
+    assert "2300～2700 字" in prompt
+    assert "不得只给片段" in prompt
 
 
 def test_novel_prompt_notes_when_search_is_unavailable() -> None:

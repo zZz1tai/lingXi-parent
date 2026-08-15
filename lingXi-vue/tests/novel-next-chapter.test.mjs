@@ -42,4 +42,5 @@ test('自动续写持有创作面板引用并等待章节切换完成', () => {
   assert.match(pageSource, /const chatComposerRef = ref\(null\)/)
   assert.match(pageSource, /const plan = planNovelContinuation\(chapters\.value\)/)
   assert.match(pageSource, /await nextTick\(\)[\s\S]*?activeComposer\.send\(/)
+  assert.match(pageSource, /完整章节正文，目标约 2500 字（建议 2300～2700 字）/)
 })
