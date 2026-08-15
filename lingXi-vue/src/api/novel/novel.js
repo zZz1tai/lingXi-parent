@@ -56,7 +56,7 @@ export function generateNovelSynopsis(data) {
     url: '/novel/synopsis/generate',
     method: 'post',
     data: data,
-    timeout: 60000
+    timeout: 1000000
   })
 }
 
@@ -255,7 +255,7 @@ export function generateNovelOutline(workId) {
   return request({
     url: '/novel/work/' + workId + '/outline/generate',
     method: 'post',
-    timeout: 120000
+    timeout: 1000000
   })
 }
 
@@ -300,7 +300,7 @@ export function analyzeNovelPacing(data) {
     url: '/novel/work/pacing/analyze',
     method: 'post',
     data: data,
-    timeout: 120000
+    timeout: 1000000
   })
 }
 

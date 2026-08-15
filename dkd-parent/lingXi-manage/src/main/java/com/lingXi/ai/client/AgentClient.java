@@ -709,12 +709,13 @@ public class AgentClient {
             if (genre != null && !genre.trim().isEmpty()) {
                 root.put("genre", genre.trim());
             }
-            putLlmConfig(root);
+            putLlmConfig(root, novelSyncProviderTimeoutSeconds());
 
             JsonNode response = requestJson(
                     "POST",
                     config.getNovelSynopsisUrl(),
-                    objectMapper.writeValueAsString(root));
+                    objectMapper.writeValueAsString(root),
+                    novelSyncReadTimeout());
             requireSuccess(response, "AGENT_SYNOPSIS_FAILED", "AI 拟写梗概失败");
             JsonNode data = response.get("data");
             if (data == null || data.get("synopsis") == null
@@ -748,12 +749,13 @@ public class AgentClient {
             if (outlineTree != null) {
                 root.set("outline_tree", objectMapper.valueToTree(outlineTree));
             }
-            putLlmConfig(root);
+            putLlmConfig(root, novelSyncProviderTimeoutSeconds());
 
             JsonNode response = requestJson(
                     "POST",
                     config.getNovelOutlineUrl(),
-                    objectMapper.writeValueAsString(root));
+                    objectMapper.writeValueAsString(root),
+                    novelSyncReadTimeout());
             requireSuccess(response, "AGENT_OUTLINE_FAILED", "AI 生成大纲失败");
             JsonNode data = response.get("data");
             if (data == null || !data.has("tree")) {
@@ -777,12 +779,13 @@ public class AgentClient {
     public JsonNode analyzeNovelPacing(Object pacingRequest) {
         try {
             ObjectNode root = (ObjectNode) objectMapper.valueToTree(pacingRequest);
-            putLlmConfig(root);
+            putLlmConfig(root, novelSyncProviderTimeoutSeconds());
 
             JsonNode response = requestJson(
                     "POST",
                     config.getNovelPacingUrl(),
-                    objectMapper.writeValueAsString(root));
+                    objectMapper.writeValueAsString(root),
+                    novelSyncReadTimeout());
             requireSuccess(response, "AGENT_PACING_FAILED", "AI 分析章节节奏失败");
             JsonNode data = response.get("data");
             if (data == null || data.get("score") == null || !data.get("score").isNumber()) {
@@ -2690,6 +2693,13 @@ public class AgentClient {
      */
     private JsonNode requestJson(
             String method, String endpointPath, String requestBody) throws IOException {
+        return requestJson(method, endpointPath, requestBody, config.getReadTimeout());
+    }
+
+    /** 直连 LLM 的同步端点按调用方指定的读取超时执行，避免长生成任务被全局短超时误杀。 */
+    private JsonNode requestJson(
+            String method, String endpointPath, String requestBody, int readTimeoutMs)
+            throws IOException {
         HttpURLConnection conn = null;
         try {
             URL url = new URL(config.getBaseUrl() + endpointPath);
@@ -2698,7 +2708,7 @@ public class AgentClient {
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
             applyServiceAuth(conn);
             conn.setConnectTimeout(config.getConnectTimeout());
-            conn.setReadTimeout(config.getReadTimeout());
+            conn.setReadTimeout(readTimeoutMs);
             if (requestBody != null) {
                 conn.setDoOutput(true);
                 try (OutputStream os = conn.getOutputStream()) {
@@ -2761,8 +2771,30 @@ public class AgentClient {
         return new RuntimeException(code + ": " + message);
     }
 
+    /** 小说同步端点使用的读取超时；配置缺省时回退到 16 分钟（覆盖 Python 侧最多 3 次 LLM 尝试）。 */
+    private int novelSyncReadTimeout() {
+        return config.getNovelSyncReadTimeout() == null
+                || config.getNovelSyncReadTimeout().intValue() <= 0
+                        ? 960_000 : config.getNovelSyncReadTimeout().intValue();
+    }
+
+    /** 小说同步端点单次 LLM 提供方超时（秒）；配置缺省时回退到 5 分钟。 */
+    private int novelSyncProviderTimeoutSeconds() {
+        return config.getNovelSyncProviderTimeoutSeconds() == null
+                || config.getNovelSyncProviderTimeoutSeconds().intValue() <= 0
+                        ? 300 : config.getNovelSyncProviderTimeoutSeconds().intValue();
+    }
+
     /** 将当前启用的文本模型配置写入请求，供 Python 创建本次调用的模型客户端。 */
     private void putLlmConfig(ObjectNode root) {
+        putLlmConfig(root, null);
+    }
+
+    /**
+     * 写入模型配置；小说直连 LLM 的同步端点额外携带提供方超时（秒），
+     * 保证 Python 的模型调用与 Java 的读取超时在同一量级。
+     */
+    private void putLlmConfig(ObjectNode root, Integer providerTimeoutSeconds) {
         if (modelConfigService == null) {
             return;
         }
@@ -2771,6 +2803,9 @@ public class AgentClient {
         llmConfig.put("api_key", runtimeConfig.getApiKey());
         llmConfig.put("model", runtimeConfig.getTextModel());
         llmConfig.put("base_url", runtimeConfig.getWorkspaceBaseUrl());
+        if (providerTimeoutSeconds != null && providerTimeoutSeconds > 0) {
+            llmConfig.put("timeout_seconds", providerTimeoutSeconds);
+        }
         if (securityConfigService != null) {
             String tavilyApiKey = securityConfigService.getRequiredConfig().getSearchTavilyApiKey();
             if (tavilyApiKey != null && !tavilyApiKey.trim().isEmpty()) {

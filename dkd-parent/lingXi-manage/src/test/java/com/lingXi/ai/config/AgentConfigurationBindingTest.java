@@ -18,12 +18,23 @@ class AgentConfigurationBindingTest {
     void agentServicePropertiesBindToAgentConfig() {
         Map<String, String> properties = new LinkedHashMap<>();
         properties.put("agent.service-api-key", "service-key-sentinel");
+        properties.put("agent.novel-sync-read-timeout", "960000");
+        properties.put("agent.novel-sync-provider-timeout-seconds", "300");
 
         AgentConfig config = new Binder(new MapConfigurationPropertySource(properties))
                 .bind("agent", Bindable.of(AgentConfig.class))
                 .get();
 
         assertEquals("service-key-sentinel", config.getServiceApiKey());
+        assertEquals(960000, config.getNovelSyncReadTimeout());
+        assertEquals(300, config.getNovelSyncProviderTimeoutSeconds());
+    }
+
+    @Test
+    void novelSyncTimeoutsUseDocumentedDefaultsWhenUnset() {
+        AgentConfig config = new AgentConfig();
+        assertEquals(960_000, config.getNovelSyncReadTimeout());
+        assertEquals(300, config.getNovelSyncProviderTimeoutSeconds());
     }
 
     @Test

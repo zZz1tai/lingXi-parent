@@ -67,6 +67,11 @@ public class AgentConfig implements EnvironmentAware {
     private Integer connectTimeout;
     /** 读取超时时间(ms) */
     private Integer readTimeout;
+    /** 小说同步端点（梗概/大纲/节奏分析）读取超时时间(ms)；这些端点直连 LLM 一次性产出完整结果，
+     *  且 Python 侧最多重试 2 次，预算须覆盖 (max_retries+1) × 单次 LLM 超时 + 余量 */
+    private Integer novelSyncReadTimeout = 960_000;
+    /** 小说同步端点单次 LLM 调用超时（秒），随 llm_config.timeout_seconds 搬运给 Python */
+    private Integer novelSyncProviderTimeoutSeconds = 300;
     /** SSE 连接最长存活时间(ms) */
     private Long streamTimeout = 310_000L;
     /** Agent 流式转发线程池核心线程数 */

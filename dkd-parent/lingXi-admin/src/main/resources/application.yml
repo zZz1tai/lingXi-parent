@@ -172,6 +172,10 @@ agent:
   max-iterations: 5
   connect-timeout: 5000
   read-timeout: 60000
+  # 小说同步端点（梗概/大纲/节奏分析）直连 LLM 一次性产出完整结果：
+  # 单次 LLM 预算 5 分钟，Java 读取超时 16 分钟以覆盖 Python 侧最多 3 次 LLM 尝试
+  novel-sync-provider-timeout-seconds: 300
+  novel-sync-read-timeout: 960000
   # 单轮业务工具令牌仅短期有效，并限制最多调用次数
   tool-token-ttl-seconds: 300
   tool-max-calls-per-run: 5
