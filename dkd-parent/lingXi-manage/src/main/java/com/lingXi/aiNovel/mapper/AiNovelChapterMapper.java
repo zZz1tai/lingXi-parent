@@ -21,6 +21,14 @@ public interface AiNovelChapterMapper
     /** 更新章节。 */
     int updateAiNovelChapter(AiNovelChapter chapter);
 
+    /** 正文哈希匹配时原子更新本章事实摘要。 */
+    int updateChapterBriefIfContentHashMatches(
+            @Param("workId") Long workId,
+            @Param("chapterId") Long chapterId,
+            @Param("expectedContentHash") String expectedContentHash,
+            @Param("chapterBrief") String chapterBrief,
+            @Param("updateBy") String updateBy);
+
     /** 删除章节。 */
     int deleteAiNovelChapterByChapterId(Long chapterId);
 

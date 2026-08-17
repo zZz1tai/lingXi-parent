@@ -57,5 +57,9 @@ lingXi-manage/src/test/**
 !lingXi-manage/src/test/java/com/
 !lingXi-manage/src/test/java/com/lingXi/
 !lingXi-manage/src/test/java/com/lingXi/aiNovel/
+!lingXi-manage/src/test/java/com/lingXi/aiNovel/service/
+!lingXi-manage/src/test/java/com/lingXi/aiNovel/service/AiNovelChapterServiceImplTest.java
+!lingXi-manage/src/test/java/com/lingXi/aiNovel/service/AiNovelContextSyncServiceImplTest.java
 !lingXi-manage/src/test/java/com/lingXi/aiNovel/util/
+!lingXi-manage/src/test/java/com/lingXi/aiNovel/util/NovelStorySummaryBuilderTest.java
 !lingXi-manage/src/test/java/com/lingXi/aiNovel/util/NovelWordCounterTest.java

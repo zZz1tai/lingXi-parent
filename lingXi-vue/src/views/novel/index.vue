@@ -71,7 +71,7 @@
               class="nk-btn"
               type="button"
               :disabled="!currentChapter || !manuscript.trim() || contextSyncApplying"
-              :title="contextSyncError || '分析已保存章节中的设定与伏笔变化，确认后再写回'"
+              :title="contextSyncError || '刷新本章事实摘要，并分析设定与伏笔变化供确认'"
               @click="handleContextSyncClick"
             >
               <el-icon :class="{ 'is-loading': contextSyncLoading }">
@@ -1443,8 +1443,11 @@ async function runContextAnalysis({ force = false, quiet = false, snapshot = nul
   try {
     const response = await analyzeNovelContext(target.workId, target.chapterId)
     const data = response?.data || response
-    if (!data?.contentHash || !Array.isArray(data?.changes)) {
+    if (!data?.contentHash || !data?.chapterBrief?.trim() || !Array.isArray(data?.changes)) {
       throw new Error('AI 返回了无效的资料建议')
+    }
+    if (data.chapterBriefSaved === false) {
+      throw new Error('分析期间正文已变化，本次摘要未保存，稍后将按最新正文重新分析')
     }
     if (syncKey) {
       analyzedContextHashes[syncKey] = browserHash
@@ -1455,6 +1458,10 @@ async function runContextAnalysis({ force = false, quiet = false, snapshot = nul
       && currentChapter.value?.chapterId === target.chapterId
       && manuscript.value === target.content
     if (!stillCurrent) return
+
+    currentChapter.value.chapterBrief = data.chapterBrief.trim()
+    const chapterInList = chapters.value.find(item => item.chapterId === target.chapterId)
+    if (chapterInList) chapterInList.chapterBrief = data.chapterBrief.trim()
 
     const suggestions = normalizeContextChanges(data.changes)
     if (!suggestions.length) {
@@ -1567,13 +1574,16 @@ async function saveCurrent({ scheduleAnalysis = true } = {}) {
       await saveNovelManuscript(work.workId, { content: manuscript.value })
     } else if (currentChapter.value) {
       const wordCount = currentChapterWordCount.value
+      const savedContent = manuscript.value
+      const contentChanged = savedContent !== currentChapter.value.content
       await updateNovelChapter(work.workId, {
         chapterId: currentChapter.value.chapterId,
-        content: manuscript.value,
+        content: savedContent,
         wordCount
       })
-      currentChapter.value.content = manuscript.value
+      currentChapter.value.content = savedContent
       currentChapter.value.wordCount = wordCount
+      if (contentChanged) currentChapter.value.chapterBrief = ''
     }
     lastSavedContent.value = manuscript.value
     syncSelectedWorkWordCount()

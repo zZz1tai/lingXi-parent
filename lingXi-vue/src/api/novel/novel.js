@@ -154,7 +154,7 @@ export function sortNovelChapter(workId, chapterIds) {
   })
 }
 
-/** 分析已保存章节产生的设定与伏笔候选变化；不会直接写库。 */
+/** 生成并保存本章事实摘要，同时返回待人工确认的设定与伏笔候选变化。 */
 export function analyzeNovelContext(workId, chapterId) {
   return request({
     url: '/novel/work/' + workId + '/context/analyze',

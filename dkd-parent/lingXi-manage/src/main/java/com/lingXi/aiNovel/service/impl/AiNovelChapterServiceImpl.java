@@ -1,6 +1,7 @@
 package com.lingXi.aiNovel.service.impl;
 
 import java.util.List;
+import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.lingXi.common.exception.ServiceException;
@@ -80,6 +81,8 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
     public int updateAiNovelChapter(Long workId, AiNovelChapter chapter)
     {
         AiNovelChapter existing = selectAiNovelChapterByChapterId(workId, chapter.getChapterId());
+        boolean contentChanged = chapter.getContent() != null
+                && !Objects.equals(existing.getContent(), chapter.getContent());
         if (chapter.getChapterTitle() != null)
         {
             existing.setChapterTitle(chapter.getChapterTitle());
@@ -87,6 +90,11 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
         if (chapter.getChapterBrief() != null)
         {
             existing.setChapterBrief(chapter.getChapterBrief());
+        }
+        else if (contentChanged)
+        {
+            // 本章摘要描述的是已发生事实；正文改变后必须先失效，避免旧剧情进入续写上下文。
+            existing.setChapterBrief("");
         }
         if (chapter.getContent() != null)
         {
@@ -100,6 +108,22 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
         existing.setUpdateBy(SecurityUtils.getUsername());
         existing.setUpdateTime(DateUtils.getNowDate());
         return chapterMapper.updateAiNovelChapter(existing);
+    }
+
+    /** 由资料分析使用的条件写入；正文变化或章节删除后更新自然失败。 */
+    @Override
+    public int updateChapterBriefIfContentHashMatches(
+            Long workId, Long chapterId, String expectedContentHash, String chapterBrief)
+    {
+        workService.checkWorkOwner(workId);
+        if (chapterId == null || StringUtils.isBlank(chapterBrief)
+                || expectedContentHash == null || expectedContentHash.length() != 64)
+        {
+            throw new ServiceException("章节摘要或正文版本无效");
+        }
+        return chapterMapper.updateChapterBriefIfContentHashMatches(
+                workId, chapterId, expectedContentHash, chapterBrief,
+                SecurityUtils.getUsername());
     }
 
     /** 删除章节。 */

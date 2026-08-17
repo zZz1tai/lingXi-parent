@@ -20,6 +20,10 @@ public interface IAiNovelChapterService
     /** 更新章节。 */
     int updateAiNovelChapter(Long workId, AiNovelChapter chapter);
 
+    /** 仅在正文哈希仍匹配时更新本章事实摘要，防止过期分析覆盖新正文。 */
+    int updateChapterBriefIfContentHashMatches(
+            Long workId, Long chapterId, String expectedContentHash, String chapterBrief);
+
     /** 删除章节。 */
     int deleteAiNovelChapter(Long workId, Long chapterId);
 

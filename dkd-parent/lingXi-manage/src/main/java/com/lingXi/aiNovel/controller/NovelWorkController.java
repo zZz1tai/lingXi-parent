@@ -184,7 +184,7 @@ public class NovelWorkController extends BaseController
 
     // ── 章节资料同步（AI建议 → 人工确认 → 事务写回） ──
 
-    /** 分析已保存章节产生的设定与伏笔变化；本接口不写业务库。 */
+    /** 生成并保存本章事实摘要，同时返回待人工确认的设定与伏笔变化。 */
     @Operation(summary = "AI 分析章节设定与伏笔变化")
     @PreAuthorize("@ss.hasPermi('novel:work:edit')")
     @Log(title = "AI小说资料分析", businessType = BusinessType.OTHER)

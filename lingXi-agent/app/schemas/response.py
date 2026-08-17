@@ -198,8 +198,16 @@ class NovelContextChange(BaseModel):
 
 
 class NovelContextAnalyzeData(BaseModel):
-    """章节资料同步候选清单。"""
+    """章节事实摘要与资料同步候选清单。"""
 
+    model_config = ConfigDict(populate_by_name=True)
+
+    chapter_brief: str = Field(
+        ...,
+        min_length=20,
+        max_length=500,
+        alias="chapterBrief",
+    )
     changes: list[NovelContextChange] = Field(default_factory=list, max_length=40)
 
 

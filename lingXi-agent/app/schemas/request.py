@@ -378,11 +378,18 @@ class NovelWorkContext(StrictRequestModel):
         max_length=4_000,
         validation_alias=AliasChoices("chapter_synopsis", "chapterSynopsis"),
     )
+    story_summary: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=8_000,
+        description="已写前文章节的事实摘要，用于保持长期剧情连续",
+        validation_alias=AliasChoices("story_summary", "storySummary"),
+    )
     manuscript_tail: str | None = Field(
         default=None,
         min_length=1,
         max_length=8_000,
-        description="当前章节正文末尾片段，用于无缝续写",
+        description="当前正文末尾少量片段，仅用于句段衔接",
         validation_alias=AliasChoices("manuscript_tail", "manuscriptTail"),
     )
     settings: list[NovelSettingItem] = Field(

@@ -37,7 +37,10 @@ public class NovelWorkContextDTO {
     /** 本章梗概 */
     private String chapterSynopsis;
 
-    /** 当前正文末尾片段，用于无缝续写 */
+    /** 已写前文章节的事实摘要，按时间顺序组织 */
+    private String storySummary;
+
+    /** 当前正文末尾少量片段，仅用于句段衔接 */
     private String manuscriptTail;
 
     /** 设定卡列表 */

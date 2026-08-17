@@ -34,6 +34,7 @@ import com.lingXi.aiNovel.service.IAiNovelWorkService;
 import com.lingXi.aiNovel.util.NovelChapterContinuationSelector;
 import com.lingXi.aiNovel.util.NovelWordCounter;
 import com.lingXi.aiNovel.util.NovelOutlineContextSelector;
+import com.lingXi.aiNovel.util.NovelStorySummaryBuilder;
 
 /**
  * AI 小说作品服务实现类。
@@ -46,8 +47,10 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
     private static final int CONTEXT_SETTING_LIMIT = 40;
     /** 注入智能体的未解伏笔数量上限（与 Python NovelWorkContext 契约一致）。 */
     private static final int CONTEXT_FORESHADOW_LIMIT = 40;
-    /** 注入智能体的正文末尾片段长度上限（字符）。 */
-    private static final int CONTEXT_MANUSCRIPT_TAIL_CHARS = 3_000;
+    /** 注入智能体的前文故事摘要长度上限（字符）。 */
+    private static final int CONTEXT_STORY_SUMMARY_CHARS = 6_000;
+    /** 注入智能体的正文末尾片段长度上限（字符），只用于句段衔接。 */
+    private static final int CONTEXT_MANUSCRIPT_TAIL_CHARS = 800;
     /** 节奏分析正文长度上限（字符，与 Python MAX_NOVEL_PACING_CONTENT_CHARS 一致）。 */
     private static final int PACING_CONTENT_MAX_CHARS = 100_000;
     /** 单条设定卡内容长度上限（与 Python 契约一致）。 */
@@ -234,15 +237,18 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         }
         if (chapter != null)
         {
+            List<AiNovelChapter> workChapters =
+                    chapterMapper.selectAiNovelChapterListByWorkId(workId);
             context.setChapterNo(chapter.getChapterNo());
             context.setChapterTitle(chapter.getChapterTitle());
             context.setChapterSynopsis(chapter.getChapterBrief());
+            context.setStorySummary(NovelStorySummaryBuilder.build(
+                    workChapters, chapter, CONTEXT_STORY_SUMMARY_CHARS));
             String continuationSource = chapter.getContent();
             if (StringUtils.isBlank(continuationSource))
             {
                 continuationSource = NovelChapterContinuationSelector.selectPreviousContent(
-                        chapter,
-                        chapterMapper.selectAiNovelChapterListByWorkId(workId));
+                        chapter, workChapters);
             }
             context.setManuscriptTail(manuscriptTail(continuationSource));
         }
@@ -312,7 +318,7 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         return sb.toString();
     }
 
-    /** 截取正文末尾片段，用于无缝续写。 */
+    /** 截取少量正文末尾片段，只用于句段与语气衔接。 */
     private static String manuscriptTail(String content)
     {
         if (StringUtils.isBlank(content))

@@ -1045,13 +1045,13 @@ def _validate_context_changes_payload(
 @router.post(
     "/context/analyze",
     response_model=NovelContextAnalyzeResponse,
-    summary="Analyze chapter changes to settings and foreshadows",
+    summary="Summarize a chapter and analyze context changes",
 )
 async def novel_context_analyze(
     request: NovelContextAnalyzeRequest,
     request_id: str = Depends(get_request_id),
 ) -> NovelContextAnalyzeResponse:
-    """分析章节产生的长期资料变化，只返回待人工确认的 ADD/UPDATE 清单。"""
+    """生成章节事实摘要，并返回待人工确认的长期资料 ADD/UPDATE 清单。"""
 
     try:
         llm = create_llm(
@@ -1082,6 +1082,10 @@ async def novel_context_analyze(
             raise RuntimeError("model returned an empty context analysis")
         parsed = JsonOutputParser().parse(raw_text)
         changes = _validate_context_changes_payload(parsed, request)
+        analysis_data = NovelContextAnalyzeData(
+            chapter_brief=parsed.get("chapterBrief"),
+            changes=changes,
+        )
     except AgentError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -1102,7 +1106,7 @@ async def novel_context_analyze(
     return NovelContextAnalyzeResponse(
         success=True,
         message="analyzed",
-        data=NovelContextAnalyzeData(changes=changes),
+        data=analysis_data,
     )
 
 

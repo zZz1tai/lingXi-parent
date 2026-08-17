@@ -34,7 +34,7 @@ import com.lingXi.common.exception.ServiceException;
 import com.lingXi.common.utils.StringUtils;
 
 /**
- * 章节资料同步闭环：AI 只分析候选清单，用户确认后 Java 事务写回。
+ * 章节连续性闭环：自动保存本章事实摘要；设定/伏笔只生成候选，用户确认后事务写回。
  */
 @Service
 public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
@@ -42,6 +42,7 @@ public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
     private static final int MAX_CONTEXT_ITEMS = 100;
     private static final int MAX_CHANGES = 40;
     private static final int MAX_CHAPTER_CONTENT_CHARS = 100_000;
+    private static final int MAX_CHAPTER_BRIEF_CHARS = 500;
     private static final Set<String> OPERATIONS = Set.of("ADD", "UPDATE");
     private static final Set<String> RESOURCE_TYPES = Set.of("setting", "foreshadow");
     private static final Set<String> SETTING_TYPES = Set.of(
@@ -69,7 +70,7 @@ public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
         this.agentClient = agentClient;
     }
 
-    /** 组装可信快照并调用 Agent；本方法不写业务库。 */
+    /** 组装可信快照并调用 Agent；自动保存章节事实摘要，资料候选仍须人工确认。 */
     @Override
     public JsonNode analyze(Long workId, NovelContextAnalyzeRequestDTO request)
     {
@@ -104,10 +105,20 @@ public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
         {
             throw new ServiceException("AI 返回了无效的资料变更清单");
         }
+        String sourceHash = contentHash(chapter.getContent());
         ObjectNode result = (ObjectNode) data.deepCopy();
+        String chapterBrief = result.path("chapterBrief").asText().trim();
+        if (StringUtils.isBlank(chapterBrief) || chapterBrief.length() > MAX_CHAPTER_BRIEF_CHARS)
+        {
+            throw new ServiceException("AI 返回了无效的章节摘要");
+        }
+        int briefSaved = chapterService.updateChapterBriefIfContentHashMatches(
+                workId, chapter.getChapterId(), sourceHash, chapterBrief);
+        result.put("chapterBrief", chapterBrief);
+        result.put("chapterBriefSaved", briefSaved > 0);
         result.put("workId", workId);
         result.put("chapterId", chapter.getChapterId());
-        result.put("contentHash", contentHash(chapter.getContent()));
+        result.put("contentHash", sourceHash);
         return result;
     }
 

@@ -56,6 +56,15 @@
         where chapter_id = #{chapterId} and del_flag = '0'
     </update>
 
+    <update id="updateChapterBriefIfContentHashMatches">
+        update ai_novel_chapter
+        set chapter_brief = #{chapterBrief}, update_by = #{updateBy}, update_time = now()
+        where chapter_id = #{chapterId}
+          and work_id = #{workId}
+          and del_flag = '0'
+          and sha2(coalesce(content, ''), 256) = #{expectedContentHash}
+    </update>
+
     <update id="updateChapterNo">
         update ai_novel_chapter
         set chapter_no = #{chapterNo}, update_time = now()

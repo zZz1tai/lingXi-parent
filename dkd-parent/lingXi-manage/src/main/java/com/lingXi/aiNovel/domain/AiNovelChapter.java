@@ -24,7 +24,7 @@ public class AiNovelChapter extends BaseEntity
     /** 章节标题 */
     private String chapterTitle;
 
-    /** 本章梗概 */
+    /** 本章已发生剧情的事实摘要 */
     private String chapterBrief;
 
     /** 章节正文 */
