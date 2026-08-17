@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.common.utils.DateUtils;
 import com.lingXi.common.utils.SecurityUtils;
@@ -11,6 +12,7 @@ import com.lingXi.common.utils.StringUtils;
 import com.lingXi.aiNovel.domain.AiNovelChapter;
 import com.lingXi.aiNovel.domain.AiNovelWork;
 import com.lingXi.aiNovel.mapper.AiNovelChapterMapper;
+import com.lingXi.aiNovel.mapper.AiNovelContextTaskMapper;
 import com.lingXi.aiNovel.service.IAiNovelChapterService;
 import com.lingXi.aiNovel.service.IAiNovelWorkService;
 import com.lingXi.aiNovel.util.NovelWordCounter;
@@ -26,6 +28,9 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
 
     @Autowired
     private IAiNovelWorkService workService;
+
+    @Autowired
+    private AiNovelContextTaskMapper contextTaskMapper;
 
     /** 查询作品的章节列表。 */
     @Override
@@ -78,6 +83,7 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
 
     /** 更新章节。 */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public int updateAiNovelChapter(Long workId, AiNovelChapter chapter)
     {
         AiNovelChapter existing = selectAiNovelChapterByChapterId(workId, chapter.getChapterId());
@@ -107,7 +113,13 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
         }
         existing.setUpdateBy(SecurityUtils.getUsername());
         existing.setUpdateTime(DateUtils.getNowDate());
-        return chapterMapper.updateAiNovelChapter(existing);
+        int affected = chapterMapper.updateAiNovelChapter(existing);
+        if (affected == 1 && contentChanged)
+        {
+            contextTaskMapper.obsoleteActiveTasksByChapterId(
+                    existing.getChapterId(), "章节正文已变化，任务已过期");
+        }
+        return affected;
     }
 
     /** 由资料分析使用的条件写入；正文变化或章节删除后更新自然失败。 */
@@ -128,9 +140,11 @@ public class AiNovelChapterServiceImpl implements IAiNovelChapterService
 
     /** 删除章节。 */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public int deleteAiNovelChapter(Long workId, Long chapterId)
     {
         selectAiNovelChapterByChapterId(workId, chapterId);
+        contextTaskMapper.obsoleteActiveTasksByChapterId(chapterId, "章节已删除，任务已取消");
         return chapterMapper.deleteAiNovelChapterByChapterId(chapterId);
     }
 

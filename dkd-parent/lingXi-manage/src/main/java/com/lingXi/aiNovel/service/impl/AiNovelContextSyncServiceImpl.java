@@ -11,12 +11,15 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 import com.lingXi.ai.client.AgentClient;
 import com.lingXi.aiNovel.domain.AiNovelChapter;
+import com.lingXi.aiNovel.domain.AiNovelContextTask;
 import com.lingXi.aiNovel.domain.AiNovelForeshadow;
 import com.lingXi.aiNovel.domain.AiNovelSetting;
 import com.lingXi.aiNovel.domain.AiNovelWork;
@@ -25,12 +28,19 @@ import com.lingXi.aiNovel.domain.dto.NovelContextAnalyzeRequestDTO;
 import com.lingXi.aiNovel.domain.dto.NovelContextApplyRequestDTO;
 import com.lingXi.aiNovel.domain.dto.NovelContextApplyResultDTO;
 import com.lingXi.aiNovel.domain.dto.NovelContextChangeDTO;
+import com.lingXi.aiNovel.domain.dto.NovelContextTaskVO;
+import com.lingXi.aiNovel.mapper.AiNovelChapterMapper;
+import com.lingXi.aiNovel.mapper.AiNovelContextTaskMapper;
+import com.lingXi.aiNovel.mapper.AiNovelForeshadowMapper;
+import com.lingXi.aiNovel.mapper.AiNovelSettingMapper;
+import com.lingXi.aiNovel.mapper.AiNovelWorkMapper;
 import com.lingXi.aiNovel.service.IAiNovelChapterService;
 import com.lingXi.aiNovel.service.IAiNovelContextSyncService;
 import com.lingXi.aiNovel.service.IAiNovelForeshadowService;
 import com.lingXi.aiNovel.service.IAiNovelSettingService;
 import com.lingXi.aiNovel.service.IAiNovelWorkService;
 import com.lingXi.common.exception.ServiceException;
+import com.lingXi.common.utils.SecurityUtils;
 import com.lingXi.common.utils.StringUtils;
 
 /**
@@ -56,6 +66,13 @@ public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
     private final IAiNovelForeshadowService foreshadowService;
     private final AgentClient agentClient;
 
+    @Autowired private AiNovelContextTaskMapper contextTaskMapper;
+    @Autowired private AiNovelWorkMapper workMapper;
+    @Autowired private AiNovelChapterMapper chapterMapper;
+    @Autowired private AiNovelSettingMapper settingMapper;
+    @Autowired private AiNovelForeshadowMapper foreshadowMapper;
+    @Autowired private ObjectMapper objectMapper;
+
     public AiNovelContextSyncServiceImpl(
             IAiNovelWorkService workService,
             IAiNovelChapterService chapterService,
@@ -70,9 +87,10 @@ public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
         this.agentClient = agentClient;
     }
 
-    /** 组装可信快照并调用 Agent；自动保存章节事实摘要，资料候选仍须人工确认。 */
+    /** 校验当前用户与正文快照后持久化任务；HTTP 请求不等待模型。 */
     @Override
-    public JsonNode analyze(Long workId, NovelContextAnalyzeRequestDTO request)
+    @Transactional(rollbackFor = Exception.class)
+    public NovelContextTaskVO submitAnalysis(Long workId, NovelContextAnalyzeRequestDTO request)
     {
         if (request == null || request.getChapterId() == null)
         {
@@ -90,35 +108,104 @@ public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
             throw new ServiceException("章节正文过长，暂无法整理资料");
         }
 
-        List<AiNovelSetting> settings = settingService.selectAiNovelSettingList(workId, null);
+        String sourceHash = contentHash(chapter.getContent());
+        AiNovelContextTask task = new AiNovelContextTask();
+        task.setWorkId(workId);
+        task.setChapterId(chapter.getChapterId());
+        task.setOwnerUserId(work.getOwnerUserId());
+        task.setContentHash(sourceHash);
+        task.setCreateBy(SecurityUtils.getUsername());
+        contextTaskMapper.insertIgnore(task);
+
+        AiNovelContextTask persisted = contextTaskMapper.selectByChapterAndHash(
+                chapter.getChapterId(), sourceHash);
+        if (persisted == null)
+        {
+            throw new ServiceException("资料同步任务创建失败");
+        }
+        boolean force = Boolean.TRUE.equals(request.getForce());
+        if (force || AiNovelContextTask.STATUS_FAILED.equals(persisted.getStatus())
+                || AiNovelContextTask.STATUS_OBSOLETE.equals(persisted.getStatus()))
+        {
+            contextTaskMapper.resetTask(persisted.getTaskId());
+            persisted = contextTaskMapper.selectByTaskId(persisted.getTaskId());
+        }
+        return toTaskVO(persisted);
+    }
+
+    @Override
+    public NovelContextTaskVO getAnalysisTask(Long workId, Long taskId)
+    {
+        workService.checkWorkOwner(workId);
+        AiNovelContextTask task = contextTaskMapper.selectByTaskId(taskId);
+        if (task == null || !workId.equals(task.getWorkId()))
+        {
+            throw new ServiceException("资料同步任务不存在或无权访问");
+        }
+        return toTaskVO(task);
+    }
+
+    @Override
+    public NovelContextTaskVO getLatestAnalysisTask(Long workId, Long chapterId)
+    {
+        workService.checkWorkOwner(workId);
+        AiNovelChapter chapter = chapterService.selectAiNovelChapterByChapterId(workId, chapterId);
+        AiNovelContextTask task = contextTaskMapper.selectLatestByChapterId(chapterId);
+        if (task == null || !workId.equals(task.getWorkId())
+                || !task.getContentHash().equalsIgnoreCase(contentHash(chapter.getContent())))
+        {
+            return null;
+        }
+        return toTaskVO(task);
+    }
+
+    /** Worker 读取当前数据库快照执行分析，不依赖 Web 线程登录态。 */
+    @Override
+    public JsonNode executeAnalysisTask(AiNovelContextTask task)
+    {
+        if (task == null)
+        {
+            return null;
+        }
+        AiNovelWork work = workMapper.selectAiNovelWorkByWorkId(task.getWorkId());
+        AiNovelChapter chapter = chapterMapper.selectAiNovelChapterByChapterId(task.getChapterId());
+        if (work == null || chapter == null || !task.getWorkId().equals(chapter.getWorkId())
+                || !task.getContentHash().equalsIgnoreCase(contentHash(chapter.getContent())))
+        {
+            return null;
+        }
+
+        List<AiNovelSetting> settings = settingMapper.selectAiNovelSettingList(task.getWorkId(), null);
         List<AiNovelForeshadow> foreshadows =
-                foreshadowService.selectAiNovelForeshadowList(workId, null);
+                foreshadowMapper.selectAiNovelForeshadowList(task.getWorkId(), null);
         if (settings.size() > MAX_CONTEXT_ITEMS || foreshadows.size() > MAX_CONTEXT_ITEMS)
         {
             throw new ServiceException("作品资料超过单次分析上限，请先人工归并重复条目");
         }
-
-        NovelContextAgentRequestDTO agentRequest = buildAgentRequest(
-                work, chapter, settings, foreshadows);
-        JsonNode data = agentClient.analyzeNovelContext(agentRequest);
+        JsonNode data = agentClient.analyzeNovelContext(
+                buildAgentRequest(work, chapter, settings, foreshadows));
         if (!data.isObject())
         {
             throw new ServiceException("AI 返回了无效的资料变更清单");
         }
-        String sourceHash = contentHash(chapter.getContent());
         ObjectNode result = (ObjectNode) data.deepCopy();
         String chapterBrief = result.path("chapterBrief").asText().trim();
         if (StringUtils.isBlank(chapterBrief) || chapterBrief.length() > MAX_CHAPTER_BRIEF_CHARS)
         {
             throw new ServiceException("AI 返回了无效的章节摘要");
         }
-        int briefSaved = chapterService.updateChapterBriefIfContentHashMatches(
-                workId, chapter.getChapterId(), sourceHash, chapterBrief);
+        int briefSaved = chapterMapper.updateChapterBriefIfContentHashMatches(
+                task.getWorkId(), task.getChapterId(), task.getContentHash(), chapterBrief,
+                StringUtils.isBlank(task.getCreateBy()) ? "async-worker" : task.getCreateBy());
+        if (briefSaved < 1)
+        {
+            return null;
+        }
         result.put("chapterBrief", chapterBrief);
-        result.put("chapterBriefSaved", briefSaved > 0);
-        result.put("workId", workId);
-        result.put("chapterId", chapter.getChapterId());
-        result.put("contentHash", sourceHash);
+        result.put("chapterBriefSaved", true);
+        result.put("workId", task.getWorkId());
+        result.put("chapterId", task.getChapterId());
+        result.put("contentHash", task.getContentHash());
         return result;
     }
 
@@ -390,6 +477,38 @@ public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
     private static String normalizedTitle(String value)
     {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private NovelContextTaskVO toTaskVO(AiNovelContextTask task)
+    {
+        if (task == null)
+        {
+            return null;
+        }
+        NovelContextTaskVO result = new NovelContextTaskVO();
+        result.setTaskId(task.getTaskId());
+        result.setWorkId(task.getWorkId());
+        result.setChapterId(task.getChapterId());
+        result.setContentHash(task.getContentHash());
+        result.setStatus(task.getStatus());
+        result.setAttemptCount(task.getAttemptCount());
+        result.setErrorMessage(task.getErrorMessage());
+        result.setCreateTime(task.getCreateTime());
+        result.setUpdateTime(task.getUpdateTime());
+        result.setStartedTime(task.getStartedTime());
+        result.setFinishedTime(task.getFinishedTime());
+        if (StringUtils.isNotBlank(task.getResultJson()))
+        {
+            try
+            {
+                result.setResult(objectMapper.readTree(task.getResultJson()));
+            }
+            catch (Exception exception)
+            {
+                throw new ServiceException("资料同步任务结果损坏");
+            }
+        }
+        return result;
     }
 
     private static String contentHash(String content)

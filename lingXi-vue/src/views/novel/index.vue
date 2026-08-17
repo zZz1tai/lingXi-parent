@@ -577,11 +577,13 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import useUserStore from '@/store/modules/user'
 import {
-  addNovelChapter, addNovelForeshadow, addNovelSetting, addNovelWork, analyzeNovelContext, analyzeNovelPacing,
+  addNovelChapter, addNovelForeshadow, addNovelSetting, addNovelWork, analyzeNovelPacing,
   applyNovelContextChanges,
   delNovelChapter, delNovelForeshadow, delNovelSetting,
-  delNovelWork, exportNovelWorkText, getNovelWork, listNovelChapter, listNovelForeshadow, listNovelSetting,
+  delNovelWork, exportNovelWorkText, getLatestNovelContextTask, getNovelContextTask, getNovelWork,
+  listNovelChapter, listNovelForeshadow, listNovelSetting,
   listNovelWork, saveNovelManuscript, streamNovelSynopsis,
+  submitNovelContextTask,
   updateNovelChapter, updateNovelForeshadow, updateNovelSetting, updateNovelWork
 } from '@/api/novel/novel'
 import WorksRail from './components/WorksRail.vue'
@@ -1068,6 +1070,7 @@ async function selectChapter(chapter) {
   manuscript.value = chapter.content || ''
   lastSavedContent.value = manuscript.value
   saveState.value = 'saved'
+  await recoverLatestContextTask(chapter)
 }
 
 function handleInsert(text) {
@@ -1379,6 +1382,7 @@ const analyzedContextHashes = reactive(
 const contextSyncLoading = ref(false)
 const contextSyncApplying = ref(false)
 const contextSyncError = ref('')
+const contextTaskStatus = ref('')
 const contextSyncDialog = reactive({
   open: false,
   workId: null,
@@ -1389,7 +1393,8 @@ const contextSyncDialog = reactive({
   suggestions: []
 })
 const contextSyncStatusText = computed(() => {
-  if (contextSyncLoading.value) return 'AI 正在整理资料…'
+  if (contextTaskStatus.value === 'PENDING') return '资料整理排队中…'
+  if (contextTaskStatus.value === 'RUNNING') return 'AI 后台整理中…'
   if (contextSyncDialog.suggestions.length) {
     return contextSyncDialog.suggestions.length + ' 条资料建议'
   }
@@ -1397,6 +1402,8 @@ const contextSyncStatusText = computed(() => {
   return '资料同步'
 })
 let contextAnalysisTimer = null
+let contextPollTimer = null
+let contextPollGeneration = 0
 
 function persistContextSyncHashes() {
   try {
@@ -1441,54 +1448,109 @@ async function runContextAnalysis({ force = false, quiet = false, snapshot = nul
   contextSyncLoading.value = true
   contextSyncError.value = ''
   try {
-    const response = await analyzeNovelContext(target.workId, target.chapterId)
-    const data = response?.data || response
-    if (!data?.contentHash || !data?.chapterBrief?.trim() || !Array.isArray(data?.changes)) {
-      throw new Error('AI 返回了无效的资料建议')
-    }
-    if (data.chapterBriefSaved === false) {
-      throw new Error('分析期间正文已变化，本次摘要未保存，稍后将按最新正文重新分析')
-    }
-    if (syncKey) {
-      analyzedContextHashes[syncKey] = browserHash
-      persistContextSyncHashes()
-    }
-
-    const stillCurrent = selectedWork.value?.workId === target.workId
-      && currentChapter.value?.chapterId === target.chapterId
-      && manuscript.value === target.content
-    if (!stillCurrent) return
-
-    currentChapter.value.chapterBrief = data.chapterBrief.trim()
-    const chapterInList = chapters.value.find(item => item.chapterId === target.chapterId)
-    if (chapterInList) chapterInList.chapterBrief = data.chapterBrief.trim()
-
-    const suggestions = normalizeContextChanges(data.changes)
-    if (!suggestions.length) {
-      contextSyncDialog.suggestions = []
-      if (!quiet) ElMessage.info('本章没有发现需要写入设定集或伏笔的新变化')
-      return
-    }
-    Object.assign(contextSyncDialog, {
-      open: true,
-      workId: target.workId,
-      chapterId: target.chapterId,
-      chapterTitle: target.chapterTitle,
-      contentHash: data.contentHash,
-      contentFingerprint: browserHash,
-      suggestions
-    })
+    const response = await submitNovelContextTask(target.workId, target.chapterId, force)
+    const task = response?.data || response
+    if (!task?.taskId) throw new Error('资料同步任务创建失败')
+    await pollContextTask(task, target, quiet, syncKey, browserHash)
   } catch (error) {
     contextSyncError.value = error?.message || 'AI 资料同步分析失败'
     if (!quiet) ElMessage.error(contextSyncError.value)
     else console.warn('章节已保存，但 AI 资料同步分析失败', error)
   } finally {
     contextSyncLoading.value = false
+    contextTaskStatus.value = ''
     const latest = currentContextSnapshot()
     if (latest && (latest.workId !== target.workId
       || latest.chapterId !== target.chapterId
       || latest.content !== target.content)) {
       scheduleContextAnalysis(latest)
+    }
+  }
+}
+
+async function pollContextTask(initialTask, target, quiet, syncKey, browserHash) {
+  const generation = ++contextPollGeneration
+  clearTimeout(contextPollTimer)
+  let task = initialTask
+  while (generation === contextPollGeneration) {
+    contextTaskStatus.value = task.status || ''
+    if (task.status === 'SUCCEEDED') {
+      handleContextTaskResult(task.result, target, quiet, syncKey, browserHash)
+      return
+    }
+    if (task.status === 'FAILED') throw new Error(task.errorMessage || 'AI 资料同步分析失败')
+    if (task.status === 'OBSOLETE') {
+      const latest = currentContextSnapshot()
+      if (latest && latest.workId === target.workId && latest.chapterId === target.chapterId
+        && latest.content !== target.content) scheduleContextAnalysis(latest)
+      return
+    }
+    await new Promise(resolve => { contextPollTimer = setTimeout(resolve, 1500) })
+    if (generation !== contextPollGeneration) return
+    const response = await getNovelContextTask(target.workId, task.taskId)
+    task = response?.data || response
+  }
+}
+
+function handleContextTaskResult(data, target, quiet, syncKey, browserHash) {
+  if (!data?.contentHash || !data?.chapterBrief?.trim() || !Array.isArray(data?.changes)) {
+    throw new Error('AI 返回了无效的资料建议')
+  }
+  if (syncKey) {
+    analyzedContextHashes[syncKey] = browserHash
+    persistContextSyncHashes()
+  }
+  const stillCurrent = selectedWork.value?.workId === target.workId
+    && currentChapter.value?.chapterId === target.chapterId
+    && manuscript.value === target.content
+  if (!stillCurrent) return
+  currentChapter.value.chapterBrief = data.chapterBrief.trim()
+  const chapterInList = chapters.value.find(item => item.chapterId === target.chapterId)
+  if (chapterInList) chapterInList.chapterBrief = data.chapterBrief.trim()
+  const suggestions = normalizeContextChanges(data.changes)
+  if (!suggestions.length) {
+    contextSyncDialog.suggestions = []
+    if (!quiet) ElMessage.info('本章没有发现需要写入设定集或伏笔的新变化')
+    return
+  }
+  Object.assign(contextSyncDialog, {
+    open: true,
+    workId: target.workId,
+    chapterId: target.chapterId,
+    chapterTitle: target.chapterTitle,
+    contentHash: data.contentHash,
+    contentFingerprint: browserHash,
+    suggestions
+  })
+}
+
+async function recoverLatestContextTask(chapter) {
+  const workId = selectedWork.value?.workId
+  if (!workId || !chapter?.chapterId || !chapter.content?.trim()) return
+  const target = currentContextSnapshot()
+  if (!target) return
+  const generation = ++contextPollGeneration
+  clearTimeout(contextPollTimer)
+  try {
+    const response = await getLatestNovelContextTask(workId, chapter.chapterId)
+    if (generation !== contextPollGeneration) return
+    const task = response?.data || response
+    if (!task?.taskId) return
+    const syncKey = buildContextSyncKey({ userId: userStore.id, workId, chapterId: chapter.chapterId })
+    const browserHash = fingerprintNovelContent(target.content)
+    if (task.status === 'SUCCEEDED') {
+      handleContextTaskResult(task.result, target, true, syncKey, browserHash)
+    } else if (task.status === 'PENDING' || task.status === 'RUNNING') {
+      contextSyncLoading.value = true
+      await pollContextTask(task, target, true, syncKey, browserHash)
+    }
+  } catch (error) {
+    console.warn('恢复资料同步任务失败', error)
+  } finally {
+    if (selectedWork.value?.workId === workId
+      && currentChapter.value?.chapterId === chapter.chapterId) {
+      contextSyncLoading.value = false
+      contextTaskStatus.value = ''
     }
   }
 }
@@ -1669,6 +1731,8 @@ watch(
 onBeforeUnmount(() => {
   clearTimeout(saveTimer)
   clearTimeout(contextAnalysisTimer)
+  clearTimeout(contextPollTimer)
+  contextPollGeneration++
   finishPanelResize()
   layoutObserver?.disconnect()
 })

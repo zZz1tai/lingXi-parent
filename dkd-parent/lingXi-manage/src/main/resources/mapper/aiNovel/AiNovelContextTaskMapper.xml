@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lingXi.aiNovel.mapper.AiNovelContextTaskMapper">
+
+    <resultMap id="AiNovelContextTaskResult" type="AiNovelContextTask">
+        <id property="taskId" column="task_id"/>
+        <result property="workId" column="work_id"/>
+        <result property="chapterId" column="chapter_id"/>
+        <result property="ownerUserId" column="owner_user_id"/>
+        <result property="contentHash" column="content_hash"/>
+        <result property="status" column="status"/>
+        <result property="attemptCount" column="attempt_count"/>
+        <result property="nextRunTime" column="next_run_time"/>
+        <result property="workerId" column="worker_id"/>
+        <result property="leaseUntil" column="lease_until"/>
+        <result property="resultJson" column="result_json"/>
+        <result property="errorMessage" column="error_message"/>
+        <result property="startedTime" column="started_time"/>
+        <result property="finishedTime" column="finished_time"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateTime" column="update_time"/>
+    </resultMap>
+
+    <sql id="selectTaskVo">
+        select task_id, work_id, chapter_id, owner_user_id, content_hash, status,
+               attempt_count, next_run_time, worker_id, lease_until, result_json,
+               error_message, started_time, finished_time, create_by, create_time, update_time
+        from ai_novel_context_task
+    </sql>
+
+    <select id="selectByTaskId" parameterType="Long" resultMap="AiNovelContextTaskResult">
+        <include refid="selectTaskVo"/>
+        where task_id = #{taskId}
+    </select>
+
+    <select id="selectByChapterAndHash" resultMap="AiNovelContextTaskResult">
+        <include refid="selectTaskVo"/>
+        where chapter_id = #{chapterId} and content_hash = #{contentHash}
+        limit 1
+    </select>
+
+    <select id="selectLatestByChapterId" parameterType="Long" resultMap="AiNovelContextTaskResult">
+        <include refid="selectTaskVo"/>
+        where chapter_id = #{chapterId}
+        order by task_id desc
+        limit 1
+    </select>
+
+    <insert id="insertIgnore" parameterType="AiNovelContextTask" useGeneratedKeys="true" keyProperty="taskId">
+        insert ignore into ai_novel_context_task
+        (work_id, chapter_id, owner_user_id, content_hash, status, attempt_count,
+         next_run_time, create_by, create_time, update_time)
+        values
+        (#{workId}, #{chapterId}, #{ownerUserId}, #{contentHash}, 'PENDING', 0,
+         now(), #{createBy}, now(), now())
+    </insert>
+
+    <update id="resetTask">
+        update ai_novel_context_task
+        set status = 'PENDING', attempt_count = 0, next_run_time = now(),
+            worker_id = null, lease_until = null, result_json = null,
+            error_message = null, started_time = null, finished_time = null,
+            update_time = now()
+        where task_id = #{taskId} and status in ('SUCCEEDED', 'FAILED', 'OBSOLETE')
+    </update>
+
+    <select id="selectRunnableTaskIds" resultType="long">
+        select task_id
+        from ai_novel_context_task
+        where attempt_count &lt; #{maxAttempts}
+          and ((status = 'PENDING' and next_run_time &lt;= now())
+            or (status = 'RUNNING' and lease_until &lt; now()))
+        order by task_id asc
+        limit #{limit}
+    </select>
+
+    <update id="claimTask">
+        update ai_novel_context_task
+        set status = 'RUNNING', worker_id = #{workerId},
+            lease_until = date_add(now(), interval #{leaseSeconds} second),
+            attempt_count = attempt_count + 1,
+            started_time = coalesce(started_time, now()), update_time = now()
+        where task_id = #{taskId} and attempt_count &lt; #{maxAttempts}
+          and ((status = 'PENDING' and next_run_time &lt;= now())
+            or (status = 'RUNNING' and lease_until &lt; now()))
+    </update>
+
+    <update id="markSucceeded">
+        update ai_novel_context_task
+        set status = 'SUCCEEDED', result_json = #{resultJson}, error_message = null,
+            worker_id = null, lease_until = null, finished_time = now(), update_time = now()
+        where task_id = #{taskId} and status = 'RUNNING' and worker_id = #{workerId}
+    </update>
+
+    <update id="markObsolete">
+        update ai_novel_context_task
+        set status = 'OBSOLETE', error_message = #{errorMessage}, worker_id = null,
+            lease_until = null, finished_time = now(), update_time = now()
+        where task_id = #{taskId} and status = 'RUNNING' and worker_id = #{workerId}
+    </update>
+
+    <update id="markRetry">
+        update ai_novel_context_task
+        set status = 'PENDING', next_run_time = date_add(now(), interval #{retryDelaySeconds} second),
+            error_message = #{errorMessage}, worker_id = null, lease_until = null, update_time = now()
+        where task_id = #{taskId} and status = 'RUNNING' and worker_id = #{workerId}
+    </update>
+
+    <update id="markFailed">
+        update ai_novel_context_task
+        set status = 'FAILED', error_message = #{errorMessage}, worker_id = null,
+            lease_until = null, finished_time = now(), update_time = now()
+        where task_id = #{taskId} and status = 'RUNNING' and worker_id = #{workerId}
+    </update>
+
+    <update id="markExhaustedExpiredTasks">
+        update ai_novel_context_task
+        set status = 'FAILED', error_message = #{errorMessage}, worker_id = null,
+            lease_until = null, finished_time = now(), update_time = now()
+        where status = 'RUNNING' and lease_until &lt; now() and attempt_count &gt;= #{maxAttempts}
+    </update>
+
+    <update id="obsoleteActiveTasksByChapterId">
+        update ai_novel_context_task
+        set status = 'OBSOLETE', error_message = #{errorMessage}, worker_id = null,
+            lease_until = null, finished_time = now(), update_time = now()
+        where chapter_id = #{chapterId} and status in ('PENDING', 'RUNNING')
+    </update>
+</mapper>

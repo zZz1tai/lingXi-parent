@@ -16,6 +16,7 @@ import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import com.lingXi.aiNovel.domain.AiNovelChapter;
 import com.lingXi.aiNovel.mapper.AiNovelChapterMapper;
+import com.lingXi.aiNovel.mapper.AiNovelContextTaskMapper;
 import com.lingXi.aiNovel.service.impl.AiNovelChapterServiceImpl;
 import com.lingXi.common.utils.SecurityUtils;
 
@@ -25,6 +26,7 @@ class AiNovelChapterServiceImplTest
 {
     @Mock private AiNovelChapterMapper chapterMapper;
     @Mock private IAiNovelWorkService workService;
+    @Mock private AiNovelContextTaskMapper contextTaskMapper;
     @InjectMocks private AiNovelChapterServiceImpl service;
 
     @Test
@@ -47,6 +49,8 @@ class AiNovelChapterServiceImplTest
         verify(chapterMapper).updateAiNovelChapter(captor.capture());
         assertEquals("", captor.getValue().getChapterBrief());
         assertEquals("删改后的新正文", captor.getValue().getContent());
+        verify(contextTaskMapper).obsoleteActiveTasksByChapterId(
+                eq(31L), eq("章节正文已变化，任务已过期"));
     }
 
     @Test

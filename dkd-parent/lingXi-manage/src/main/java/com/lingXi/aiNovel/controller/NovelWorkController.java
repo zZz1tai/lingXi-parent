@@ -184,8 +184,8 @@ public class NovelWorkController extends BaseController
 
     // ── 章节资料同步（AI建议 → 人工确认 → 事务写回） ──
 
-    /** 生成并保存本章事实摘要，同时返回待人工确认的设定与伏笔变化。 */
-    @Operation(summary = "AI 分析章节设定与伏笔变化")
+    /** 提交资料分析异步任务，不在 HTTP 请求中等待模型。 */
+    @Operation(summary = "提交 AI 章节资料分析任务")
     @PreAuthorize("@ss.hasPermi('novel:work:edit')")
     @Log(title = "AI小说资料分析", businessType = BusinessType.OTHER)
     @PostMapping("/{workId}/context/analyze")
@@ -193,7 +193,26 @@ public class NovelWorkController extends BaseController
             @PathVariable Long workId,
             @RequestBody NovelContextAnalyzeRequestDTO request)
     {
-        return success(contextSyncService.analyze(workId, request));
+        return success(contextSyncService.submitAnalysis(workId, request));
+    }
+
+    /** 查询指定资料分析任务，校验任务与作品归属。 */
+    @Operation(summary = "查询 AI 章节资料分析任务")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @GetMapping("/{workId}/context/task/{taskId}")
+    public AjaxResult getContextTask(@PathVariable Long workId, @PathVariable Long taskId)
+    {
+        return success(contextSyncService.getAnalysisTask(workId, taskId));
+    }
+
+    /** 查询章节最近一次资料分析任务，用于刷新页面后恢复状态。 */
+    @Operation(summary = "查询章节最近的 AI 资料分析任务")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @GetMapping("/{workId}/context/task/latest")
+    public AjaxResult getLatestContextTask(
+            @PathVariable Long workId, @RequestParam Long chapterId)
+    {
+        return success(contextSyncService.getLatestAnalysisTask(workId, chapterId));
     }
 
     /** 应用用户勾选的设定与伏笔建议；正文版本变化时拒绝应用。 */

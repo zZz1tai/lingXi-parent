@@ -1,7 +1,6 @@
 package com.lingXi.aiNovel.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -19,19 +18,24 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 import com.lingXi.ai.client.AgentClient;
 import com.lingXi.aiNovel.domain.AiNovelChapter;
 import com.lingXi.aiNovel.domain.AiNovelForeshadow;
+import com.lingXi.aiNovel.domain.AiNovelContextTask;
 import com.lingXi.aiNovel.domain.AiNovelSetting;
 import com.lingXi.aiNovel.domain.AiNovelWork;
 import com.lingXi.aiNovel.domain.dto.NovelContextAgentRequestDTO;
-import com.lingXi.aiNovel.domain.dto.NovelContextAnalyzeRequestDTO;
 import com.lingXi.aiNovel.domain.dto.NovelContextApplyRequestDTO;
 import com.lingXi.aiNovel.domain.dto.NovelContextApplyResultDTO;
 import com.lingXi.aiNovel.domain.dto.NovelContextChangeDTO;
 import com.lingXi.aiNovel.service.impl.AiNovelContextSyncServiceImpl;
+import com.lingXi.aiNovel.mapper.AiNovelChapterMapper;
+import com.lingXi.aiNovel.mapper.AiNovelForeshadowMapper;
+import com.lingXi.aiNovel.mapper.AiNovelSettingMapper;
+import com.lingXi.aiNovel.mapper.AiNovelWorkMapper;
 import com.lingXi.common.exception.ServiceException;
 
 /** 章节资料同步的归属、过期校验与人工确认写回测试。 */
@@ -43,6 +47,10 @@ class AiNovelContextSyncServiceImplTest
     @Mock private IAiNovelSettingService settingService;
     @Mock private IAiNovelForeshadowService foreshadowService;
     @Mock private AgentClient agentClient;
+    @Mock private AiNovelWorkMapper workMapper;
+    @Mock private AiNovelChapterMapper chapterMapper;
+    @Mock private AiNovelSettingMapper settingMapper;
+    @Mock private AiNovelForeshadowMapper foreshadowMapper;
 
     private AiNovelContextSyncServiceImpl service;
 
@@ -51,30 +59,31 @@ class AiNovelContextSyncServiceImplTest
     {
         service = new AiNovelContextSyncServiceImpl(
                 workService, chapterService, settingService, foreshadowService, agentClient);
+        ReflectionTestUtils.setField(service, "workMapper", workMapper);
+        ReflectionTestUtils.setField(service, "chapterMapper", chapterMapper);
+        ReflectionTestUtils.setField(service, "settingMapper", settingMapper);
+        ReflectionTestUtils.setField(service, "foreshadowMapper", foreshadowMapper);
     }
 
     @Test
-    void analyzeBuildsOwnedSnapshotAndReturnsContentHash() throws Exception
+    void executeBuildsSnapshotAndReturnsContentHash() throws Exception
     {
         AiNovelWork work = work();
         AiNovelChapter chapter = chapter("江离认出断手镯属于失踪的姐姐。");
         AiNovelSetting setting = setting(11L);
         AiNovelForeshadow foreshadow = foreshadow(22L);
-        when(workService.checkWorkOwner(7L)).thenReturn(work);
-        when(chapterService.selectAiNovelChapterByChapterId(7L, 31L)).thenReturn(chapter);
-        when(settingService.selectAiNovelSettingList(7L, null)).thenReturn(List.of(setting));
-        when(foreshadowService.selectAiNovelForeshadowList(7L, null))
-                .thenReturn(List.of(foreshadow));
+        when(workMapper.selectAiNovelWorkByWorkId(7L)).thenReturn(work);
+        when(chapterMapper.selectAiNovelChapterByChapterId(31L)).thenReturn(chapter);
+        when(settingMapper.selectAiNovelSettingList(7L, null)).thenReturn(List.of(setting));
+        when(foreshadowMapper.selectAiNovelForeshadowList(7L, null)).thenReturn(List.of(foreshadow));
         ObjectNode agentData = new ObjectMapper().createObjectNode();
         agentData.put("chapterBrief", "江离在井底认出姐姐的断手镯，确认姐姐曾到过此处，并决定继续追查她的去向；本章结束时，他掌握了新的实物线索。");
         agentData.putArray("changes");
         when(agentClient.analyzeNovelContext(any())).thenReturn(agentData);
-        when(chapterService.updateChapterBriefIfContentHashMatches(
-                eq(7L), eq(31L), any(), any())).thenReturn(1);
+        when(chapterMapper.updateChapterBriefIfContentHashMatches(
+                eq(7L), eq(31L), any(), any(), any())).thenReturn(1);
 
-        NovelContextAnalyzeRequestDTO request = new NovelContextAnalyzeRequestDTO();
-        request.setChapterId(31L);
-        ObjectNode result = (ObjectNode) service.analyze(7L, request);
+        ObjectNode result = (ObjectNode) service.executeAnalysisTask(task(chapter));
 
         assertEquals(sha256(chapter.getContent()), result.path("contentHash").asText());
         assertEquals(31L, result.path("chapterId").asLong());
@@ -83,33 +92,35 @@ class AiNovelContextSyncServiceImplTest
         verify(agentClient).analyzeNovelContext(captor.capture());
         assertEquals(11L, captor.getValue().getSettings().get(0).getSettingId());
         assertEquals(22L, captor.getValue().getForeshadows().get(0).getForeshadowId());
-        verify(chapterService).updateChapterBriefIfContentHashMatches(
+        verify(chapterMapper).updateChapterBriefIfContentHashMatches(
                 eq(7L), eq(31L), eq(sha256(chapter.getContent())),
-                eq(agentData.path("chapterBrief").asText()));
+                eq(agentData.path("chapterBrief").asText()), eq("tester"));
         assertTrue(result.path("chapterBriefSaved").asBoolean());
     }
 
     @Test
-    void analyzeDoesNotSaveBriefWhenChapterChangesDuringModelCall()
+    void executeReturnsNullWhenChapterChangesBeforeExecution()
     {
         AiNovelChapter sourceChapter = chapter("正文版本一");
-        when(workService.checkWorkOwner(7L)).thenReturn(work());
-        when(chapterService.selectAiNovelChapterByChapterId(7L, 31L))
-                .thenReturn(sourceChapter);
-        when(settingService.selectAiNovelSettingList(7L, null)).thenReturn(List.of());
-        when(foreshadowService.selectAiNovelForeshadowList(7L, null)).thenReturn(List.of());
-        ObjectNode agentData = new ObjectMapper().createObjectNode();
-        agentData.put("chapterBrief", "这是根据正文版本一生成的旧摘要，正文已经变化，因此这份摘要绝对不能覆盖更新后的章节事实。内容补足到有效长度。");
-        agentData.putArray("changes");
-        when(agentClient.analyzeNovelContext(any())).thenReturn(agentData);
-        when(chapterService.updateChapterBriefIfContentHashMatches(
-                eq(7L), eq(31L), any(), any())).thenReturn(0);
-        NovelContextAnalyzeRequestDTO request = new NovelContextAnalyzeRequestDTO();
-        request.setChapterId(31L);
+        AiNovelContextTask task = task(sourceChapter);
+        sourceChapter.setContent("正文版本二");
+        when(workMapper.selectAiNovelWorkByWorkId(7L)).thenReturn(work());
+        when(chapterMapper.selectAiNovelChapterByChapterId(31L)).thenReturn(sourceChapter);
 
-        ObjectNode result = (ObjectNode) service.analyze(7L, request);
+        assertEquals(null, service.executeAnalysisTask(task));
+        org.mockito.Mockito.verifyNoInteractions(agentClient);
+    }
 
-        assertFalse(result.path("chapterBriefSaved").asBoolean());
+    private static AiNovelContextTask task(AiNovelChapter chapter)
+    {
+        AiNovelContextTask task = new AiNovelContextTask();
+        task.setTaskId(101L);
+        task.setWorkId(7L);
+        task.setChapterId(31L);
+        task.setContentHash(sha256(chapter.getContent()));
+        task.setCreateBy("tester");
+        task.setAttemptCount(1);
+        return task;
     }
 
     @Test

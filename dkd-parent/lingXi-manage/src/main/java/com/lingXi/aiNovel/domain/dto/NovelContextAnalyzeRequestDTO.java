@@ -8,4 +8,7 @@ public class NovelContextAnalyzeRequestDTO
 {
     /** 已保存的章节ID。 */
     private Long chapterId;
+
+    /** 是否强制重新分析相同正文；手动点击时使用。 */
+    private Boolean force;
 }

@@ -154,13 +154,29 @@ export function sortNovelChapter(workId, chapterIds) {
   })
 }
 
-/** 生成并保存本章事实摘要，同时返回待人工确认的设定与伏笔候选变化。 */
-export function analyzeNovelContext(workId, chapterId) {
+/** 提交章节资料分析异步任务，接口立即返回任务状态。 */
+export function submitNovelContextTask(workId, chapterId, force = false) {
   return request({
     url: '/novel/work/' + workId + '/context/analyze',
     method: 'post',
-    data: { chapterId },
-    timeout: 1000000
+    data: { chapterId, force }
+  })
+}
+
+/** 查询指定章节资料分析任务。 */
+export function getNovelContextTask(workId, taskId) {
+  return request({
+    url: '/novel/work/' + workId + '/context/task/' + taskId,
+    method: 'get'
+  })
+}
+
+/** 查询章节最近一次资料分析任务，用于刷新页面后恢复。 */
+export function getLatestNovelContextTask(workId, chapterId) {
+  return request({
+    url: '/novel/work/' + workId + '/context/task/latest',
+    method: 'get',
+    params: { chapterId }
   })
 }
 
