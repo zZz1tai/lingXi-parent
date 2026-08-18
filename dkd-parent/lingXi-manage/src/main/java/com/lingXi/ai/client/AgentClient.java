@@ -671,9 +671,10 @@ public class AgentClient {
             String sessionId,
             String userId,
             Object workContext,
+            String memoryMode,
             Consumer<String> completedReplyConsumer) {
-        return streamNovel(message, sessionId, userId, workContext, completedReplyConsumer,
-                config.getNovelStreamUrl());
+        return streamNovel(message, sessionId, userId, workContext, memoryMode,
+                completedReplyConsumer, config.getNovelStreamUrl());
     }
 
     /**
@@ -687,7 +688,7 @@ public class AgentClient {
             String sessionId,
             String userId,
             Consumer<String> completedReplyConsumer) {
-        return streamNovel(message, sessionId, userId, null, completedReplyConsumer,
+        return streamNovel(message, sessionId, userId, null, "conversation", completedReplyConsumer,
                 config.getNovelIdeaStreamUrl());
     }
 
@@ -1357,7 +1358,7 @@ public class AgentClient {
             Object workContext,
             Consumer<String> completedReplyConsumer) {
         return streamNovel(message, sessionId, userId, workContext,
-                completedReplyConsumer, config.getNovelStreamUrl());
+                "conversation", completedReplyConsumer, config.getNovelStreamUrl());
     }
 
     private SseEmitter streamNovel(
@@ -1365,6 +1366,7 @@ public class AgentClient {
             String sessionId,
             String userId,
             Object workContext,
+            String memoryMode,
             Consumer<String> completedReplyConsumer,
             String endpointPath) {
         long streamTimeout = config.getStreamTimeout() == null
@@ -1396,7 +1398,8 @@ public class AgentClient {
                 conn.setReadTimeout(config.getReadTimeout());
                 conn.setDoOutput(true);
 
-                String requestBody = buildNovelRequest(message, sessionId, userId, workContext);
+                String requestBody = buildNovelRequest(
+                        message, sessionId, userId, workContext, memoryMode);
                 try (OutputStream os = conn.getOutputStream()) {
                     os.write(requestBody.getBytes(StandardCharsets.UTF_8));
                 }
@@ -2554,7 +2557,8 @@ public class AgentClient {
 
     /** 构造小说创作智能体请求体；作品上下文由服务端组装，模型与搜索密钥服务端注入。 */
     private String buildNovelRequest(
-            String message, String sessionId, String userId, Object workContext) {
+            String message, String sessionId, String userId, Object workContext,
+            String memoryMode) {
         try {
             ObjectNode root = objectMapper.createObjectNode();
             root.put("message", message);
@@ -2567,6 +2571,8 @@ public class AgentClient {
             if (workContext != null) {
                 root.set("work_context", objectMapper.valueToTree(workContext));
             }
+            root.put("memory_mode", "stateless".equals(memoryMode)
+                    ? "stateless" : "conversation");
             root.put("max_iterations", config.getMaxIterations());
             putLlmConfig(root);
             return objectMapper.writeValueAsString(root);

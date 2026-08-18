@@ -103,6 +103,7 @@ public class NovelController {
                     sessionId,
                     userId,
                     workContext,
+                    request.getMemoryMode(),
                     reply -> saveStreamReplyOnce(
                             assistantSaved, sessionId, userId, username, reply));
         } catch (Exception e) {

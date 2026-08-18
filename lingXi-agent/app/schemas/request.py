@@ -666,6 +666,11 @@ class NovelWriteRequest(StrictRequestModel):
         ),
     )
     work_context: NovelWorkContext | None = None
+    memory_mode: Literal["conversation", "stateless"] = Field(
+        default="conversation",
+        validation_alias=AliasChoices("memory_mode", "memoryMode"),
+        description="conversation 复用作品会话；stateless 仅使用本轮作品上下文",
+    )
     max_iterations: int | None = Field(default=None, ge=1, le=20)
     llm_config: LLMConfig | None = None
 

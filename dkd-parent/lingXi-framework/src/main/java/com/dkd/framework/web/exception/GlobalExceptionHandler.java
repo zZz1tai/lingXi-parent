@@ -20,6 +20,7 @@ import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.common.exception.DemoModeException;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.common.utils.StringUtils;
+import org.apache.catalina.connector.ClientAbortException;
 
 /**
  * 全局异常处理器
@@ -56,7 +57,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(ServiceException.class)
     public Object handleServiceException(ServiceException e, HttpServletRequest request) {
-        log.error(e.getMessage(), e);
+        log.warn("请求地址'{}': {}", request.getRequestURI(), e.getMessage());
         if (isSseRequest(request)) {
             return sseError(e.getMessage());
         }
@@ -82,6 +83,14 @@ public class GlobalExceptionHandler {
         String requestURI = request.getRequestURI();
         log.error("请求参数类型不匹配'{}',发生系统异常.", requestURI, e);
         return AjaxResult.error(String.format("请求参数类型不匹配，参数[%s]要求类型为：'%s'，但输入值为：'%s'", e.getName(), e.getRequiredType().getName(), e.getValue()));
+    }
+
+    /**
+     * 客户端主动断开连接（刷新/跳页/取消请求），响应已无法送达，属正常现象，仅记 DEBUG
+     */
+    @ExceptionHandler(ClientAbortException.class)
+    public void handleClientAbortException(ClientAbortException e, HttpServletRequest request) {
+        log.debug("客户端中断请求 '{}': {}", request.getRequestURI(), e.getMessage());
     }
 
     /**

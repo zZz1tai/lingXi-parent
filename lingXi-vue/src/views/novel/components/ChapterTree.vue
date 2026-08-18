@@ -1,33 +1,38 @@
 <template>
   <div class="nk-chapter-list">
-    <article
-      v-for="chapter in chapters"
-      :key="chapter.chapterId"
-      class="nk-chapter-item"
-      :class="{ 'is-active': chapter.chapterId === selectedId }"
-      @click="handleSelect(chapter)"
-    >
-      <span class="nk-chapter-no">{{ chapterNo(chapter) }}</span>
-      <span class="nk-chapter-name">{{ chapter.chapterTitle || `第 ${chapterNo(chapter)} 章` }}</span>
-      <span class="nk-chapter-meta">{{ chapter.wordCount || 0 }}</span>
-      <el-dropdown trigger="click" placement="bottom-end" @command="command => handleCommand(command, chapter)" @click.stop>
-        <el-icon class="nk-chapter-more"><MoreFilled /></el-icon>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="rename">
-              <el-icon><EditPen /></el-icon><span>重命名</span>
-            </el-dropdown-item>
-            <el-dropdown-item command="delete" divided class="danger-item">
-              <el-icon><Delete /></el-icon><span>删除章节</span>
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
-    </article>
+    <div class="nk-chapter-scroll">
+      <article
+        v-for="chapter in chapters"
+        :key="chapter.chapterId"
+        class="nk-chapter-item"
+        :class="{ 'is-active': chapter.chapterId === selectedId }"
+        @click="handleSelect(chapter)"
+      >
+        <span class="nk-chapter-no">{{ chapterNo(chapter) }}</span>
+        <span class="nk-chapter-name">{{ chapter.chapterTitle || `第 ${chapterNo(chapter)} 章` }}</span>
+        <span class="nk-chapter-meta">{{ chapter.wordCount || 0 }}</span>
+        <el-dropdown trigger="click" placement="bottom-end" @command="command => handleCommand(command, chapter)" @click.stop>
+          <el-icon class="nk-chapter-more"><MoreFilled /></el-icon>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="rename">
+                <el-icon><EditPen /></el-icon><span>重命名</span>
+              </el-dropdown-item>
+              <el-dropdown-item command="delete" divided class="danger-item">
+                <el-icon><Delete /></el-icon><span>删除章节</span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </article>
+    </div>
 
-    <button class="nk-btn nk-chapter-add" type="button" @click="handleAdd">
-      <el-icon><Plus /></el-icon>新起一章
-    </button>
+    <div class="nk-chapter-actions">
+      <button class="nk-btn nk-chapter-add" type="button" @click="handleAdd">
+        <el-icon><Plus /></el-icon>新起一章
+      </button>
+      <slot name="after-add" />
+    </div>
   </div>
 </template>
 

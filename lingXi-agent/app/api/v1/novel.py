@@ -7,9 +7,11 @@ from typing import Any, Mapping
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.errors import GraphRecursionError
+from pydantic import ValidationError
 
 from app.agents.builder import get_recursion_limit
 from app.agents.novel_idea import (
@@ -18,11 +20,13 @@ from app.agents.novel_idea import (
     validate_idea_doc,
 )
 from app.agents.novel_prompts import (
+    NOVEL_CONTEXT_ANALYSIS_REPAIR_PROMPT,
     NOVEL_CONTEXT_ANALYSIS_SYSTEM_PROMPT,
     NOVEL_OUTLINE_SYSTEM_PROMPT,
     NOVEL_PACING_ANALYSIS_SYSTEM_PROMPT,
     NOVEL_SYNOPSIS_SYSTEM_PROMPT,
     compose_novel_context_analysis_prompt,
+    compose_novel_context_repair_prompt,
     compose_novel_outline_prompt,
     compose_novel_pacing_analysis_prompt,
     compose_novel_polish_instruction,
@@ -81,6 +85,9 @@ from app.utils.logger import logger
 
 
 router = APIRouter(prefix="/api/v1/novel", tags=["novel"])
+
+# 资料变更输出结构校验失败时的最大修复重试次数。
+_MAX_CONTEXT_REPAIR_ATTEMPTS = 2
 
 
 class NovelMemoryDeleteError(AgentError):
@@ -172,7 +179,7 @@ async def _stream_novel_events(
             ),
         )
         agent = get_novel_agent(
-            checkpointed=True,
+            checkpointed=request.memory_mode == "conversation",
             model=context.model,
         )
         agent_stream = agent.astream(
@@ -185,6 +192,7 @@ async def _stream_novel_events(
                 tags=["novel"],
                 metadata={
                     "request_id": request_id,
+                    "memory_mode": request.memory_mode,
                     "work_id": (
                         request.work_context.work_id
                         if request.work_context is not None
@@ -1012,11 +1020,11 @@ def _validate_context_changes_payload(
 
     setting_ids = {item.setting_id for item in request.settings}
     foreshadow_ids = {item.foreshadow_id for item in request.foreshadows}
-    existing_titles = {
-        ("setting", item.title.strip().casefold()) for item in request.settings
-    } | {
-        ("foreshadow", item.title.strip().casefold())
-        for item in request.foreshadows
+    setting_title_ids = {
+        item.title.strip().casefold(): item.setting_id for item in request.settings
+    }
+    foreshadow_title_ids = {
+        item.title.strip().casefold(): item.foreshadow_id for item in request.foreshadows
     }
     seen_updates: set[tuple[str, int]] = set()
     seen_adds: set[tuple[str, str]] = set()
@@ -1034,12 +1042,129 @@ def _validate_context_changes_payload(
                 raise ValueError("the same target must not be updated twice")
             seen_updates.add(update_key)
         else:
-            add_key = (change.resource_type, change.title.strip().casefold())
-            if add_key in existing_titles or add_key in seen_adds:
-                raise ValueError("ADD change duplicates an existing or proposed title")
-            seen_adds.add(add_key)
+            title_key = change.title.strip().casefold()
+            matched_id = (
+                setting_title_ids.get(title_key)
+                if change.resource_type == "setting"
+                else foreshadow_title_ids.get(title_key)
+            )
+            if matched_id is not None:
+                # 标题与现有资料重复时自动转为更新对应资料
+                change.operation = "UPDATE"
+                change.target_id = matched_id
+                update_key = (change.resource_type, int(matched_id))
+                if update_key in seen_updates:
+                    raise ValueError("the same target must not be updated twice")
+                seen_updates.add(update_key)
+            else:
+                add_key = (change.resource_type, title_key)
+                if add_key in seen_adds:
+                    raise ValueError("ADD change duplicates a proposed title")
+                seen_adds.add(add_key)
         changes.append(change)
     return changes
+
+
+def _compact_context_validation_error(exc: Exception) -> str:
+    """把结构校验错误压缩为可供模型修复的一句话说明。"""
+
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            entries = errors(include_input=False)
+        except TypeError:
+            entries = errors()
+        details: list[str] = []
+        for entry in entries:
+            location = ".".join(str(part) for part in entry.get("loc", ()))
+            message = str(entry.get("msg", "Invalid value"))
+            details.append(f"{location}: {message}" if location else message)
+        return "; ".join(details) or str(exc)
+    return str(exc)
+
+
+async def _analyze_novel_context_with_repair(
+    llm: BaseChatModel,
+    prompt_data: dict[str, Any],
+    request: NovelContextAnalyzeRequest,
+    *,
+    request_id: str,
+) -> tuple[NovelContextAnalyzeData, int]:
+    """调用模型生成章节事实摘要与资料变更，结构校验失败时带错误反馈修复重试。
+
+    返回校验通过的响应数据与修复次数；修复多次仍失败时抛出 AgentError，
+    避免把「模型输出不合规」误报为服务端故障。
+    """
+
+    messages: list[tuple[str, str]] = [
+        ("system", NOVEL_CONTEXT_ANALYSIS_SYSTEM_PROMPT),
+        ("user", compose_novel_context_analysis_prompt(prompt_data)),
+    ]
+    validation_errors: list[str] = []
+    repair_count = 0
+    while True:
+        response = await llm.ainvoke(messages)
+        content = getattr(response, "content", None)
+        if isinstance(content, list):
+            content = "".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        raw_text = str(content or "").strip()
+        if not raw_text:
+            raise RuntimeError("model returned an empty context analysis")
+        try:
+            parsed = JsonOutputParser().parse(raw_text)
+            changes = _validate_context_changes_payload(parsed, request)
+            analysis_data = NovelContextAnalyzeData(
+                chapter_brief=parsed.get("chapterBrief"),
+                changes=changes,
+            )
+            return analysis_data, repair_count
+        except (ValidationError, ValueError) as exc:
+            compact_error = _compact_context_validation_error(exc)
+            validation_errors.append(compact_error)
+            if repair_count >= _MAX_CONTEXT_REPAIR_ATTEMPTS:
+                logger.error(
+                    "Novel context analysis failed after repairs | request_id=%s | "
+                    "chapter_id=%d | attempts=%d | errors=%s",
+                    request_id,
+                    request.chapter_id,
+                    repair_count + 1,
+                    " | ".join(validation_errors),
+                )
+                raise AgentError(
+                    "AI 整理的设定与伏笔变更多次校验失败",
+                    code="AGENT_CONTEXT_ANALYSIS_FAILED",
+                    status_code=500,
+                    public_message="The context analysis output failed repeated validation",
+                ) from exc
+            repair_count += 1
+            logger.warning(
+                "Novel context analysis output invalid, repairing | request_id=%s | "
+                "chapter_id=%d | attempt=%d | error=%s",
+                request_id,
+                request.chapter_id,
+                repair_count,
+                compact_error,
+            )
+            messages = [
+                (
+                    "system",
+                    NOVEL_CONTEXT_ANALYSIS_SYSTEM_PROMPT
+                    + "\n\n"
+                    + NOVEL_CONTEXT_ANALYSIS_REPAIR_PROMPT,
+                ),
+                (
+                    "user",
+                    compose_novel_context_repair_prompt(
+                        prompt_data,
+                        validation_errors,
+                        raw_text,
+                    ),
+                ),
+            ]
 
 
 @router.post(
@@ -1066,25 +1191,11 @@ async def novel_context_analyze(
             exclude={"llm_config"},
             exclude_none=True,
         )
-        response = await llm.ainvoke([
-            ("system", NOVEL_CONTEXT_ANALYSIS_SYSTEM_PROMPT),
-            ("user", compose_novel_context_analysis_prompt(prompt_data)),
-        ])
-        content = getattr(response, "content", None)
-        if isinstance(content, list):
-            content = "".join(
-                block.get("text", "")
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "text"
-            )
-        raw_text = str(content or "").strip()
-        if not raw_text:
-            raise RuntimeError("model returned an empty context analysis")
-        parsed = JsonOutputParser().parse(raw_text)
-        changes = _validate_context_changes_payload(parsed, request)
-        analysis_data = NovelContextAnalyzeData(
-            chapter_brief=parsed.get("chapterBrief"),
-            changes=changes,
+        analysis_data, repair_count = await _analyze_novel_context_with_repair(
+            llm,
+            prompt_data,
+            request,
+            request_id=request_id,
         )
     except AgentError:
         raise
@@ -1098,10 +1209,12 @@ async def novel_context_analyze(
         )
         raise
     logger.info(
-        "Novel context analyzed | request_id=%s | chapter_id=%d | changes=%d",
+        "Novel context analyzed | request_id=%s | chapter_id=%d | changes=%d | "
+        "repairs=%d",
         request_id,
         request.chapter_id,
-        len(changes),
+        len(analysis_data.changes),
+        repair_count,
     )
     return NovelContextAnalyzeResponse(
         success=True,

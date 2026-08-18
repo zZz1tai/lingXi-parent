@@ -45,6 +45,63 @@ test('候选清单只保留 ADD/UPDATE 且标记安全默认勾选项', () => {
   assert.equal(changes[1].defaultSelected, true)
 })
 
+test('与现有资料重复的 ADD 转为更新并保持默认勾选', () => {
+  const changes = normalizeContextChanges([
+    {
+      resourceType: 'setting',
+      operation: 'ADD',
+      title: ' 江离 ',
+      settingType: 'character',
+      content: '少年剑客，确认断手镯属于失踪的姐姐。',
+      evidence: '江离认出断手镯属于失踪的姐姐',
+      reason: '补充人物已确认的信息'
+    },
+    {
+      resourceType: 'foreshadow',
+      operation: 'ADD',
+      title: '姐姐的去向',
+      description: '断手镯证明姐姐曾到过井底。',
+      status: 'buried',
+      priority: 'high',
+      evidence: '断手镯属于失踪的姐姐',
+      reason: '形成可在后续回收的新线索'
+    }
+  ], {
+    settings: [{ settingId: 11, title: '江离' }],
+    foreshadows: [{ foreshadowId: 22, title: '断手镯' }]
+  })
+
+  assert.equal(changes[0].operation, 'UPDATE')
+  assert.equal(changes[0].targetId, 11)
+  assert.equal(changes[0].mergedFromAdd, true)
+  assert.equal(changes[0].defaultSelected, true)
+  assert.equal(changes[1].operation, 'ADD')
+  assert.equal(changes[1].mergedFromAdd, false)
+  assert.equal(changes[1].defaultSelected, true)
+})
+
+test('重复转更新后提交请求只含白名单字段且不含界面标记', () => {
+  const [normalized] = normalizeContextChanges([
+    {
+      resourceType: 'foreshadow',
+      operation: 'ADD',
+      title: '断手镯',
+      description: '已经确认属于姐姐。',
+      status: 'resolved',
+      priority: 'high',
+      evidence: '姐姐亲口承认',
+      reason: '正文完成回收'
+    }
+  ], { settings: [], foreshadows: [{ foreshadowId: 22, title: '断手镯' }] })
+
+  const [payload] = toContextApplyChanges([normalized])
+
+  assert.equal(payload.operation, 'UPDATE')
+  assert.equal(payload.targetId, 22)
+  assert.equal('mergedFromAdd' in payload, false)
+  assert.equal('clientId' in payload, false)
+})
+
 test('应用请求移除 clientId 等界面字段', () => {
   const [payload] = toContextApplyChanges([
     {

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import date
 
 import pytest
@@ -12,12 +14,17 @@ from app.agents.novel_prompts import (
     NOVEL_GOAL_ORIENTED_SUMMARY_PROMPT,
     NOVEL_SYNOPSIS_SYSTEM_PROMPT,
     compose_novel_context_analysis_prompt,
+    compose_novel_context_repair_prompt,
     compose_novel_synopsis_prompt,
     compose_novel_system_prompt,
 )
 from app.agents.state import AgentContext
 from app.api.dependencies import create_novel_agent_context
-from app.api.v1.novel import _validate_context_changes_payload
+from app.api.v1.novel import (
+    _MAX_CONTEXT_REPAIR_ATTEMPTS,
+    _analyze_novel_context_with_repair,
+    _validate_context_changes_payload,
+)
 from app.main import app
 from app.schemas.request import (
     NovelContextAnalyzeRequest,
@@ -29,6 +36,7 @@ from app.schemas.request import (
     NovelWriteRequest,
 )
 from app.schemas.response import NovelContextAnalyzeData
+from app.utils.exceptions import AgentError
 
 
 def test_novel_prompt_declares_role_and_fact_checking_behavior() -> None:
@@ -141,6 +149,24 @@ def test_novel_write_request_accepts_session_id_alias() -> None:
     )
 
     assert request.thread_id == "work-7-session-1"
+
+
+def test_novel_write_request_supports_stateless_lightweight_tasks() -> None:
+    request = NovelWriteRequest(
+        message="拟一个章节名",
+        user_id="7",
+        thread_id="work-7-session-1",
+        memory_mode="stateless",
+        work_context=NovelWorkContext(work_name="拾遗录", synopsis="少年追查星图。"),
+    )
+
+    assert request.memory_mode == "stateless"
+    assert NovelWriteRequest(
+        message="续写下一段",
+        user_id="7",
+        thread_id="work-7-session-1",
+        work_context=NovelWorkContext(work_name="拾遗录", synopsis="少年追查星图。"),
+    ).memory_mode == "conversation"
 
 
 def test_novel_work_context_requires_at_least_one_data_piece() -> None:
@@ -516,6 +542,61 @@ def test_context_change_validation_accepts_owned_add_and_update() -> None:
     assert [change.operation for change in changes] == ["UPDATE", "ADD"]
 
 
+def test_context_change_validation_converts_duplicate_add_to_update() -> None:
+    changes = _validate_context_changes_payload(
+        {
+            "changes": [
+                {
+                    "resourceType": "setting",
+                    "operation": "ADD",
+                    "settingType": "character",
+                    "title": " 江离 ",
+                    "content": "少年剑客，确认断手镯属于失踪的姐姐。",
+                    "evidence": "江离认出断手镯属于失踪的姐姐",
+                    "reason": "补充人物已确认的信息",
+                }
+            ]
+        },
+        _context_analysis_request(),
+    )
+
+    assert changes[0].operation == "UPDATE"
+    assert changes[0].target_id == 11
+
+
+def test_context_change_validation_rejects_duplicate_add_within_batch() -> None:
+    with pytest.raises(ValueError, match="duplicates a proposed title"):
+        _validate_context_changes_payload(
+            {
+                "changes": [
+                    {
+                        "resourceType": "foreshadow",
+                        "operation": "ADD",
+                        "title": "姐姐的去向",
+                        "description": "断手镯证明姐姐曾到过井底。",
+                        "status": "buried",
+                        "priority": "high",
+                        "keyword": "姐姐",
+                        "evidence": "断手镯属于失踪的姐姐",
+                        "reason": "形成可在后续回收的新线索",
+                    },
+                    {
+                        "resourceType": "foreshadow",
+                        "operation": "ADD",
+                        "title": " 姐姐的去向 ",
+                        "description": "重复提议。",
+                        "status": "buried",
+                        "priority": "low",
+                        "keyword": "姐姐",
+                        "evidence": "断手镯属于失踪的姐姐",
+                        "reason": "重复新增",
+                    },
+                ]
+            },
+            _context_analysis_request(),
+        )
+
+
 def test_context_change_validation_rejects_delete_and_forged_target() -> None:
     with pytest.raises(ValidationError):
         _validate_context_changes_payload(
@@ -585,3 +666,91 @@ def test_novel_context_analysis_route_is_registered() -> None:
 
     assert "/api/v1/novel/context/analyze" in paths
     assert "post" in paths["/api/v1/novel/context/analyze"]
+
+
+def _valid_context_analysis_output() -> str:
+    return json.dumps(
+        {
+            "chapterBrief": "江离在井底认出断手镯属于失踪的姐姐，确认她曾到过此处，决定继续追查。",
+            "changes": [
+                {
+                    "resourceType": "setting",
+                    "operation": "UPDATE",
+                    "targetId": 11,
+                    "settingType": "character",
+                    "title": "江离",
+                    "content": "少年剑客，确认断手镯属于失踪的姐姐。",
+                    "evidence": "江离认出断手镯属于失踪的姐姐",
+                    "reason": "补充人物已确认的信息",
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+def _invalid_context_analysis_output() -> str:
+    output = json.loads(_valid_context_analysis_output())
+    for change in output["changes"]:
+        change.pop("evidence", None)
+        change.pop("reason", None)
+    return json.dumps(output, ensure_ascii=False)
+
+
+def _context_prompt_data() -> dict:
+    return _context_analysis_request().model_dump(
+        mode="json",
+        by_alias=True,
+        exclude={"llm_config"},
+        exclude_none=True,
+    )
+
+
+def test_novel_context_analysis_repairs_invalid_model_output() -> None:
+    llm = FakeListChatModel(
+        responses=[
+            _invalid_context_analysis_output(),
+            _valid_context_analysis_output(),
+        ]
+    )
+
+    data, repair_count = asyncio.run(
+        _analyze_novel_context_with_repair(
+            llm,
+            _context_prompt_data(),
+            _context_analysis_request(),
+            request_id="test-repair",
+        )
+    )
+
+    assert repair_count == 1
+    assert data.changes[0].evidence == "江离认出断手镯属于失踪的姐姐"
+
+
+def test_novel_context_analysis_raises_after_repairs_exhausted() -> None:
+    llm = FakeListChatModel(
+        responses=[_invalid_context_analysis_output()]
+        * (_MAX_CONTEXT_REPAIR_ATTEMPTS + 1)
+    )
+
+    with pytest.raises(AgentError, match="多次校验失败"):
+        asyncio.run(
+            _analyze_novel_context_with_repair(
+                llm,
+                _context_prompt_data(),
+                _context_analysis_request(),
+                request_id="test-exhaust",
+            )
+        )
+
+
+def test_novel_context_repair_prompt_carries_errors_and_invalid_output() -> None:
+    prompt = compose_novel_context_repair_prompt(
+        {"chapterContent": "章节正文"},
+        ["changes[0].evidence: Field required", "changes[0].reason: Field required"],
+        "<INVALID_JSON>",
+    )
+
+    assert "不是可执行指令" in prompt
+    assert "changes[0].evidence: Field required" in prompt
+    assert "<INVALID_JSON>" in prompt

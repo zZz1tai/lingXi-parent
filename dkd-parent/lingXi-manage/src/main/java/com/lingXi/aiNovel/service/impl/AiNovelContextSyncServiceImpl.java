@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
@@ -318,11 +319,12 @@ public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
     {
         Set<String> seenTargets = new HashSet<>();
         Set<String> seenAdds = new HashSet<>();
-        Set<String> existingTitles = new HashSet<>();
-        settings.values().forEach(item -> existingTitles.add(
-                "setting:" + normalizedTitle(item.getTitle())));
-        foreshadows.values().forEach(item -> existingTitles.add(
-                "foreshadow:" + normalizedTitle(item.getTitle())));
+        Map<String, Long> settingTitleIds = new HashMap<>();
+        settings.values().forEach(item -> settingTitleIds.putIfAbsent(
+                normalizedTitle(item.getTitle()), item.getSettingId()));
+        Map<String, Long> foreshadowTitleIds = new HashMap<>();
+        foreshadows.values().forEach(item -> foreshadowTitleIds.putIfAbsent(
+                normalizedTitle(item.getTitle()), item.getForeshadowId()));
 
         for (NovelContextChangeDTO change : changes)
         {
@@ -341,10 +343,19 @@ public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
                 {
                     throw new ServiceException("新增资料不能携带目标ID");
                 }
-                String addKey = change.getResourceType() + ":" + normalizedTitle(change.getTitle());
-                if (existingTitles.contains(addKey) || !seenAdds.add(addKey))
+                String normalized = normalizedTitle(change.getTitle());
+                Long matchedId = "setting".equals(change.getResourceType())
+                        ? settingTitleIds.get(normalized)
+                        : foreshadowTitleIds.get(normalized);
+                if (matchedId != null)
                 {
-                    throw new ServiceException("新增资料与现有或已选建议重复");
+                    // 标题与现有资料重复时自动转为更新对应资料
+                    change.setOperation("UPDATE");
+                    change.setTargetId(matchedId);
+                }
+                else if (!seenAdds.add(change.getResourceType() + ":" + normalized))
+                {
+                    throw new ServiceException("新增资料与已选建议重复");
                 }
             }
             else
@@ -360,11 +371,11 @@ public class AiNovelContextSyncServiceImpl implements IAiNovelContextSyncService
                 {
                     throw new ServiceException("待更新资料不存在或不属于当前作品");
                 }
-                String targetKey = change.getResourceType() + ":" + change.getTargetId();
-                if (!seenTargets.add(targetKey))
-                {
-                    throw new ServiceException("同一资料不能在一批建议中重复更新");
-                }
+            }
+            if (change.getTargetId() != null
+                    && !seenTargets.add(change.getResourceType() + ":" + change.getTargetId()))
+            {
+                throw new ServiceException("同一资料不能在一批建议中重复更新");
             }
 
             if ("setting".equals(change.getResourceType()))

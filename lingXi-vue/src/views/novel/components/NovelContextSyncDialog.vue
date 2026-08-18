@@ -38,6 +38,9 @@
             </el-tag>
             <strong>{{ item.title }}</strong>
             <span v-if="item.targetId" class="ncs-target">#{{ item.targetId }}</span>
+            <el-tag v-if="item.mergedFromAdd" size="small" type="info" effect="plain">
+              与现有资料重复，将更新该条
+            </el-tag>
           </div>
           <p class="ncs-content">{{ suggestionContent(item) }}</p>
           <div v-if="item.resourceType === 'foreshadow'" class="ncs-meta">

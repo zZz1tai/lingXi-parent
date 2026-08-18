@@ -209,17 +209,8 @@
                 </button>
               </div>
 
-              <div class="nk-drawer-body">
+              <div class="nk-drawer-body" :class="{ 'is-chapters': drawerTab === 'chapters' }">
                 <template v-if="drawerTab === 'chapters'">
-                  <button
-                    class="nk-btn nk-ai-next-chapter"
-                    type="button"
-                    :disabled="!chapters.length || aiNextChapterLoading"
-                    title="自动新起一章，并让 AI 衔接上一章结尾续写"
-                    @click="handleAiNextChapter"
-                  >
-                    <el-icon><MagicStick /></el-icon>AI 续写下一章
-                  </button>
                   <ChapterTree
                     :chapters="chapters"
                     :selected-id="currentChapter?.chapterId"
@@ -227,7 +218,19 @@
                     @add="handleAddChapter"
                     @rename="handleRenameChapter"
                     @delete="handleDeleteChapter"
-                  />
+                  >
+                    <template #after-add>
+                      <button
+                        class="nk-btn nk-ai-next-chapter"
+                        type="button"
+                        :disabled="!chapters.length || aiNextChapterLoading"
+                        title="自动新起一章，并让 AI 衔接上一章结尾续写"
+                        @click="handleAiNextChapter"
+                      >
+                        <el-icon><MagicStick /></el-icon>AI 续写下一章
+                      </button>
+                    </template>
+                  </ChapterTree>
                 </template>
 
                 <template v-else-if="drawerTab === 'settings'">
@@ -605,7 +608,8 @@ import {
   fitNovelLayout, parseNovelLayout, resizeNovelPanel
 } from './novelLayout'
 import {
-  CONTEXT_SYNC_HASH_STORAGE_KEY, buildContextSyncKey, fingerprintNovelContent,
+  CONTEXT_APPLIED_HASH_STORAGE_KEY, CONTEXT_SYNC_HASH_STORAGE_KEY,
+  buildContextSyncKey, fingerprintNovelContent,
   normalizeContextChanges, parseContextSyncHashes, toContextApplyChanges
 } from './novelContextSync'
 import { nextNovelChapterNo, pickNovelChapter, planNovelContinuation } from './novelChapter'
@@ -1379,6 +1383,9 @@ async function handleResolveForeshadow(card) {
 const analyzedContextHashes = reactive(
   parseContextSyncHashes(localStorage.getItem(CONTEXT_SYNC_HASH_STORAGE_KEY))
 )
+const appliedContextHashes = reactive(
+  parseContextSyncHashes(localStorage.getItem(CONTEXT_APPLIED_HASH_STORAGE_KEY))
+)
 const contextSyncLoading = ref(false)
 const contextSyncApplying = ref(false)
 const contextSyncError = ref('')
@@ -1411,6 +1418,15 @@ function persistContextSyncHashes() {
     localStorage.setItem(CONTEXT_SYNC_HASH_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)))
   } catch (error) {
     console.warn('小说资料同步去重记录保存失败', error)
+  }
+}
+
+function persistAppliedContextHashes() {
+  try {
+    const entries = Object.entries(appliedContextHashes).slice(-500)
+    localStorage.setItem(CONTEXT_APPLIED_HASH_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)))
+  } catch (error) {
+    console.warn('小说资料已应用记录保存失败', error)
   }
 }
 
@@ -1507,7 +1523,10 @@ function handleContextTaskResult(data, target, quiet, syncKey, browserHash) {
   currentChapter.value.chapterBrief = data.chapterBrief.trim()
   const chapterInList = chapters.value.find(item => item.chapterId === target.chapterId)
   if (chapterInList) chapterInList.chapterBrief = data.chapterBrief.trim()
-  const suggestions = normalizeContextChanges(data.changes)
+  const suggestions = normalizeContextChanges(data.changes, {
+    settings: Object.values(settings).flat(),
+    foreshadows: foreshadows.value
+  })
   if (!suggestions.length) {
     contextSyncDialog.suggestions = []
     if (!quiet) ElMessage.info('本章没有发现需要写入设定集或伏笔的新变化')
@@ -1538,6 +1557,7 @@ async function recoverLatestContextTask(chapter) {
     if (!task?.taskId) return
     const syncKey = buildContextSyncKey({ userId: userStore.id, workId, chapterId: chapter.chapterId })
     const browserHash = fingerprintNovelContent(target.content)
+    if (syncKey && appliedContextHashes[syncKey] === browserHash) return
     if (task.status === 'SUCCEEDED') {
       handleContextTaskResult(task.result, target, true, syncKey, browserHash)
     } else if (task.status === 'PENDING' || task.status === 'RUNNING') {
@@ -1558,6 +1578,12 @@ async function recoverLatestContextTask(chapter) {
 async function handleContextSyncClick() {
   const current = currentContextSnapshot()
   if (!current) return
+  const syncKey = buildContextSyncKey({
+    userId: userStore.id,
+    workId: current.workId,
+    chapterId: current.chapterId
+  })
+  const browserHash = fingerprintNovelContent(current.content)
   const pendingMatches = contextSyncDialog.suggestions.length
     && contextSyncDialog.workId === current.workId
     && contextSyncDialog.chapterId === current.chapterId
@@ -1565,6 +1591,10 @@ async function handleContextSyncClick() {
     && manuscript.value === lastSavedContent.value
   if (pendingMatches) {
     contextSyncDialog.open = true
+    return
+  }
+  if (syncKey && appliedContextHashes[syncKey] === browserHash) {
+    ElMessage.success('当前版本的资料建议已经确认应用，无需重复整理')
     return
   }
   if (saveState.value === 'saving') {
@@ -1575,30 +1605,44 @@ async function handleContextSyncClick() {
     const saved = await saveCurrent({ scheduleAnalysis: false })
     if (!saved) return
   }
-  await runContextAnalysis({ force: true, quiet: false })
+  await runContextAnalysis({ force: false, quiet: false })
 }
 
 async function handleApplyContextChanges(selectedSuggestions) {
   if (!selectedSuggestions.length || !contextSyncDialog.workId) return
   contextSyncApplying.value = true
+  const appliedWorkId = contextSyncDialog.workId
+  const appliedChapterId = contextSyncDialog.chapterId
+  const appliedFingerprint = contextSyncDialog.contentFingerprint
   try {
-    const response = await applyNovelContextChanges(contextSyncDialog.workId, {
-      chapterId: contextSyncDialog.chapterId,
+    const response = await applyNovelContextChanges(appliedWorkId, {
+      chapterId: appliedChapterId,
       contentHash: contextSyncDialog.contentHash,
       changes: toContextApplyChanges(selectedSuggestions)
     })
     const affected = response?.data?.affected ?? selectedSuggestions.length
-    if (selectedWork.value?.workId === contextSyncDialog.workId) {
-      await Promise.all([
-        loadSettings(contextSyncDialog.workId),
-        loadForeshadows(contextSyncDialog.workId)
-      ])
+    const appliedKey = buildContextSyncKey({
+      userId: userStore.id,
+      workId: appliedWorkId,
+      chapterId: appliedChapterId
+    })
+    if (appliedKey && appliedFingerprint) {
+      appliedContextHashes[appliedKey] = appliedFingerprint
+      persistAppliedContextHashes()
     }
     contextSyncDialog.open = false
     contextSyncDialog.suggestions = []
     contextSyncDialog.contentHash = ''
     contextSyncDialog.contentFingerprint = ''
     ElMessage.success('已确认并同步 ' + affected + ' 条设定/伏笔变化')
+    if (selectedWork.value?.workId === appliedWorkId) {
+      try {
+        await Promise.all([loadSettings(appliedWorkId), loadForeshadows(appliedWorkId)])
+      } catch (refreshError) {
+        console.warn('资料已应用，但刷新设定集或伏笔失败', refreshError)
+        ElMessage.warning('资料已应用，列表刷新失败；重新进入作品后即可看到最新内容')
+      }
+    }
   } catch (error) {
     ElMessage.error(error?.message || '资料同步失败，请重新分析后重试')
   } finally {

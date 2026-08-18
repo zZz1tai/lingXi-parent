@@ -917,6 +917,11 @@ $nk-gold: #b9922c;
     min-width: 0;
     white-space: pre-wrap;
 
+    &.is-streaming {
+      // 流式期间以纯文本渲染，避免逐 token 重建逐行 DOM 导致输出卡顿
+      overflow-wrap: break-word;
+    }
+
     .nk-md-line {
       min-height: 1.9em;
     }
@@ -1102,6 +1107,12 @@ $nk-gold: #b9922c;
   overflow-y: auto;
   padding: 10px 10px 14px;
 
+  &.is-chapters {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
   &::-webkit-scrollbar { width: 6px; }
   &::-webkit-scrollbar-thumb { background: rgba(110, 72, 34, 0.35); border-radius: 3px; }
 }
@@ -1110,7 +1121,6 @@ $nk-gold: #b9922c;
 .nk-ai-next-chapter {
   width: 100%;
   justify-content: center;
-  margin-bottom: 8px;
   background: rgba(160, 86, 46, 0.12);
   border-color: rgba(160, 86, 46, 0.45);
   color: var(--nk-sienna);
@@ -1143,8 +1153,30 @@ $nk-gold: #b9922c;
 
 .nk-chapter-list {
   display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.nk-chapter-scroll {
+  display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 3px;
+
+  &::-webkit-scrollbar { width: 6px; }
+  &::-webkit-scrollbar-thumb { background: rgba(110, 72, 34, 0.35); border-radius: 3px; }
+}
+
+.nk-chapter-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
 }
 
 .nk-chapter-item {
@@ -1193,7 +1225,6 @@ $nk-gold: #b9922c;
 }
 
 .nk-chapter-add {
-  margin-top: 8px;
   width: 100%;
 }
 

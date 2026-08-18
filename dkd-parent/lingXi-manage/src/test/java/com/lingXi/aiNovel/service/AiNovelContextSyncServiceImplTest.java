@@ -192,6 +192,60 @@ class AiNovelContextSyncServiceImplTest
         assertTrue(error.getMessage().contains("操作无效"));
     }
 
+    @Test
+    void applyConvertsDuplicateAddToUpdate()
+    {
+        AiNovelChapter chapter = chapter("正文版本一");
+        AiNovelSetting setting = setting(11L);
+        when(chapterService.selectAiNovelChapterByChapterId(7L, 31L)).thenReturn(chapter);
+        when(settingService.selectAiNovelSettingList(7L, null)).thenReturn(List.of(setting));
+        when(foreshadowService.selectAiNovelForeshadowList(7L, null)).thenReturn(List.of());
+        when(settingService.updateAiNovelSetting(eq(7L), any())).thenReturn(1);
+        NovelContextChangeDTO change = new NovelContextChangeDTO();
+        change.setResourceType("setting");
+        change.setOperation("ADD");
+        change.setTitle(" 江离 ");
+        change.setSettingType("character");
+        change.setContent("少年剑客，确认断手镯属于失踪的姐姐。");
+        change.setEvidence("江离认出断手镯属于失踪的姐姐");
+        change.setReason("补充人物已确认的信息");
+        NovelContextApplyRequestDTO request = new NovelContextApplyRequestDTO();
+        request.setChapterId(31L);
+        request.setContentHash(sha256(chapter.getContent()));
+        request.setChanges(List.of(change));
+
+        NovelContextApplyResultDTO result = service.apply(7L, request);
+
+        assertEquals(1, result.getAffected());
+        assertEquals(1, result.getSettings());
+        assertEquals(0, result.getForeshadows());
+        ArgumentCaptor<AiNovelSetting> captor = ArgumentCaptor.forClass(AiNovelSetting.class);
+        verify(settingService).updateAiNovelSetting(eq(7L), captor.capture());
+        assertEquals(11L, captor.getValue().getSettingId());
+        org.mockito.Mockito.verify(settingService,
+                org.mockito.Mockito.never()).insertAiNovelSetting(eq(7L), any());
+    }
+
+    @Test
+    void applyRejectsDuplicateAddWithinBatch()
+    {
+        AiNovelChapter chapter = chapter("正文版本一");
+        when(chapterService.selectAiNovelChapterByChapterId(7L, 31L)).thenReturn(chapter);
+        when(settingService.selectAiNovelSettingList(7L, null)).thenReturn(List.of());
+        when(foreshadowService.selectAiNovelForeshadowList(7L, null)).thenReturn(List.of());
+        NovelContextChangeDTO first = settingAdd("新设定");
+        NovelContextChangeDTO second = settingAdd("新设定");
+        NovelContextApplyRequestDTO request = new NovelContextApplyRequestDTO();
+        request.setChapterId(31L);
+        request.setContentHash(sha256(chapter.getContent()));
+        request.setChanges(List.of(first, second));
+
+        ServiceException error = assertThrows(
+                ServiceException.class, () -> service.apply(7L, request));
+
+        assertTrue(error.getMessage().contains("已选建议重复"));
+    }
+
     private static AiNovelWork work()
     {
         AiNovelWork work = new AiNovelWork();
@@ -245,6 +299,19 @@ class AiNovelContextSyncServiceImplTest
         change.setContent("少年剑客，确认断手镯属于失踪的姐姐。");
         change.setEvidence("江离认出断手镯属于失踪的姐姐");
         change.setReason("补充人物已确认的信息");
+        return change;
+    }
+
+    private static NovelContextChangeDTO settingAdd(String title)
+    {
+        NovelContextChangeDTO change = new NovelContextChangeDTO();
+        change.setResourceType("setting");
+        change.setOperation("ADD");
+        change.setSettingType("other");
+        change.setTitle(title);
+        change.setContent("资料内容。");
+        change.setEvidence("本章依据");
+        change.setReason("变更理由");
         return change;
     }
 

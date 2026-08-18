@@ -21,9 +21,9 @@
             :key="index"
             type="button"
             class="nk-prompt-card"
-            @click="send(prompt, false)"
+            @click="send(prompt.text, false, prompt.memoryMode)"
           >
-            {{ prompt }}
+            {{ prompt.text }}
           </button>
         </div>
       </div>
@@ -44,8 +44,10 @@
               {{ polishLabel(message.content) }}
             </template>
             <template v-else>
-              <div class="nk-msg-copy" v-html="renderNovelMarkdown(message.content)" />
-              <span v-if="message.streaming" class="nk-typing-cursor" />
+              <div v-if="message.streaming" class="nk-msg-copy is-streaming">
+                {{ message.content }}<span class="nk-typing-cursor" />
+              </div>
+              <div v-else class="nk-msg-copy" v-html="renderNovelMarkdown(message.content)" />
               <template v-if="message.role === 'ai' && !message.streaming && message.content">
                 <div class="nk-msg-actions">
                   <button class="nk-chip" type="button" @click="emitInsert(extractPolishBody(message.content))">
@@ -70,9 +72,9 @@
           :key="index"
           type="button"
           class="nk-chip"
-          @click="send(chip, true)"
+          @click="send(chip.text, true, chip.memoryMode)"
         >
-          {{ chip }}
+          {{ chip.text }}
         </button>
         <button type="button" class="nk-chip nk-polish-toggle" :class="{ 'is-active': polishOpen }" @click="polishOpen = !polishOpen">
           <el-icon><MagicStick /></el-icon>精修模板
@@ -236,19 +238,19 @@ const quickChips = computed(() => {
   const isNovel = props.work?.workType === 'novel'
   if (isNovel) {
     return [
-      '续写下一段',
-      '润色这段文字',
-      '拟一个章节名',
-      '设置悬念钩子',
-      '扩写这个场景'
+      { text: '续写下一段', memoryMode: 'conversation' },
+      { text: '润色这段文字', memoryMode: 'conversation' },
+      { text: '拟一个章节名', memoryMode: 'stateless' },
+      { text: '设置悬念钩子', memoryMode: 'conversation' },
+      { text: '扩写这个场景', memoryMode: 'conversation' }
     ]
   }
   return [
-    '续写故事',
-    '润色全文',
-    '拟一个题目',
-    '增加人物冲突',
-    '写一个反转结局'
+    { text: '续写故事', memoryMode: 'conversation' },
+    { text: '润色全文', memoryMode: 'conversation' },
+    { text: '拟一个题目', memoryMode: 'stateless' },
+    { text: '增加人物冲突', memoryMode: 'conversation' },
+    { text: '写一个反转结局', memoryMode: 'conversation' }
   ]
 })
 
@@ -256,14 +258,14 @@ const suggestionPrompts = computed(() => {
   const isNovel = props.work?.workType === 'novel'
   return isNovel
     ? [
-        '按照当前章节的风格，续写下一段情节，保持人物口吻一致',
-        '分析当前章节的节奏，指出问题并给出修改建议',
-        '为整个长篇起草一个三幕式大纲'
+        { text: '按照当前章节的风格，续写下一段情节，保持人物口吻一致', memoryMode: 'conversation' },
+        { text: '分析当前章节的节奏，指出问题并给出修改建议', memoryMode: 'stateless' },
+        { text: '为整个长篇起草一个三幕式大纲', memoryMode: 'stateless' }
       ]
     : [
-        '根据我的故事灵感，扩写一个完整的短篇故事',
-        '帮我把这个开头改写得更有画面感和悬念',
-        '为短篇故事设计一个出人意料又合理的结局'
+        { text: '根据我的故事灵感，扩写一个完整的短篇故事', memoryMode: 'conversation' },
+        { text: '帮我把这个开头改写得更有画面感和悬念', memoryMode: 'conversation' },
+        { text: '为短篇故事设计一个出人意料又合理的结局', memoryMode: 'conversation' }
       ]
 })
 
@@ -319,7 +321,7 @@ function sendStyle(styleCard) {
 // ── 发送 ─────────────────────────────────────────────
 const canSend = computed(() => !!(draftText.value.trim() || streaming.value) && !streaming.value)
 
-async function send(rawText, asInstruction) {
+async function send(rawText, asInstruction, memoryMode = 'conversation') {
   const text = (rawText || '').trim()
   if (!text || streaming.value) return
 
@@ -328,7 +330,13 @@ async function send(rawText, asInstruction) {
     content = `【写作指令】${text}`
   }
 
-  const userMessage = { id: `u_${Date.now()}`, role: 'user', content, streaming: false }
+  const userMessage = {
+    id: `u_${Date.now()}`,
+    role: 'user',
+    content,
+    memoryMode,
+    streaming: false
+  }
   const assistantMessage = { id: `a_${Date.now()}`, role: 'ai', content: '', streaming: true }
   messages.value.push(userMessage, assistantMessage)
   draftText.value = ''
@@ -344,7 +352,8 @@ async function send(rawText, asInstruction) {
         message: content,
         sessionId: workSessionId(props.work),
         workId: props.work?.workId,
-        chapterId: props.chapter?.chapterId || undefined
+        chapterId: props.chapter?.chapterId || undefined,
+        memoryMode
       },
       {
         signal: abortController.signal,
@@ -375,7 +384,7 @@ function handleRegenerate(message) {
   const previous = messages.value[index - 1]
   if (!previous) return
   messages.value.splice(index, 1)
-  send(previous.content, false)
+  send(previous.content, false, previous.memoryMode || 'conversation')
 }
 
 function stopStream() {

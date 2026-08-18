@@ -350,7 +350,8 @@ export function streamNovelWrite(payload, { signal, onChunk, onEvent } = {}) {
       message: payload.message,
       sessionId: payload.sessionId,
       workId: payload.workId,
-      chapterId: payload.chapterId
+      chapterId: payload.chapterId,
+      memoryMode: payload.memoryMode || 'conversation'
     },
     signal,
     onChunk,

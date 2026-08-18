@@ -55,6 +55,9 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
     private static final int PACING_CONTENT_MAX_CHARS = 100_000;
     /** 单条设定卡内容长度上限（与 Python 契约一致）。 */
     private static final int SETTING_CONTENT_MAX_CHARS = 4_000;
+    /** 导出手稿的章节标题分隔线。 */
+    private static final String CHAPTER_DIVIDER_LINE =
+            "========================================";
     /** 单条伏笔详情长度上限（与 Python 契约一致）。 */
     private static final int FORESHADOW_DESCRIPTION_MAX_CHARS = 1_000;
 
@@ -241,7 +244,10 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
                     chapterMapper.selectAiNovelChapterListByWorkId(workId);
             context.setChapterNo(chapter.getChapterNo());
             context.setChapterTitle(chapter.getChapterTitle());
-            context.setChapterSynopsis(chapter.getChapterBrief());
+            // 正文刚修改时旧摘要会被清空为 ""。Python 的可选字段契约要求
+            // “缺省或非空”，不能把空字符串发过去，否则创作端点会直接返回 422。
+            context.setChapterSynopsis(StringUtils.isBlank(chapter.getChapterBrief())
+                    ? null : chapter.getChapterBrief().trim());
             context.setStorySummary(NovelStorySummaryBuilder.build(
                     workChapters, chapter, CONTEXT_STORY_SUMMARY_CHARS));
             String continuationSource = chapter.getContent();
@@ -300,11 +306,17 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
         {
             List<AiNovelChapter> chapters =
                     chapterMapper.selectAiNovelChapterListByWorkId(workId);
+            boolean firstChapter = true;
             for (AiNovelChapter chapter : chapters)
             {
-                sb.append("\n\n")
-                        .append(StringUtils.isNotBlank(chapter.getChapterTitle())
-                                ? chapter.getChapterTitle() : "第 " + chapter.getChapterNo() + " 章");
+                if (!firstChapter)
+                {
+                    // 章节之间比正文段落（\n\n）留出更大的空行
+                    sb.append("\n\n\n");
+                }
+                firstChapter = false;
+                sb.append('\n');
+                appendChapterHeading(sb, chapter);
                 if (StringUtils.isNotBlank(chapter.getContent()))
                 {
                     sb.append("\n\n").append(chapter.getContent());
@@ -316,6 +328,29 @@ public class AiNovelWorkServiceImpl implements IAiNovelWorkService
             sb.append("\n\n").append(work.getManuscript());
         }
         return sb.toString();
+    }
+
+    /** 拼接醒目的章节标题块：上下分隔线 + 章号与标题。 */
+    private static void appendChapterHeading(StringBuilder sb, AiNovelChapter chapter)
+    {
+        String title = chapter.getChapterTitle();
+        if (StringUtils.isNotBlank(title))
+        {
+            // 标题已自带"第 X 章"前缀（前端新章默认生成）时直接使用，避免章号重复
+            boolean hasOwnNumber = title.startsWith("第") && title.contains("章");
+            if (!hasOwnNumber && chapter.getChapterNo() != null)
+            {
+                title = "第 " + chapter.getChapterNo() + " 章  " + title;
+            }
+        }
+        else
+        {
+            title = chapter.getChapterNo() == null
+                    ? "未命名章节" : "第 " + chapter.getChapterNo() + " 章";
+        }
+        sb.append(CHAPTER_DIVIDER_LINE).append('\n')
+                .append(title).append('\n')
+                .append(CHAPTER_DIVIDER_LINE);
     }
 
     /** 截取少量正文末尾片段，只用于句段与语气衔接。 */

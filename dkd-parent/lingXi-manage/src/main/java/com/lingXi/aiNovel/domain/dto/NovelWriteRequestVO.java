@@ -33,4 +33,8 @@ public class NovelWriteRequestVO {
 
     /** 当前章节ID（长篇小说）。 */
     private Long chapterId;
+
+    /** 记忆模式：conversation-作品主会话，stateless-仅使用本次作品上下文。 */
+    @Pattern(regexp = "^(conversation|stateless)$", message = "记忆模式无效")
+    private String memoryMode = "conversation";
 }
