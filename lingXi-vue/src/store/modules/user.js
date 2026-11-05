@@ -42,6 +42,7 @@ const useUserStore = defineStore(
               this.permissions = res.permissions
             } else {
               this.roles = ['ROLE_DEFAULT']
+              this.permissions = []
             }
             this.id = user.userId
             this.name = user.userName
@@ -54,16 +55,16 @@ const useUserStore = defineStore(
       },
       // 退出系统
       logOut() {
-        return new Promise((resolve, reject) => {
-          logout(this.token).then(() => {
-            this.token = ''
-            this.roles = []
-            this.permissions = []
-            removeToken()
-            resolve()
-          }).catch(error => {
-            reject(error)
-          })
+        return logout(this.token).catch(() => {
+          // 服务端不可用时仍然退出本地会话，避免失效令牌阻断重新登录。
+        }).finally(() => {
+          this.token = ''
+          this.id = ''
+          this.name = ''
+          this.avatar = ''
+          this.roles = []
+          this.permissions = []
+          removeToken()
         })
       }
     }

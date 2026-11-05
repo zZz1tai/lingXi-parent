@@ -52,3 +52,13 @@ test('drops unsafe image sources', () => {
   assert.ok(html.includes('src="https://a.com/x.png"'));
   assert.ok(!html.includes('src="javascript:'));
 });
+
+test('OpenUI 链接正文不能注入 HTML，媒体不接受伪回环地址', () => {
+  const html = renderOpenUiMarkdown('[<img src=x onerror=alert(1)>](https://example.com)');
+  assert.ok(!html.includes('<img'));
+  assert.ok(html.includes('&lt;img'));
+  for (const url of ['http://localhost.attacker.invalid/x', 'http://127.0.0.1@attacker.invalid/x']) {
+    assert.equal(isSafeMediaUrl(url), false);
+    assert.ok(!renderOpenUiMarkdown(`[x](${url}) ![x](${url})`).includes(url));
+  }
+});

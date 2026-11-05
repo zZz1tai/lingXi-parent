@@ -708,7 +708,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue';
 import dayjs from 'dayjs';
-import { marked } from 'marked';
+import { Marked } from 'marked';
 import {
   ElAlert,
   ElButton,
@@ -780,28 +780,11 @@ import {
 } from '@/utils/quickVideoImages';
 import {
   isSafeExternalUrl,
-  sanitizeRawHtmlBlock
+  safeMarkdownRenderer
 } from '@/utils/markdownSafety';
 
-// 配置marked
-marked.setOptions({
-  breaks: true, // 启用空行转换为<br>标签
-  gfm: true,
-  headerIds: false
-});
-
 // ── AI 生成媒体（图片/视频）渲染 ──────────────────────────────────────────
-const chatMediaRenderer = new marked.Renderer();
-
-// 正文 Markdown 的安全边界：原始 HTML 转义、链接/图片仅允许 https 与回环 http。
-chatMediaRenderer.html = token => sanitizeRawHtmlBlock(token?.text || '');
-chatMediaRenderer.link = ({ href, title, text }) => {
-  if (!isSafeExternalUrl(href)) return escapeHtmlAttribute(text || href || '');
-  const attrs = `href="${escapeHtmlAttribute(href)}"`
-    + (title ? ` title="${escapeHtmlAttribute(title)}"` : '')
-    + ' rel="noopener noreferrer" target="_blank"';
-  return `<a ${attrs}>${text}</a>`;
-};
+const chatMediaRenderer = { ...safeMarkdownRenderer };
 
 const MEDIA_ICON_ZOOM =
   '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 13.5 13.5"/></svg>';
@@ -847,7 +830,7 @@ function mediaFilename(url, fallbackExt) {
 }
 
 // 图片：回复内显示低清预览，附带 预览/下载 按钮。
-chatMediaRenderer.image = (href, title, text) => {
+chatMediaRenderer.image = ({ href, text }) => {
   if (!href) return '';
   if (!isSafeExternalUrl(href)) return escapeHtmlAttribute(text || href);
   const src = escapeHtmlAttribute(href);
@@ -866,7 +849,7 @@ chatMediaRenderer.image = (href, title, text) => {
     + '</span>'
   );
 };
-marked.setOptions({ renderer: chatMediaRenderer });
+const chatMarked = new Marked({ breaks: true, gfm: true, renderer: chatMediaRenderer });
 
 // 转换markdown为html（带内存缓存，切会话/重复渲染时避免反复解析）
 const markdownCache = new Map();
@@ -879,7 +862,7 @@ const renderMarkdown = (content) => {
   const cleanedContent = content
     .replace(/\n{3,}/g, '\n\n') // 将3个以上连续换行替换为2个
     .trim();
-  let html = marked.parse(cleanedContent);
+  let html = chatMarked.parse(cleanedContent);
   // 回复中内嵌的视频（原生 <video>）同样包装 全屏/下载 按钮。
   html = html.replace(
     /<video\b([^>]*)>([\s\S]*?)<\/video>/gi,

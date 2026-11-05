@@ -24,7 +24,11 @@ from app.api.v1.chapter import router as chapter_router
 from app.api.v1.novel import router as novel_router
 from app.config.settings import settings
 from app.api.auth import require_service_auth
-from app.api.middleware import ResourceLimitMiddleware
+from app.api.middleware import (
+    RequestBodyTooLarge,
+    ResourceLimitMiddleware,
+    request_body_too_large_handler,
+)
 from app.agents.checkpoints import checkpointer_lifespan
 from app.agents.stores import store_lifespan
 from app.api.dependencies import configure_agent_runtime, reset_singletons
@@ -142,6 +146,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs" if settings.docs_enabled else None,
     redoc_url="/redoc" if settings.docs_enabled else None,
+    openapi_url="/openapi.json" if settings.docs_enabled else None,
 )
 
 
@@ -196,6 +201,7 @@ async def request_logging_middleware(request: Request, call_next):  # type: igno
 app.add_exception_handler(AgentError, agent_error_handler)  # type: ignore
 app.add_exception_handler(Exception, generic_error_handler)  # type: ignore
 app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore
+app.add_exception_handler(RequestBodyTooLarge, request_body_too_large_handler)
 
 
 # ── 路由注册 ────────────────────────────────────────────────────────────────

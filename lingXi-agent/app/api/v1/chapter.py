@@ -13,6 +13,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Iterator
+from contextlib import suppress
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Response
@@ -441,11 +442,15 @@ async def analyze_chapter_stream(
                     }
                 )
             finally:
-                await queue.put(None)
+                # 断开连接时队列可能已满，结束标记不能阻塞取消和资源释放。
+                with suppress(asyncio.QueueFull):
+                    queue.put_nowait(None)
 
         task = asyncio.create_task(run_analysis())
         try:
             while True:
+                if task.done() and queue.empty():
+                    break
                 event = await queue.get()
                 if event is None:
                     break

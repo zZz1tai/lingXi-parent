@@ -330,6 +330,7 @@
 </template>
 
 <script setup name="User">
+import { h } from 'vue';
 import { getToken } from "@/utils/auth";
 import { changeUserStatus, listUser, resetUserPwd, delUser, getUser, updateUser, addUser, deptTreeSelect } from "@/api/system/user";
 
@@ -525,7 +526,10 @@ const handleFileSuccess = (response, file, fileList) => {
   upload.open = false;
   upload.isUploading = false;
   proxy.$refs["uploadRef"].handleRemove(file);
-  proxy.$alert("<div style='overflow: auto;overflow-x: hidden;max-height: 70vh;padding: 10px 20px 0;'>" + response.msg + "</div>", "导入结果", { dangerouslyUseHTMLString: true });
+  const message = String(response.msg || '').replace(/<br\s*\/?>/gi, '\n');
+  proxy.$alert(h('div', {
+    style: { overflow: 'auto', maxHeight: '70vh', whiteSpace: 'pre-wrap' }
+  }, message), '导入结果');
   getList();
 };
 /** 提交上传文件 */

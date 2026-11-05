@@ -24,5 +24,7 @@ async def require_service_auth(
     expected = settings.service_api_key_value
     if not expected:
         raise ConfigurationError("Agent service authentication is not configured")
-    if supplied_key is None or not compare_digest(supplied_key, expected):
+    if supplied_key is None or not compare_digest(
+        supplied_key.encode("utf-8"), expected.encode("utf-8")
+    ):
         raise AgentError("Unauthorized", code="UNAUTHORIZED", status_code=401)

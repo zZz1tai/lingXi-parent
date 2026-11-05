@@ -3,11 +3,13 @@ package com.lingXi.aiVedio.storage;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.Iterator;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -30,6 +32,9 @@ public class AiVideoLocalAssetStorage
     @Autowired
     private FileStorageService fileStorageService;
 
+    @Autowired
+    private AiVideoRemoteAssetDownloader remoteAssetDownloader;
+
     /**
      * 将远程图片下载并转存到文件存储平台。
      *
@@ -44,17 +49,8 @@ public class AiVideoLocalAssetStorage
     public StoredImage store(Long projectId, Long assetId, Integer versionNo,
             String assetCode, String remoteUrl) throws Exception
     {
-        byte[] bytes = download(remoteUrl, 60000, MAX_REMOTE_IMAGE_BYTES);
-        validateRemoteImage(bytes);
-        String filename = versionedFilename(assetCode, assetId, versionNo, ".png");
-        FileInfo fileInfo = fileStorageService.of(bytes, filename, "image/png")
-                .setPath("aivideo/" + projectId + "/images/")
-                .setSaveFilename(filename)
-                .upload();
-        if (fileInfo == null || fileInfo.getUrl() == null) throw new IllegalStateException("OSS 图片上传失败");
-        BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
-        return new StoredImage(fileInfo.getUrl(), fileInfo.getSize(), sha256(bytes), image.getWidth(),
-                image.getHeight(), fileInfo.getPlatform());
+        byte[] bytes = remoteAssetDownloader.download(remoteUrl, 60000, MAX_REMOTE_IMAGE_BYTES);
+        return storeImage(projectId, assetId, versionNo, assetCode, bytes, false);
     }
 
     /**
@@ -70,6 +66,13 @@ public class AiVideoLocalAssetStorage
      */
     public StoredImage storeUploadedImage(Long projectId, Long assetId, Integer versionNo,
             String assetCode, byte[] sourceBytes) throws Exception
+    {
+        return storeImage(projectId, assetId, versionNo, assetCode, sourceBytes, true);
+    }
+
+    /** 上传与供应商图片共用尺寸预检，并统一输出真实 PNG，避免重复解码及 MIME 不匹配。 */
+    private StoredImage storeImage(Long projectId, Long assetId, Integer versionNo,
+            String assetCode, byte[] sourceBytes, boolean uploaded) throws Exception
     {
         if (sourceBytes == null || sourceBytes.length == 0)
         {
@@ -95,7 +98,7 @@ public class AiVideoLocalAssetStorage
             {
                 reader.setInput(input, true, true);
                 String formatName = reader.getFormatName();
-                if (!("png".equalsIgnoreCase(formatName)
+                if (uploaded && !("png".equalsIgnoreCase(formatName)
                         || "jpg".equalsIgnoreCase(formatName)
                         || "jpeg".equalsIgnoreCase(formatName)))
                 {
@@ -158,15 +161,24 @@ public class AiVideoLocalAssetStorage
     public StoredFile storeVideo(Long projectId, Long assetId, Integer versionNo,
             String assetCode, String remoteUrl) throws Exception
     {
-        byte[] bytes = download(remoteUrl, 120000, MAX_REMOTE_VIDEO_BYTES);
-        validateRemoteVideo(bytes);
-        String filename = versionedFilename(assetCode, assetId, versionNo, ".mp4");
-        FileInfo fileInfo = fileStorageService.of(bytes, filename, "video/mp4")
-                .setPath("aivideo/" + projectId + "/videos/")
-                .setSaveFilename(filename)
-                .upload();
-        if (fileInfo == null || fileInfo.getUrl() == null) throw new IllegalStateException("OSS 视频上传失败");
-        return new StoredFile(fileInfo.getUrl(), fileInfo.getSize(), sha256(bytes), fileInfo.getPlatform());
+        Path temporaryFile = Files.createTempFile("lingxi-video-", ".mp4");
+        try
+        {
+            remoteAssetDownloader.downloadToFile(remoteUrl, 120000, MAX_REMOTE_VIDEO_BYTES, temporaryFile);
+            validateRemoteVideo(temporaryFile);
+            String contentHash = sha256(temporaryFile);
+            String filename = versionedFilename(assetCode, assetId, versionNo, ".mp4");
+            FileInfo fileInfo = fileStorageService.of(temporaryFile.toFile(), filename, "video/mp4")
+                    .setPath("aivideo/" + projectId + "/videos/")
+                    .setSaveFilename(filename)
+                    .upload();
+            if (fileInfo == null || fileInfo.getUrl() == null) throw new IllegalStateException("OSS 视频上传失败");
+            return new StoredFile(fileInfo.getUrl(), fileInfo.getSize(), contentHash, fileInfo.getPlatform());
+        }
+        finally
+        {
+            Files.deleteIfExists(temporaryFile);
+        }
     }
 
     /**
@@ -200,55 +212,24 @@ public class AiVideoLocalAssetStorage
     }
 
     /**
-     * 校验供应商远程图片内容：必须可解码为有效图片且尺寸在允许范围内，
-     * 防止供应商错误页或垃圾内容被转存为正式资产。
-     *
-     * @param bytes 远程下载的图片字节
-     * @throws IllegalArgumentException 内容为空、无法解码或尺寸非法时抛出
-     */
-    private void validateRemoteImage(byte[] bytes)
-    {
-        if (bytes == null || bytes.length == 0)
-        {
-            throw new IllegalArgumentException("供应商图片内容为空");
-        }
-        BufferedImage image;
-        try
-        {
-            image = ImageIO.read(new ByteArrayInputStream(bytes));
-        }
-        catch (IOException ex)
-        {
-            throw new IllegalArgumentException("供应商图片内容无法解码为有效图片", ex);
-        }
-        if (image == null)
-        {
-            throw new IllegalArgumentException("供应商图片内容无法解码为有效图片");
-        }
-        int width = image.getWidth();
-        int height = image.getHeight();
-        if (width < 1 || height < 1 || width > MAX_UPLOAD_DIMENSION || height > MAX_UPLOAD_DIMENSION)
-        {
-            throw new IllegalArgumentException("供应商图片尺寸非法：" + width + "x" + height);
-        }
-    }
-
-    /**
      * 校验供应商远程视频内容：大小在允许范围内且为已知视频容器格式，
      * 防止供应商错误页或空文件被转存为正式资产。
      *
-     * @param bytes 远程下载的视频字节
+     * @param file 远程下载的视频临时文件
      * @throws IllegalArgumentException 内容过小或容器格式不识别时抛出
      */
-    private void validateRemoteVideo(byte[] bytes)
+    private void validateRemoteVideo(Path file) throws Exception
     {
-        if (bytes == null || bytes.length < MIN_REMOTE_VIDEO_BYTES)
+        if (Files.size(file) < MIN_REMOTE_VIDEO_BYTES)
         {
             throw new IllegalArgumentException("供应商视频内容为空或过小");
         }
-        if (!isPlausibleVideoContainer(bytes))
+        try (InputStream input = Files.newInputStream(file))
         {
-            throw new IllegalArgumentException("供应商视频内容不是有效的视频文件（容器格式不识别）");
+            if (!isPlausibleVideoContainer(input.readNBytes(12)))
+            {
+                throw new IllegalArgumentException("供应商视频内容不是有效的视频文件（容器格式不识别）");
+            }
         }
     }
 
@@ -269,36 +250,6 @@ public class AiVideoLocalAssetStorage
     }
 
     /**
-     * 从远程URL下载文件内容到字节数组，超过大小上限即中止。
-     *
-     * @param remoteUrl    远程地址
-     * @param readTimeout  读取超时时间（毫秒）
-     * @param maxBytes     下载大小上限（字节）
-     * @return 文件字节数组
-     * @throws Exception 下载失败或超过大小上限时抛出异常
-     */
-    private byte[] download(String remoteUrl, int readTimeout, long maxBytes) throws Exception
-    {
-        HttpURLConnection connection = (HttpURLConnection) new URL(remoteUrl).openConnection();
-        connection.setConnectTimeout(10000);
-        connection.setReadTimeout(readTimeout);
-        try (InputStream input = connection.getInputStream(); java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream())
-        {
-            byte[] buffer = new byte[8192];
-            int read;
-            while ((read = input.read(buffer)) != -1)
-            {
-                if (output.size() + read > maxBytes)
-                {
-                    throw new IllegalStateException("远程文件超过大小上限");
-                }
-                output.write(buffer, 0, read);
-            }
-            return output.toByteArray();
-        }
-    }
-
-    /**
      * 计算字节数组的SHA-256哈希值。
      *
      * @param bytes 字节数组
@@ -308,9 +259,17 @@ public class AiVideoLocalAssetStorage
     private String sha256(byte[] bytes) throws Exception
     {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        StringBuilder hash = new StringBuilder();
-        for (byte value : digest.digest(bytes)) hash.append(String.format("%02x", value));
-        return hash.toString();
+        return HexFormat.of().formatHex(digest.digest(bytes));
+    }
+
+    private String sha256(Path file) throws Exception
+    {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (DigestInputStream input = new DigestInputStream(Files.newInputStream(file), digest))
+        {
+            input.transferTo(OutputStream.nullOutputStream());
+        }
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     /**

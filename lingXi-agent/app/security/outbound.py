@@ -50,7 +50,10 @@ def validate_outbound_http_url(
         raise InputValidationError("Provider URL is required")
 
     candidate = url.strip()
-    parsed = urlsplit(candidate)
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError as exc:
+        raise InputValidationError("Provider URL is invalid") from exc
     if parsed.scheme not in {"https", "http"}:
         raise InputValidationError("Provider URL must use HTTPS")
     if parsed.username is not None or parsed.password is not None:
@@ -69,7 +72,9 @@ def validate_outbound_http_url(
     configured = _normalized_allowlist(
         allowed_hosts if allowed_hosts is not None else settings.outbound_host_allowlist
     )
-    authority = f"{host}:{port}" if port is not None else host
+    # IPv6 地址必须保留方括号，避免重新拼装后被 HTTP 客户端误解析。
+    authority_host = f"[{host}]" if ":" in host else host
+    authority = f"{authority_host}:{port}" if port is not None else authority_host
     default_port = 443 if parsed.scheme == "https" else 80
     non_default_port = port is not None and port != default_port
     if not _host_is_allowed(host, authority, configured) or (

@@ -1,7 +1,5 @@
 package com.lingXi.web.controller.common;
 
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import jakarta.servlet.http.HttpServletRequest;
@@ -24,6 +22,7 @@ import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.common.utils.StringUtils;
 import com.lingXi.common.utils.file.FileUploadUtils;
 import com.lingXi.common.utils.file.FileUtils;
+import com.lingXi.common.utils.file.MimeTypeUtils;
 import com.dkd.framework.config.ServerConfig;
 
 /**
@@ -67,7 +66,7 @@ public class CommonController
             response.setContentType(MediaType.APPLICATION_OCTET_STREAM_VALUE);
             FileUtils.setAttachmentResponseHeader(response, realFileName);
             FileUtils.writeBytes(filePath, response.getOutputStream());
-            if (delete)
+            if (Boolean.TRUE.equals(delete))
             {
                 FileUtils.deleteFile(filePath);
             }
@@ -86,15 +85,14 @@ public class CommonController
     {
         try
         {
-//            // 上传文件路径
-//            String filePath = RuoYiConfig.getUploadPath();
-//            // 上传并返回新文件名称
-//            String fileName = FileUploadUtils.upload(filePath, file);
-//            String url = serverConfig.getUrl() + fileName;
-            String objectName = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) + "/";
+            FileUploadUtils.assertAllowed(file, MimeTypeUtils.DEFAULT_ALLOWED_EXTENSION);
             FileInfo fileInfo = fileStorageService.of(file)
                     .setPath("upload/")
                     .upload();  //将文件上传到对应地方
+            if (fileInfo == null || StringUtils.isEmpty(fileInfo.getUrl()))
+            {
+                return AjaxResult.error("文件上传失败，请稍后重试");
+            }
             AjaxResult ajax = AjaxResult.success();
             ajax.put("url", fileInfo.getUrl());
             ajax.put("fileName", fileInfo.getUrl());
@@ -104,7 +102,8 @@ public class CommonController
         }
         catch (Exception e)
         {
-            return AjaxResult.error(e.getMessage());
+            log.warn("文件上传失败，errorType={}", e.getClass().getSimpleName());
+            return AjaxResult.error("文件上传失败，请检查文件类型、大小和名称后重试");
         }
     }
 
@@ -116,6 +115,15 @@ public class CommonController
     {
         try
         {
+            if (files == null || files.isEmpty())
+            {
+                return AjaxResult.error("请选择要上传的文件");
+            }
+            // 全部通过校验后再写入，避免后续非法文件导致前面的文件成为无引用对象。
+            for (MultipartFile file : files)
+            {
+                FileUploadUtils.assertAllowed(file, MimeTypeUtils.DEFAULT_ALLOWED_EXTENSION);
+            }
             // 上传文件路径
             String filePath = RuoYiConfig.getUploadPath();
             List<String> urls = new ArrayList<String>();
@@ -141,7 +149,8 @@ public class CommonController
         }
         catch (Exception e)
         {
-            return AjaxResult.error(e.getMessage());
+            log.warn("批量文件上传失败，errorType={}", e.getClass().getSimpleName());
+            return AjaxResult.error("文件上传失败，请检查文件类型、大小和名称后重试");
         }
     }
 

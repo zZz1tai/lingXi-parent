@@ -1,21 +1,22 @@
 package com.lingXi.aiVedio.storage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
 import org.dromara.x.file.storage.core.FileInfo;
 import org.dromara.x.file.storage.core.FileStorageService;
@@ -36,12 +37,15 @@ class AiVideoLocalAssetStorageTest
     @Mock
     private UploadPretreatment pretreatment;
 
+    @Mock
+    private AiVideoRemoteAssetDownloader remoteAssetDownloader;
+
     @InjectMocks
     private AiVideoLocalAssetStorage storage;
 
     private AutoCloseable mocks;
-    private HttpServer server;
     private final AtomicReference<byte[]> responseBody = new AtomicReference<>(new byte[0]);
+    private final AtomicReference<Path> videoDownloadPath = new AtomicReference<>();
 
     private static byte[] onePixelPng()
     {
@@ -81,32 +85,29 @@ class AiVideoLocalAssetStorageTest
         when(fileInfo.getSize()).thenReturn(Long.valueOf(42));
         when(fileInfo.getPlatform()).thenReturn("aliyun-oss-1");
         when(pretreatment.upload()).thenReturn(fileInfo);
-
-        server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/", this::respond);
-        server.start();
-    }
-
-    private void respond(HttpExchange exchange) throws IOException
-    {
-        byte[] body = responseBody.get();
-        exchange.sendResponseHeaders(200, body.length);
-        try (OutputStream output = exchange.getResponseBody())
-        {
-            output.write(body);
-        }
+        when(remoteAssetDownloader.download(anyString(), anyInt(), anyLong()))
+                .thenAnswer(invocation -> responseBody.get());
+        doAnswer(invocation -> {
+            Path target = invocation.getArgument(3);
+            videoDownloadPath.set(target);
+            Files.write(target, responseBody.get());
+            return null;
+        }).when(remoteAssetDownloader).downloadToFile(anyString(), anyInt(), anyLong(), any(Path.class));
     }
 
     @AfterEach
     void tearDown() throws Exception
     {
-        server.stop(0);
         mocks.close();
+        if (videoDownloadPath.get() != null)
+        {
+            assertFalse(Files.exists(videoDownloadPath.get()), "视频临时文件必须在成功或异常后删除");
+        }
     }
 
     private String remoteUrl(String path)
     {
-        return "http://127.0.0.1:" + server.getAddress().getPort() + path;
+        return "https://assets.example.test" + path;
     }
 
     @Test
@@ -137,6 +138,40 @@ class AiVideoLocalAssetStorageTest
         assertEquals(Integer.valueOf(1), stored.getWidth());
         assertEquals(Integer.valueOf(1), stored.getHeight());
         assertTrue(stored.getSha256() != null && stored.getSha256().length() == 64);
+    }
+
+    @Test
+    void imageRejectsHugeDimensionsBeforeDecodingPixels() throws Exception
+    {
+        byte[] png = onePixelPng();
+        // 修改 IHDR 宽度和 CRC，不分配巨幅像素；解码像素前必须拒绝头部声明的尺寸。
+        java.nio.ByteBuffer.wrap(png, 16, 4).putInt(100_000);
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+        crc.update(png, 12, 17);
+        java.nio.ByteBuffer.wrap(png, 29, 4).putInt((int) crc.getValue());
+        responseBody.set(png);
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> storage.store(1L, 10L, 1, "SHOT_KEYFRAME", remoteUrl("/huge.png")));
+        assertTrue(exception.getMessage().contains("8192"));
+        verify(pretreatment, never()).upload();
+    }
+
+    @Test
+    void supplierJpegIsNormalizedToDeclaredPng() throws Exception
+    {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(1, 1,
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "jpg", output);
+        responseBody.set(output.toByteArray());
+        storage.store(1L, 10L, 1, "SHOT_KEYFRAME", remoteUrl("/image.jpg"));
+        org.mockito.ArgumentCaptor<Object> uploaded = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(fileStorageService).of(uploaded.capture(), anyString(), anyString());
+        byte[] bytes = (byte[]) uploaded.getValue();
+        assertEquals(0x89, bytes[0] & 0xff);
+        assertEquals('P', bytes[1]);
+        assertEquals('N', bytes[2]);
+        assertEquals('G', bytes[3]);
     }
 
     @Test
@@ -174,5 +209,31 @@ class AiVideoLocalAssetStorageTest
                 storage.storeVideo(1L, 10L, 1, "VIDEO_CLIP", remoteUrl("/clip.mp4"));
         verify(pretreatment).upload();
         assertTrue(stored.getSha256() != null && stored.getSha256().length() == 64);
+        org.mockito.ArgumentCaptor<Object> uploaded = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(fileStorageService).of(uploaded.capture(), anyString(), anyString());
+        assertTrue(uploaded.getValue() instanceof java.io.File, "视频必须通过文件流转存");
+    }
+
+    @Test
+    void videoDeletesTemporaryFileAfterUploadFailure() throws Exception
+    {
+        responseBody.set(mp4ContainerBytes(2048));
+        when(pretreatment.upload()).thenThrow(new IllegalStateException("上传失败"));
+        assertThrows(IllegalStateException.class,
+                () -> storage.storeVideo(1L, 10L, 1, "VIDEO_CLIP", remoteUrl("/clip.mp4")));
+    }
+
+    @Test
+    void videoDeletesPartialFileAfterDownloadFailure() throws Exception
+    {
+        doAnswer(invocation -> {
+            Path target = invocation.getArgument(3);
+            videoDownloadPath.set(target);
+            Files.write(target, new byte[] {1, 2, 3});
+            throw new java.io.IOException("下载中断");
+        }).when(remoteAssetDownloader).downloadToFile(anyString(), anyInt(), anyLong(), any(Path.class));
+        assertThrows(java.io.IOException.class,
+                () -> storage.storeVideo(1L, 10L, 1, "VIDEO_CLIP", remoteUrl("/clip.mp4")));
+        verify(pretreatment, never()).upload();
     }
 }

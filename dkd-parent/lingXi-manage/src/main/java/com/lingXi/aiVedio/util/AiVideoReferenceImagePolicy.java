@@ -31,5 +31,9 @@ public final class AiVideoReferenceImagePolicy
             throw new ServiceException(safeLabel + "：图片分辨率至少为"
                     + MIN_WIDTH + "×" + MIN_HEIGHT + "，当前为" + width + "×" + height);
         }
+        if (width.intValue() > 8192 || height.intValue() > 8192)
+        {
+            throw new ServiceException(safeLabel + "：图片宽高不能超过8192像素");
+        }
     }
 }

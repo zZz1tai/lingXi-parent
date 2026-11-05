@@ -3,12 +3,18 @@ import { ElNotification , ElMessageBox, ElMessage, ElLoading } from 'element-plu
 import { getToken } from '@/utils/auth'
 import errorCode from '@/utils/errorCode'
 import { tansParams, blobValidate } from '@/utils/ruoyi'
-import cache from '@/plugins/cache'
 import { saveAs } from 'file-saver'
 import useUserStore from '@/store/modules/user'
 import { normalizeMultipartRequest } from '@/utils/request-data'
 
 let downloadLoadingInstance;
+// 防重仅保留当前页面的最近一次请求，避免密码、密钥等请求正文持久化到浏览器存储。
+let lastRequest;
+try {
+  sessionStorage.removeItem('sessionObj');
+} catch {
+  // 禁用浏览器存储不影响接口请求。
+}
 // 是否显示重新登录
 export let isRelogin = { show: false };
 
@@ -51,15 +57,15 @@ service.interceptors.request.use(config => {
       data: typeof config.data === 'object' ? JSON.stringify(config.data) : config.data,
       time: new Date().getTime()
     }
-    const requestSize = Object.keys(JSON.stringify(requestObj)).length; // 请求数据大小
+    const requestSize = JSON.stringify(requestObj).length; // 请求数据大小
     const limitSize = 5 * 1024 * 1024; // 限制存放数据5M
     if (requestSize >= limitSize) {
       console.warn(`[${config.url}]: ` + '请求数据大小超出允许的5M限制，无法进行防重复提交验证。')
       return config;
     }
-    const sessionObj = cache.session.getJSON('sessionObj')
+    const sessionObj = lastRequest
     if (sessionObj === undefined || sessionObj === null || sessionObj === '') {
-      cache.session.setJSON('sessionObj', requestObj)
+      lastRequest = requestObj
     } else {
       const s_url = sessionObj.url;                // 请求地址
       const s_data = sessionObj.data;              // 请求数据
@@ -70,14 +76,14 @@ service.interceptors.request.use(config => {
         console.warn(`[${s_url}]: ` + message)
         return Promise.reject(new Error(message))
       } else {
-        cache.session.setJSON('sessionObj', requestObj)
+        lastRequest = requestObj
       }
     }
   }
   return config
 }, error => {
     console.log(error)
-    Promise.reject(error)
+    return Promise.reject(error)
 })
 
 // 响应拦截器

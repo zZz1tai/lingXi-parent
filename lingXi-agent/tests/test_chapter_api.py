@@ -275,6 +275,59 @@ class ChapterApiContractTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(events[-1]["response"]["success"])
 
+    async def test_full_progress_queue_does_not_block_stream_close(self) -> None:
+        queue_filled = asyncio.Event()
+        analysis_closed = asyncio.Event()
+
+        async def run_analysis(_request, _response, _request_id, *, progress_callback):
+            try:
+                for index in range(100):
+                    if index == 17:
+                        queue_filled.set()
+                    await progress_callback("PLANNING", index, "离线进度")
+            finally:
+                analysis_closed.set()
+
+        with patch.object(chapter, "_run_chapter_analysis", side_effect=run_analysis):
+            response = await chapter.analyze_chapter_stream(
+                self._request(timeout_seconds=417),
+                request_id="offline-request",
+            )
+            stream = response.body_iterator
+            await asyncio.wait_for(anext(stream), timeout=1)
+            await asyncio.wait_for(queue_filled.wait(), timeout=1)
+            close_task = asyncio.create_task(stream.aclose())
+            try:
+                done, _ = await asyncio.wait({close_task}, timeout=1)
+                self.assertIn(close_task, done, "满队列不应阻塞断开连接后的清理")
+                await close_task
+                self.assertTrue(analysis_closed.is_set())
+            finally:
+                if not close_task.done():
+                    close_task.cancel()
+                    await asyncio.gather(close_task, return_exceptions=True)
+
+    async def test_full_queue_at_completion_still_delivers_terminal_result(self) -> None:
+        async def run_analysis(_request, _response, _request_id, *, progress_callback):
+            for index in range(15):
+                await progress_callback("PLANNING", index, "离线进度")
+            return chapter.AnalyzeChapterResponse(success=True, request_id=_request_id)
+
+        with patch.object(chapter, "_run_chapter_analysis", side_effect=run_analysis):
+            response = await chapter.analyze_chapter_stream(
+                self._request(timeout_seconds=417),
+                request_id="offline-request",
+            )
+
+            async def consume():
+                return [json.loads(chunk) async for chunk in response.body_iterator]
+
+            events = await asyncio.wait_for(consume(), timeout=1)
+
+        self.assertEqual(len(events), 16)
+        self.assertEqual(events[-1]["type"], "result")
+        self.assertTrue(events[-1]["response"]["success"])
+
     async def test_connection_failure_is_retryable(self) -> None:
         with (
             patch.object(chapter, "create_llm", return_value=object()),

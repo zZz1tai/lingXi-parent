@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Marked } from 'marked';
 import {
   escapeHtml,
   isSafeExternalUrl,
-  sanitizeRawHtmlBlock
+  sanitizeRawHtmlBlock,
+  safeMarkdownRenderer
 } from '../src/utils/markdownSafety.js';
 
 test('escapeHtml escapes angle brackets and quotes', () => {
@@ -57,4 +59,39 @@ test('sanitizeRawHtmlBlock blocks unsafe video blocks', () => {
     sanitizeRawHtmlBlock('<video>https://cdn.example.com/a.mp4</video>'),
     '&lt;video&gt;https://cdn.example.com/a.mp4&lt;/video&gt;'
   );
+});
+
+test('拒绝伪装成本地回环的主机、用户信息和无效 URL', () => {
+  for (const url of [
+    'http://localhost.attacker.invalid/a',
+    'http://127.0.0.1.attacker.invalid/a',
+    'http://localhost@attacker.invalid/a',
+    'http://127.0.0.1:80@attacker.invalid/a',
+    'https://user:password@example.com/a',
+    'https://',
+    'https://exa\nmple.com/a',
+    'http://localhost\\@attacker.invalid/a'
+  ]) {
+    assert.equal(isSafeExternalUrl(url), false, url);
+  }
+});
+
+test('视频回退正文及闭合标签后的嵌套 HTML 都必须转义', () => {
+  for (const body of [
+    '<img src=x onerror=alert(1)>',
+    '</video><img src=x onerror=alert(1)><video>'
+  ]) {
+    const result = sanitizeRawHtmlBlock(`<video src="https://example.com/a.mp4">${body}</video>`);
+    assert.equal(result, `<video src="https://example.com/a.mp4">${escapeHtml(body)}</video>`);
+    assert.ok(!result.includes('<img'));
+  }
+});
+
+test('链接标签中的 HTML 不能绕过渲染器，嵌套 Markdown 保持正常', () => {
+  const parser = new Marked({ renderer: safeMarkdownRenderer });
+  const html = parser.parse('[<img src=x onerror=alert(1)>](https://example.com) [**正常**](https://example.com)');
+  assert.ok(!html.includes('<img'));
+  assert.ok(html.includes('&lt;img'));
+  assert.ok(html.includes('<strong>正常</strong>'));
+  assert.ok(!parser.parse('![x](javascript:alert(1))').includes('<img'));
 });

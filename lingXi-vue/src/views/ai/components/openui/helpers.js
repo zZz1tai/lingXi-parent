@@ -1,14 +1,8 @@
 // OpenUI 渲染层共用的小工具：媒体地址校验、文本截断。
+import { isSafeExternalUrl } from '../../../../utils/markdownSafety.js'
 
 export function isSafeMediaUrl(url) {
-  if (typeof url !== 'string' || !url) return false
-  if (url.length > 2048) return false
-  if (url.startsWith('https://')) return true
-  return (
-    url.startsWith('http://localhost')
-    || url.startsWith('http://127.0.0.1')
-    || url.startsWith('http://[::1]')
-  )
+  return typeof url === 'string' && url.length <= 2048 && isSafeExternalUrl(url)
 }
 
 export function clampText(text, max = 4096) {

@@ -37,7 +37,8 @@
           <img v-if="msg.role === 'assistant'" src="/favicon.ico" alt="AI" />
           <span v-else class="avatar-text">{{ userInitial }}</span>
         </div>
-        <div class="msg-bubble" v-html="msg.role === 'assistant' ? renderMd(msg.content) : msg.content"></div>
+        <div v-if="msg.role === 'assistant'" class="msg-bubble" v-html="renderMd(msg.content)"></div>
+        <div v-else class="msg-bubble">{{ msg.content }}</div>
       </div>
     </div>
 
@@ -85,12 +86,12 @@
 <script setup name="AiChatPanel">
 import { ref, nextTick, onMounted, watch } from 'vue';
 import { RefreshRight, ArrowRight, Promotion, ChatDotRound } from '@element-plus/icons-vue';
-import { marked } from 'marked';
+import { Marked } from 'marked';
 import { createSession, streamChatWithQwen } from '@/api/ai';
 import useUserStore from '@/store/modules/user';
 import {
-  isSafeExternalUrl,
-  sanitizeRawHtmlBlock
+  escapeHtml,
+  safeMarkdownRenderer
 } from '@/utils/markdownSafety';
 
 const props = defineProps({
@@ -137,21 +138,13 @@ const messages = ref([
 ]);
 
 // Markdown 渲染：转义原始 HTML，链接仅允许 https 与本地回环 http。
-const chatPanelRenderer = new marked.Renderer();
-chatPanelRenderer.html = token => sanitizeRawHtmlBlock(token?.text || '');
-chatPanelRenderer.link = ({ href, title, text }) => {
-  if (!isSafeExternalUrl(href)) return String(text || href || '').replace(/</g, '&lt;');
-  const attrs = `href="${href.replace(/"/g, '&quot;')}"`
-    + (title ? ` title="${title.replace(/"/g, '&quot;')}"` : '')
-    + ' rel="noopener noreferrer" target="_blank"';
-  return `<a ${attrs}>${text}</a>`;
-};
+const chatPanelMarked = new Marked({ breaks: true, renderer: safeMarkdownRenderer });
 const renderMd = (text) => {
   if (!text) return '';
   try {
-    return marked.parse(text, { breaks: true, renderer: chatPanelRenderer });
+    return chatPanelMarked.parse(text);
   } catch {
-    return text;
+    return escapeHtml(text);
   }
 };
 

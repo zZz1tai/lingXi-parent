@@ -29,7 +29,7 @@ router.beforeEach((to, from, next) => {
         // 判断当前用户是否已拉取完user_info信息
         useUserStore().getInfo().then(() => {
           isRelogin.show = false
-          usePermissionStore().generateRoutes().then(accessRoutes => {
+          return usePermissionStore().generateRoutes().then(accessRoutes => {
             // 根据roles权限生成可访问的路由表
             accessRoutes.forEach(route => {
               if (!isHttp(route.path)) {
@@ -39,9 +39,10 @@ router.beforeEach((to, from, next) => {
             next({ ...to, replace: true }) // hack方法 确保addRoutes已完成
           })
         }).catch(err => {
+          isRelogin.show = false
           useUserStore().logOut().then(() => {
             ElMessage.error(err)
-            next({ path: '/' })
+            next({ path: '/login', query: { redirect: to.fullPath } })
           })
         })
       } else {
@@ -54,7 +55,7 @@ router.beforeEach((to, from, next) => {
       // 在免登录白名单，直接进入
       next()
     } else {
-      next(`/login?redirect=${to.fullPath}`) // 否则全部重定向到登录页
+      next({ path: '/login', query: { redirect: to.fullPath } }) // 保留原路径的查询参数和锚点
       NProgress.done()
     }
   }

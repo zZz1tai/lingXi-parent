@@ -3,7 +3,6 @@ package com.lingXi.common.utils.file;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Paths;
-import java.util.Objects;
 import org.apache.commons.io.FilenameUtils;
 import org.springframework.web.multipart.MultipartFile;
 import com.lingXi.common.config.RuoYiConfig;
@@ -102,12 +101,6 @@ public class FileUploadUtils
             throws FileSizeLimitExceededException, IOException, FileNameLengthLimitExceededException,
             InvalidExtensionException
     {
-        int fileNamelength = Objects.requireNonNull(file.getOriginalFilename()).length();
-        if (fileNamelength > FileUploadUtils.DEFAULT_FILE_NAME_LENGTH)
-        {
-            throw new FileNameLengthLimitExceededException(FileUploadUtils.DEFAULT_FILE_NAME_LENGTH);
-        }
-
         assertAllowed(file, allowedExtension);
 
         String fileName = extractFilename(file);
@@ -158,6 +151,14 @@ public class FileUploadUtils
     public static final void assertAllowed(MultipartFile file, String[] allowedExtension)
             throws FileSizeLimitExceededException, InvalidExtensionException
     {
+        if (file == null || file.isEmpty() || StringUtils.isEmpty(file.getOriginalFilename()))
+        {
+            throw new IllegalArgumentException("上传文件及文件名不能为空");
+        }
+        if (file.getOriginalFilename().length() > DEFAULT_FILE_NAME_LENGTH)
+        {
+            throw new FileNameLengthLimitExceededException(DEFAULT_FILE_NAME_LENGTH);
+        }
         long size = file.getSize();
         if (size > DEFAULT_MAX_SIZE)
         {
@@ -225,7 +226,7 @@ public class FileUploadUtils
         String extension = FilenameUtils.getExtension(file.getOriginalFilename());
         if (StringUtils.isEmpty(extension))
         {
-            extension = MimeTypeUtils.getExtension(Objects.requireNonNull(file.getContentType()));
+            extension = MimeTypeUtils.getExtension(file.getContentType() == null ? "" : file.getContentType());
         }
         return extension;
     }

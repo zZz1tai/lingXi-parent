@@ -1,11 +1,13 @@
 package com.lingXi.aiVedio.service;
 
-import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Iterator;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.ObjectMapper;
@@ -355,13 +357,26 @@ public class AiVideoQuickGenerationService
         try
         {
             byte[] imageBytes = image.getBytes();
-            BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(imageBytes));
-            if (decoded == null)
+            try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(imageBytes)))
             {
-                throw new ServiceException(filename + "：无法读取图片内容，请选择有效的 PNG 或 JPG");
+                Iterator<ImageReader> readers = input == null ? null : ImageIO.getImageReaders(input);
+                if (readers == null || !readers.hasNext())
+                {
+                    throw new ServiceException(filename + "：无法读取图片内容，请选择有效的 PNG 或 JPG");
+                }
+                ImageReader reader = readers.next();
+                try
+                {
+                    // 先读取头部尺寸；完整像素仅由存储层在上限校验后解码一次。
+                    reader.setInput(input, true, true);
+                    AiVideoReferenceImagePolicy.validateDimensions(
+                            reader.getWidth(0), reader.getHeight(0), filename);
+                }
+                finally
+                {
+                    reader.dispose();
+                }
             }
-            AiVideoReferenceImagePolicy.validateDimensions(
-                    decoded.getWidth(), decoded.getHeight(), filename);
             return imageBytes;
         }
         catch (IOException exception)

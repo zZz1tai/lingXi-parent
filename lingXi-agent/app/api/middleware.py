@@ -5,13 +5,37 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
 from app.utils.logger import get_request_id
 
 
-class _RequestBodyTooLarge(Exception):
-    pass
+class RequestBodyTooLarge(HTTPException):
+    """让 FastAPI 正文解析器保留 413，而不是转换成通用的 400。"""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=413, detail="Request rejected")
+
+
+def _error_response(status_code: int, code: str) -> JSONResponse:
+    response = JSONResponse(
+        status_code=status_code,
+        content={
+            "success": False,
+            "error": {"code": code, "message": "Request rejected"},
+            "request_id": get_request_id(),
+        },
+    )
+    request_id = get_request_id()
+    if request_id and request_id != "-":
+        response.headers["X-Request-ID"] = request_id
+    return response
+
+
+async def request_body_too_large_handler(_request: Any, _exc: RequestBodyTooLarge) -> JSONResponse:
+    """正文解析层捕获超限异常时仍返回统一错误信封。"""
+    return _error_response(413, "REQUEST_TOO_LARGE")
 
 
 class ResourceLimitMiddleware:
@@ -74,7 +98,7 @@ class ResourceLimitMiddleware:
             if message.get("type") == "http.request":
                 total += len(message.get("body", b""))
                 if total > self.max_body_bytes:
-                    raise _RequestBodyTooLarge
+                    raise RequestBodyTooLarge
             return message
 
         async def tracked_send(message: dict) -> None:
@@ -85,7 +109,7 @@ class ResourceLimitMiddleware:
 
         try:
             await self.app(scope, limited_receive, tracked_send)
-        except _RequestBodyTooLarge:
+        except RequestBodyTooLarge:
             if response_started:
                 raise
             await self._send_error(scope, receive, send, 413, "REQUEST_TOO_LARGE")
@@ -100,15 +124,5 @@ class ResourceLimitMiddleware:
         status_code: int,
         code: str,
     ) -> None:
-        response = JSONResponse(
-            status_code=status_code,
-            content={
-                "success": False,
-                "error": {"code": code, "message": "Request rejected"},
-                "request_id": get_request_id(),
-            },
-        )
-        request_id = get_request_id()
-        if request_id and request_id != "-":
-            response.headers["X-Request-ID"] = request_id
+        response = _error_response(status_code, code)
         await response(scope, receive, send)

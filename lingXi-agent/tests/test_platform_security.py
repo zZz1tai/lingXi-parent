@@ -9,10 +9,15 @@ import unittest
 from unittest.mock import patch
 
 import httpx
+from fastapi import FastAPI
 from pydantic import SecretStr
 
 from app.api.auth import require_service_auth
-from app.api.middleware import ResourceLimitMiddleware
+from app.api.middleware import (
+    RequestBodyTooLarge,
+    ResourceLimitMiddleware,
+    request_body_too_large_handler,
+)
 from app.main import app, lifespan
 from app.security.outbound import validate_outbound_http_url
 from app.services.http_client import close_http_client, initialize_http_client
@@ -35,6 +40,14 @@ class ServiceAuthenticationTests(unittest.TestCase):
         with patch("app.api.auth.settings.service_api_key", SecretStr("correct-secret")):
             result = asyncio.run(require_service_auth("correct-secret"))
         self.assertIsNone(result)
+
+    def test_non_ascii_service_key_is_rejected_as_unauthorized(self) -> None:
+        with patch("app.api.auth.settings.service_api_key", SecretStr("correct-secret")):
+            with self.assertRaises(AgentError) as raised:
+                asyncio.run(require_service_auth("错误密钥"))
+
+        self.assertEqual(raised.exception.status_code, 401)
+        self.assertEqual(raised.exception.code, "UNAUTHORIZED")
 
     def test_whitespace_only_service_key_fails_closed(self) -> None:
         with patch("app.api.auth.settings.service_api_key", SecretStr("   ")):
@@ -96,6 +109,24 @@ class OutboundDestinationTests(unittest.TestCase):
                 with self.assertRaises(InputValidationError):
                     validate_outbound_http_url(url, allowed_hosts=allowed)
 
+    def test_allowlisted_public_ipv6_keeps_a_valid_authority(self) -> None:
+        host = "2606:4700:4700::1111"
+        for authority, allowed in (
+            (f"[{host}]", {host}),
+            (f"[{host}]:8443", {f"[{host}]:8443"}),
+        ):
+            with self.subTest(authority=authority):
+                candidate = f"https://{authority}/v1"
+                normalized = validate_outbound_http_url(candidate, allowed_hosts=allowed)
+                self.assertEqual(normalized, candidate)
+                self.assertEqual(httpx.URL(normalized).host, host)
+
+    def test_malformed_and_private_ipv6_fail_with_a_validation_error(self) -> None:
+        for candidate in ("https://[::1/v1", "https://[::1]/v1"):
+            with self.subTest(candidate=candidate):
+                with self.assertRaises(InputValidationError):
+                    validate_outbound_http_url(candidate, allowed_hosts={"::1"})
+
 
 class ProviderClientSecurityTests(unittest.IsolatedAsyncioTestCase):
     async def test_shared_provider_client_never_follows_redirects(self) -> None:
@@ -141,6 +172,51 @@ class RequestLoggingContextTests(unittest.TestCase):
 
 
 class ResourceLimitBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_chunked_body_limit_survives_fastapi_parsing_and_releases_capacity(self) -> None:
+        limited_app = FastAPI()
+        limited_app.add_middleware(
+            ResourceLimitMiddleware,
+            max_body_bytes=8,
+            max_concurrent_requests=1,
+            queue_timeout_seconds=0.01,
+        )
+        limited_app.add_exception_handler(RequestBodyTooLarge, request_body_too_large_handler)
+
+        @limited_app.post("/")
+        async def endpoint(body: dict):
+            return body
+
+        async def chunks():
+            yield b'{"x":"'
+            yield b'oversized"}'
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=limited_app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/",
+                content=chunks(),
+                headers={"Content-Type": "application/json"},
+            )
+            healthy = await client.post("/", json={})
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.json()["error"]["code"], "REQUEST_TOO_LARGE")
+        self.assertIn("request_id", response.json())
+        self.assertEqual(healthy.status_code, 200)
+
+    async def test_disabling_docs_also_disables_the_schema_endpoint(self) -> None:
+        if app.docs_url is not None:
+            self.skipTest("此环境显式启用了 API 文档")
+        self.assertIsNone(app.openapi_url)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.get("/openapi.json")
+        self.assertEqual(response.status_code, 404)
+
     async def _request(
         self,
         *,
