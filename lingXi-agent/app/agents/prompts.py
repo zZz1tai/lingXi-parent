@@ -66,6 +66,7 @@ def compose_system_prompt(
     knowledge_available: bool = False,
     business_tools_available: bool = False,
     general_tools_available: bool = False,
+    csv_analysis_available: bool = False,
     weather_available: bool = False,
     image_generation_available: bool = False,
     current_date: date | None = None,
@@ -140,6 +141,13 @@ def compose_system_prompt(
         "- 实时业务数据查询：" + ("可用" if business_tools_available else "不可用"),
     ]
     base_prompt += "\n\n## 当前能力状态\n" + "\n".join(capability_lines)
+    if csv_analysis_available:
+        base_prompt += (
+            "\n用户表格统计工具 analyze_csv 可用。用户粘贴 CSV/TSV 或附件已提取出完整表格文本时，"
+            "合计、均值和分组统计应调用此工具，不要心算。按原文传入，不编造行、截断行或擅自转换百分比等口径。"
+            "说明统计只覆盖用户提供的数据，不是实时业务库；报告空值、非数字数量和统计口径。"
+            "编号列即使全为数字也不能解读为金额或有业务含义的合计。数据不完整或超限时请用户缩小范围或补全，不能伪称完成全量分析。"
+        )
     if not search_available:
         base_prompt += (
             "\n当前未配置联网搜索工具。需要最新公开信息时应明确说明无法查询，"
@@ -200,6 +208,7 @@ def get_system_prompt(request: ModelRequest[AgentContext]) -> str:
             }
         ),
         weather_available="get_weather" in tool_names,
+        csv_analysis_available="analyze_csv" in tool_names,
         image_generation_available=(
             "generate_image" in tool_names
             and context is not None

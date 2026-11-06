@@ -26,6 +26,7 @@ from app.agents.novel_builder import (
 from app.agents.state import AgentContext, checkpoint_thread_id
 from app.agents.tools.business_data import create_business_data_tools
 from app.agents.tools.general import create_general_tools
+from app.agents.tools.csv_analysis import create_csv_analysis_tool
 from app.agents.tools.knowledge_search import create_knowledge_search_tool
 from app.agents.tools.weather import create_weather_tool
 from app.agents.tools.web_search import get_default_tools
@@ -349,6 +350,7 @@ def get_agent(
 def _runtime_tools() -> list[Any]:
     """装配当前进程可用工具；知识后端未启用时不暴露工具。"""
     tools = create_general_tools()
+    tools.append(create_csv_analysis_tool())
     if settings.weather_enabled:
         tools.append(create_weather_tool())
     tools.extend(get_default_tools())
