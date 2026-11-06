@@ -106,6 +106,11 @@
               :disabled="loading || historyLoading"
               @locate="locateSearchMessage"
             />
+            <ChatCompare
+              :key="currentSessionId"
+              :messages="history"
+              :disabled="loading || historyLoading"
+            />
             <ChatArchive
               :key="currentSessionId"
               :messages="history"
@@ -789,6 +794,7 @@ import useUserStore from '@/store/modules/user';
 import AgentExecutionTrace from './components/AgentExecutionTrace.vue';
 import ChatSummary from './components/ChatSummary.vue';
 import ChatArchive from './components/ChatArchive.vue';
+import ChatCompare from './components/ChatCompare.vue';
 import ChatFollowUp from './components/ChatFollowUp.vue';
 import { appendFollowUp } from '@/utils/chatFollowUp';
 import ChatSearch from './components/ChatSearch.vue';
