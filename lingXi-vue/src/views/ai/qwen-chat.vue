@@ -106,6 +106,12 @@
               :disabled="loading || historyLoading"
               @locate="locateSearchMessage"
             />
+            <ChatArchive
+              :key="currentSessionId"
+              :messages="history"
+              :session-name="currentSessionName"
+              :disabled="loading || historyLoading"
+            />
             <ChatSummary
               :session-id="currentSessionId"
               :session-name="currentSessionName"
@@ -769,6 +775,7 @@ import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
 import AgentExecutionTrace from './components/AgentExecutionTrace.vue';
 import ChatSummary from './components/ChatSummary.vue';
+import ChatArchive from './components/ChatArchive.vue';
 import ChatSearch from './components/ChatSearch.vue';
 import KnowledgeCitations from './components/KnowledgeCitations.vue';
 import OpenUIRenderer from './components/openui/OpenUIRenderer.vue';
