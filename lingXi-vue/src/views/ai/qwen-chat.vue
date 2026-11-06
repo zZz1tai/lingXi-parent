@@ -100,6 +100,12 @@
               <span class="chat-header-title">{{ currentSessionName }}</span>
               <span class="chat-header-meta">灵犀助手 · 对话内容自动保存</span>
             </span>
+            <ChatSearch
+              :key="currentSessionId"
+              :messages="history"
+              :disabled="loading || historyLoading"
+              @locate="locateSearchMessage"
+            />
             <ChatSummary
               :session-id="currentSessionId"
               :session-name="currentSessionName"
@@ -124,8 +130,10 @@
           <!-- 消息列表 -->
           <div v-else class="messages-list">
             <div
-              v-for="item in history"
+              v-for="(item, messageIndex) in history"
               :key="item.id"
+              :data-message-index="messageIndex"
+              tabindex="-1"
               class="message-item"
               :class="item.isUser ? 'user-message' : 'assistant-message'"
             >
@@ -761,6 +769,7 @@ import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
 import AgentExecutionTrace from './components/AgentExecutionTrace.vue';
 import ChatSummary from './components/ChatSummary.vue';
+import ChatSearch from './components/ChatSearch.vue';
 import KnowledgeCitations from './components/KnowledgeCitations.vue';
 import OpenUIRenderer from './components/openui/OpenUIRenderer.vue';
 import { OPEN_UI_ENABLED } from '@/config/openui';
@@ -884,6 +893,7 @@ const renderMarkdown = (content) => {
 // 聊天相关状态
 const message = ref('');
 const history = ref([]);
+const historyLoading = ref(false);
 const error = ref('');
 const enableDataAnalysis = ref(false);
 const chatContainer = ref(null);
@@ -1083,6 +1093,16 @@ const scrollToBottom = () => {
       chatContainer.value.scrollTop = chatContainer.value.scrollHeight;
     }
   });
+};
+
+// 仅在当前消息列表内定位，不改变聊天正文或会话数据。
+const locateSearchMessage = async index => {
+  await nextTick();
+  const container = chatContainer.value;
+  const target = container?.querySelector(`[data-message-index="${index}"]`);
+  if (!target) return;
+  container.scrollTop += target.getBoundingClientRect().top - container.getBoundingClientRect().top - 12;
+  target?.focus({ preventScroll: true });
 };
 
 // 仅在贴近底部时才跟随滚动（流式输出期间若用户上翻则不去打扰）
@@ -1808,6 +1828,7 @@ const loadChatHistory = async () => {
   if (!currentSessionId.value) return;
   const sessionId = currentSessionId.value;
   const seq = ++historyRequestSeq;
+  historyLoading.value = true;
 
   try {
     const res = await getChatHistory(sessionId, userStore.id);
@@ -1841,6 +1862,8 @@ const loadChatHistory = async () => {
     if (seq !== historyRequestSeq || currentSessionId.value !== sessionId) return;
     console.error('加载对话历史失败:', err);
     ElMessage.error('加载对话历史失败: ' + (err?.msg || err?.message || '未知错误'));
+  } finally {
+    if (seq === historyRequestSeq) historyLoading.value = false;
   }
 };
 
@@ -1872,6 +1895,8 @@ const switchSession = async (session) => {
   smartQuestionsLoader.invalidate();
   smartQuestions.value = [];
   currentSessionId.value = session.sessionId;
+  // 切换后立即移除旧正文，加载失败时也不能搜索到上一个会话。
+  history.value = [];
   localStorage.setItem('ai_chat_session_id', session.sessionId);
   await loadChatHistory();
 };
@@ -2272,6 +2297,7 @@ onBeforeUnmount(() => {
 
   .chat-header-info {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
     width: min(100%, var(--chat-column-width));
@@ -2443,6 +2469,7 @@ onBeforeUnmount(() => {
 
 /* 消息通用样式 */
 .message-item {
+  &:focus { outline: 2px solid var(--el-color-primary); outline-offset: 4px; border-radius: 8px; }
   .message-bubble {
     padding: 10px 14px;
     border-radius: 16px;
