@@ -1,8 +1,8 @@
 # Java ↔ Agent 服务契约（v1）
 
-> 版本：v1.0
-> 日期：2026-08-08
-> 状态：基线（与 2026-08-08 源码一致）
+> 版本：v1.1（兼容扩展：对话纪要）
+> 日期：2026-11-06
+> 状态：基线及新增纪要契约
 > 适用范围：`dkd-parent/lingXi-manage` 与 `lingXi-agent` 之间的全部 HTTP/SSE 交互
 
 本文是阶段 0 的交付物：以一份独立、可审核的文档固定 Java 与 Python Agent
@@ -76,6 +76,7 @@
 | POST | `/api/v1/chat/stream` | 对话 SSE（聚合文本） |
 | POST | `/api/v1/chat/stream/v2` | 对话 SSE（结构化白名单事件） |
 | POST | `/api/v1/chat/smart-questions` | 由结构化历史生成严格 3 条快捷问题 |
+| POST | `/api/v1/chat/summary` | 对已鉴权的会话文本生成独立结构化纪要，不写入 checkpoint |
 | POST | `/api/v1/chat/resume` | 受控动作批准/拒绝后恢复 LangGraph checkpoint |
 | DELETE | `/api/v1/chat/thread` | 按 `{user_id, thread_id}` 删除 checkpoint |
 | POST | `/api/v1/chat/memory/list` | 查看当前用户长期回答偏好 |
@@ -100,6 +101,47 @@
 路径前缀 `/api/v1` 即 API 版本。新增兼容字段不升版本；删除字段、
 改变语义或新增必需字段时升级版本号。
 
+### 4.1 对话纪要（v1.1 新增）
+
+浏览器调用 `POST /api/ai/chat/summary`，仅传 `{ "sessionId": "..." }`。
+Java 使用登录身份验证会话归属与可用状态，从数据库选取该用户该会话的有效文本。
+用户消息保留 `ACCEPTED`/`SUCCEEDED`，助手消息保留 `SUCCEEDED`；兼容旧记录的空状态，
+排除错误码非空、失败、取消和空白消息。按时间及 ID 倒序取最近 101 条用于判断截断，
+向 Agent 传递的历史恢复正序，最多 100 条、单条 32,000 字符、总计 48,000 字符。
+超限时保留最近内容，Java 按 UTF-16 长度保守裁剪并保持代理对完整。
+
+Agent 请求形态：
+
+```json
+{
+  "user_id": "42",
+  "thread_id": "session-example",
+  "history": [{ "role": "user", "content": "请周五前完成巡检。" }],
+  "llm_config": { "model": "配置的模型", "api_key": "请求级密钥", "base_url": "白名单内的供应商地址" }
+}
+```
+
+Agent 返回 `success=true` 和以下 `data`。Java 使用 AjaxResult 信封返回，补充实际纳入的
+`message_count` 与 `truncated`；后者为真时页面与下载文件必须显示范围不完整。
+
+```json
+{
+  "title": "设备巡检安排",
+  "summary": "用户提出周五前完成巡检的要求。",
+  "decisions": [],
+  "actions": [{ "task": "完成巡检", "owner": "", "due_date": "周五前" }],
+  "open_questions": ["尚未明确巡检负责人"]
+}
+```
+
+输出必填且禁止额外字段：标题最多 80 字，摘要最多 2,000 字；三个列表各最多 10 项，
+结论、待确认事项、待办任务各最多 500 字，责任人与时间各最多 100 字。
+未明确的责任人与时间必须为空字符串，无条目时使用空数组。模型输出必须是完整 JSON，
+解析失败或超时返回 `CHAT_SUMMARY_FAILED`，不自动重试。
+链路复用服务认证、请求级模型配置和出站白名单，不进入 Agent 工具循环，
+不写入会话历史、checkpoint 或长期偏好，不执行待办。设计决策见
+[对话纪要 ADR](./ai-chat-summary-adr.md)。
+
 ## 5. 错误码
 
 ### 5.1 Agent 产生（稳定）
@@ -113,6 +155,7 @@
 | `AGENT_TIMEOUT` | 504 | 超过最大迭代次数 | 标记失败，人工重试 |
 | `MODEL_UNAVAILABLE` | 503 | 模型不可达 | 熔断并告警 |
 | `INTERNAL_ERROR` | 500 | 未预期异常 | 告警，不向客户端泄露详情 |
+| `CHAT_SUMMARY_FAILED` | 502 | 纪要模型调用超时、失败或输出不符合结构 | 用户手动重试 |
 
 ### 5.2 Java 兜底（仅在 Agent 响应不可解析时出现）
 
@@ -124,6 +167,7 @@
 | `AGENT_SYNOPSIS_FAILED` | 梗概生成失败 |
 | `AGENT_SYNOPSIS_STREAM_ERROR` | 梗概流失败 |
 | `AGENT_SMART_QUESTIONS_FAILED` | 快捷问题失败 |
+| `AGENT_SUMMARY_FAILED` | 纪要接口返回失败且未携带错误码 |
 | `AGENT_THREAD_DELETE_FAILED` | checkpoint 删除失败 |
 | `AGENT_MEMORY_LIST_FAILED` / `AGENT_MEMORY_UPDATE_FAILED` / `AGENT_MEMORY_CLEAR_FAILED` | 长期记忆接口失败 |
 | `IMAGE_OCR_FAILED` | 图片 OCR 失败 |

@@ -35,6 +35,7 @@ from app.api.dependencies import (
 from app.agents.state import checkpoint_thread_id
 from app.chains.business_chat import (
     analyze_context,
+    generate_chat_summary,
     generate_smart_questions,
     stream_context_analysis,
 )
@@ -46,6 +47,7 @@ from app.openui.validate import validate_spec
 from app.schemas.request import (
     ChatMode,
     ChatRequest,
+    ChatSummaryRequest,
     ActionResumeRequest,
     DeleteChatThreadRequest,
     ImageOcrRequest,
@@ -58,6 +60,7 @@ from app.schemas.response import (
     BaseResponse,
     ChatData,
     ChatResponse,
+    ChatSummaryResponse,
     ImageOcrData,
     ImageOcrResponse,
     MemoryListData,
@@ -786,6 +789,49 @@ async def smart_questions(
             type(exc).__name__,
         )
         raise SearchError("Smart question generation failed") from exc
+
+
+@router.post("/summary", response_model=ChatSummaryResponse, summary="生成会话纪要")
+async def chat_summary(
+    request: ChatSummaryRequest,
+    request_id: str = Depends(get_request_id),
+) -> ChatSummaryResponse:
+    """仅分析 Java 提供的已鉴权历史，不修改原会话。"""
+    try:
+        llm = create_llm(
+            request.llm_config,
+            profile="chat-summary",
+            temperature=0.2,
+            timeout=60,
+            max_retries=0,
+        )
+        async with asyncio.timeout(90):
+            data = await generate_chat_summary(
+                llm,
+                request.history,
+                config=with_trace(
+                    {},
+                    "generate-chat-summary",
+                    user_id=request.user_id,
+                    thread_id=request.thread_id,
+                    tags=["chat"],
+                    metadata={"request_id": request_id},
+                ),
+            )
+        return ChatSummaryResponse(data=data)
+    except AgentError:
+        raise
+    except Exception as exc:
+        logger.error(
+            "会话纪要生成失败 | request_id=%s | error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        raise AgentError(
+            "会话纪要生成失败，请稍后重试",
+            code="CHAT_SUMMARY_FAILED",
+            status_code=502,
+        ) from exc
 
 
 def _format_sse_event(event: StreamEvent) -> str:

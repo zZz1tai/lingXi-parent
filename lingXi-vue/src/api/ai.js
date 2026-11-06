@@ -146,6 +146,16 @@ export function chatWithQwen(message, userId, userName) {
   });
 }
 
+/** 基于服务端保存的当前会话历史生成纪要。 */
+export function generateChatSummary(sessionId) {
+  return request({
+    url: '/api/ai/chat/summary',
+    method: 'post',
+    data: { sessionId },
+    timeout: 120_000
+  });
+}
+
 /**
  * 流式调用灵犀智能助手，收到文本片段时立即交给 onChunk。
  */

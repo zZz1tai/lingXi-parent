@@ -823,6 +823,29 @@ class SmartQuestionsRequest(StrictRequestModel):
     llm_config: LLMConfig | None = None
 
 
+class ChatSummaryHistoryItem(StrictRequestModel):
+    """仅包含用户可见文本的已保存会话记录。"""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
+
+
+class ChatSummaryRequest(StrictRequestModel):
+    """Java 完成归属校验并裁剪后的会话纪要请求。"""
+
+    user_id: str = Field(..., min_length=1, max_length=128)
+    thread_id: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
+    history: list[ChatSummaryHistoryItem] = Field(..., min_length=1, max_length=100)
+    llm_config: LLMConfig | None = None
+
+    @model_validator(mode="after")
+    def limit_history_text(self) -> "ChatSummaryRequest":
+        """限制进入模型的总文本量，超限时由调用方缩小范围后再试。"""
+        if sum(len(item.content) for item in self.history) > 48_000:
+            raise ValueError("history content must not exceed 48000 characters")
+        return self
+
+
 class SmartQuestionsOutput(BaseModel):
     """智能问题输出结果。"""
     model_config = ConfigDict(extra="forbid")

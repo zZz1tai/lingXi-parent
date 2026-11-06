@@ -100,6 +100,12 @@
               <span class="chat-header-title">{{ currentSessionName }}</span>
               <span class="chat-header-meta">灵犀助手 · 对话内容自动保存</span>
             </span>
+            <ChatSummary
+              :session-id="currentSessionId"
+              :session-name="currentSessionName"
+              :source-key="smartQuestionRequestKey(currentSessionId, history)"
+              :disabled="loading || !history.length"
+            />
           </div>
         </div>
         <!-- 聊天内容区域 -->
@@ -767,6 +773,7 @@ import {
 import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
 import AgentExecutionTrace from './components/AgentExecutionTrace.vue';
+import ChatSummary from './components/ChatSummary.vue';
 import OpenUIRenderer from './components/openui/OpenUIRenderer.vue';
 import { OPEN_UI_ENABLED } from '@/config/openui';
 import { restoreUiRendersFromHistory } from '@/store/modules/agentStreamDraft';

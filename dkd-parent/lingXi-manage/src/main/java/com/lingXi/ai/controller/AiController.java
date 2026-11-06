@@ -3,6 +3,7 @@ package com.lingXi.ai.controller;
 import com.lingXi.ai.domain.dto.AgentUserContext;
 import com.lingXi.ai.domain.vo.AnalyzeVO;
 import com.lingXi.ai.domain.vo.ChatVO;
+import com.lingXi.ai.domain.vo.ChatBaseVO;
 import com.lingXi.ai.domain.vo.GenerateQuestionsVO;
 import com.lingXi.ai.domain.vo.HistoryQueryVO;
 import com.lingXi.ai.domain.vo.MemoryPreferenceVO;
@@ -107,6 +108,21 @@ public class AiController {
         }
         return qwenService.chat(
                 chatVO.getSessionId(), userContext, chatVO.getMessage(), chatVO.getAttachmentIds());
+    }
+
+    /** 从当前登录用户的会话生成只读纪要，客户端不能指定历史内容。 */
+    @Operation(summary = "生成对话纪要与行动清单")
+    @PostMapping("/chat/summary")
+    public AjaxResult summarizeConversation(@Validated @RequestBody ChatBaseVO request) {
+        try {
+            String userId = currentUserId();
+            requireActiveSession(request.getSessionId(), userId);
+            return AjaxResult.success(qwenService.summarizeConversation(request.getSessionId(), userId));
+        } catch (ServiceException e) {
+            return AjaxResult.error(e.getMessage());
+        } catch (Exception e) {
+            return safeError("生成对话纪要失败，请稍后重试", e);
+        }
     }
 
     /**

@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
@@ -82,6 +82,36 @@ class ChatResponse(BaseResponse):
     """``POST /api/v1/chat/invoke``端点的响应。"""
 
     data: Optional[ChatData] = None
+
+
+class ChatSummaryAction(BaseModel):
+    """待办仅为复盘文本，不会自动创建业务任务。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    task: str = Field(..., min_length=1, max_length=500)
+    owner: str = Field(..., max_length=100)
+    due_date: str = Field(..., max_length=100)
+
+
+class ChatSummaryData(BaseModel):
+    """受严格长度及字段约束的模型纪要输出。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(..., min_length=1, max_length=80)
+    summary: str = Field(..., min_length=1, max_length=2000)
+    decisions: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(
+        ..., max_length=10
+    )
+    actions: list[ChatSummaryAction] = Field(..., max_length=10)
+    open_questions: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(
+        ..., max_length=10
+    )
+
+
+class ChatSummaryResponse(BaseResponse):
+    """会话纪要响应，不写入对话或长期记忆。"""
+
+    data: ChatSummaryData
 
 
 class ImageOcrData(BaseModel):

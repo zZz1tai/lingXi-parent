@@ -66,6 +66,13 @@ class AgentClientContractTest {
     private final AtomicReference<String> deleteMethod = new AtomicReference<>();
     private final AtomicReference<String> deleteServiceKey = new AtomicReference<>();
     private final AtomicReference<String> questionsRequest = new AtomicReference<>();
+    private final AtomicReference<String> summaryRequest = new AtomicReference<>();
+    private final AtomicReference<String> summaryServiceKey = new AtomicReference<>();
+    private final AtomicInteger summaryDelayMillis = new AtomicInteger();
+    private final AtomicReference<String> summaryResponse = new AtomicReference<>(
+            "{\"success\":true,\"data\":{\"title\":\"检查计划\",\"summary\":\"安排检查\","
+                    + "\"decisions\":[\"先检查\"],\"actions\":[{\"task\":\"检查设备\",\"owner\":\"\",\"due_date\":\"\"}],"
+                    + "\"open_questions\":[\"时间待确认\"],\"internal\":\"不得返回\"}}");
     private final AtomicReference<String> ocrRequest = new AtomicReference<>();
     private final AtomicReference<String> memoryRequest = new AtomicReference<>();
     private final AtomicReference<String> memoryMethod = new AtomicReference<>();
@@ -112,6 +119,13 @@ class AgentClientContractTest {
             send(exchange, 503,
                     "{\"success\":false,\"error\":{\"code\":\"AGENT_STREAM_HTTP_ERROR\","
                             + "\"message\":\"upstream busy\"}}");
+        });
+        server.createContext("/api/v1/chat/summary", exchange -> {
+            summaryRequest.set(readRequest(exchange));
+            summaryServiceKey.set(exchange.getRequestHeaders().getFirst("X-Agent-Service-Key"));
+            java.util.concurrent.locks.LockSupport.parkNanos(
+                    TimeUnit.MILLISECONDS.toNanos(summaryDelayMillis.get()));
+            send(exchange, 200, summaryResponse.get());
         });
         server.createContext("/questions", exchange -> {
             questionsRequest.set(readRequest(exchange));
@@ -185,6 +199,43 @@ class AgentClientContractTest {
         if (serverExecutor != null) {
             serverExecutor.shutdownNow();
         }
+    }
+
+    @Test
+    void summaryCarriesOnlyTrustedHistoryAndDoesNotGrantToolAccess() throws Exception {
+        Map<String, Object> result = client.summarizeConversation("session-summary", "user-summary",
+                java.util.List.of(Map.of("role", "user", "content", "检查设备", "private", "不能携带")));
+        JsonNode request = objectMapper.readTree(summaryRequest.get());
+        assertEquals("session-summary", request.path("thread_id").asText());
+        assertEquals("user-summary", request.path("user_id").asText());
+        assertEquals(2, request.path("history").get(0).size());
+        assertEquals("检查设备", request.path("history").get(0).path("content").asText());
+        assertFalse(request.has("tool_access"));
+        assertFalse(request.has("context_data"));
+        assertEquals("offline-service-key", summaryServiceKey.get());
+        assertEquals("检查计划", result.get("title"));
+        assertEquals(5, result.size());
+        assertFalse(result.containsKey("internal"));
+    }
+
+    @Test
+    void summaryHasEnoughReadTimeEvenWhenGlobalTimeoutIsShort() {
+        config.setReadTimeout(1);
+        summaryDelayMillis.set(50);
+        Map<String, Object> result = client.summarizeConversation("session-summary", "user-summary",
+                java.util.List.of(Map.of("role", "user", "content", "检查设备")));
+        assertEquals("检查计划", result.get("title"));
+    }
+
+    @Test
+    void summaryRejectsFailedAndMalformedResponses() {
+        summaryResponse.set("{\"success\":false,\"error\":{\"code\":\"AGENT_SUMMARY_FAILED\",\"message\":\"生成失败\"}}");
+        RuntimeException failed = assertThrows(RuntimeException.class, () -> client.summarizeConversation(
+                "session-summary", "user-summary", java.util.List.of(Map.of("role", "user", "content", "检查"))));
+        assertTrue(failed.getCause().getMessage().contains("AGENT_SUMMARY_FAILED"));
+        summaryResponse.set("{\"success\":true,\"data\":{\"title\":\"不完整\"}}");
+        assertThrows(RuntimeException.class, () -> client.summarizeConversation(
+                "session-summary", "user-summary", java.util.List.of(Map.of("role", "user", "content", "检查"))));
     }
 
     @Test

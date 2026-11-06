@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -452,6 +453,56 @@ saveAssistantReply(
             defaults.add("接下来我还能做什么？");
             return defaults;
         }
+    }
+
+    @Override
+    public Map<String, Object> summarizeConversation(String sessionId, String userId) {
+        String normalizedSessionId = requireValidSessionId(sessionId);
+        String normalizedUserId = requireUserId(userId);
+        List<ModelHistory> records = modelHistoryService.selectSummaryHistory(
+                normalizedSessionId, normalizedUserId);
+        List<Map<String, Object>> history = new ArrayList<>();
+        int remaining = 48_000;
+        boolean truncated = false;
+        for (ModelHistory record : records) {
+            // 同时复核归属和状态，避免其他服务实现返回不符合约定的记录。
+            String role = record.getMessageType();
+            String status = record.getStatus();
+            if (!normalizedUserId.equals(record.getUserId())
+                    || !normalizedSessionId.equals(record.getSessionId())
+                    || !("user".equals(role) || "assistant".equals(role))
+                    || (status != null && !status.isEmpty() && !"SUCCEEDED".equals(status)
+                        && !("user".equals(role) && "ACCEPTED".equals(status)))
+                    || (record.getErrorCode() != null && !record.getErrorCode().isEmpty())
+                    || record.getContent() == null || record.getContent().isBlank()) {
+                continue;
+            }
+            if (history.size() == 100 || remaining == 0) {
+                truncated = true;
+                break;
+            }
+            String content = record.getContent().strip();
+            int limit = Math.min(32_000, remaining);
+            if (content.length() > limit) {
+                int start = content.length() - limit;
+                // 从尾部保留最近内容，不能在 UTF-16 代理对中间切断表情等字符。
+                if (Character.isLowSurrogate(content.charAt(start))) start++;
+                content = content.substring(start).strip();
+                truncated = true;
+            }
+            if (content.isEmpty()) continue;
+            history.add(Map.of("role", role, "content", content));
+            remaining -= content.length();
+        }
+        if (history.isEmpty()) {
+            throw new ServiceException("当前会话暂无可总结的文字消息");
+        }
+        Collections.reverse(history);
+        Map<String, Object> result = new LinkedHashMap<>(agentClient.summarizeConversation(
+                normalizedSessionId, normalizedUserId, history));
+        result.put("message_count", history.size());
+        result.put("truncated", truncated);
+        return result;
     }
 
     @Override

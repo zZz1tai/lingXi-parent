@@ -57,6 +57,7 @@ app/
 | POST | `/api/v1/chat/invoke` | 普通对话；`mode=context_analysis` 时由 Python 分析结构化业务数据 |
 | POST | `/api/v1/chat/stream` | 对话或看板分析 SSE |
 | POST | `/api/v1/chat/smart-questions` | 根据结构化对话历史返回严格 3 条快捷问题 |
+| POST | `/api/v1/chat/summary` | 从 Java 已鉴权历史生成摘要、结论、待办及待确认事项，不写会话记忆 |
 | DELETE | `/api/v1/chat/thread` | 按 `{user_id, thread_id}` 永久删除会话 checkpoint |
 | POST | `/api/v1/chat/memory/list` | 查看当前用户规范化长期回答偏好 |
 | PUT | `/api/v1/chat/memory/preference` | 修改一项长期回答偏好 |

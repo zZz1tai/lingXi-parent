@@ -86,4 +86,7 @@ public interface ModelHistoryMapper
      * @return 对话历史记录集合
      */
     public List<ModelHistory> selectRecentModelHistoryBySessionId(@Param("sessionId") String sessionId, @Param("limit") Integer limit);
+
+    /** 在数据库中先按用户、有效状态过滤，再限制返回数量。 */
+    List<ModelHistory> selectSummaryHistory(@Param("sessionId") String sessionId, @Param("userId") String userId);
 }

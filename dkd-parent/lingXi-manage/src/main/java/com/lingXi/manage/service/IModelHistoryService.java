@@ -91,4 +91,7 @@ public interface IModelHistoryService
      * @return 对话历史记录集合
      */
     public List<ModelHistory> selectRecentModelHistoryBySessionId(String sessionId, Integer limit);
+
+    /** 查询用户会话中可用于纪要的最近消息，按时间及 ID 倒序，最多 101 条。 */
+    List<ModelHistory> selectSummaryHistory(String sessionId, String userId);
 }

@@ -129,4 +129,9 @@ public class ModelHistoryServiceImpl implements IModelHistoryService {
     public List<ModelHistory> selectRecentModelHistoryBySessionId(String sessionId, Integer limit) {
         return modelHistoryMapper.selectRecentModelHistoryBySessionId(sessionId, limit);
     }
+
+    @Override
+    public List<ModelHistory> selectSummaryHistory(String sessionId, String userId) {
+        return modelHistoryMapper.selectSummaryHistory(sessionId, userId);
+    }
 }

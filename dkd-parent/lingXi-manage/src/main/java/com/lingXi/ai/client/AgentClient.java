@@ -28,6 +28,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -2344,6 +2345,38 @@ public class AgentClient {
             log.error("调用 Agent 快捷问题服务失败，errorType={}",
                     e.getClass().getSimpleName());
             throw new RuntimeException("调用 Agent 快捷问题服务失败", e);
+        }
+    }
+
+    /** 搬运服务端已筛选的历史，不签发业务工具令牌，也不写入会话记忆。 */
+    public Map<String, Object> summarizeConversation(
+            String sessionId, String userId, List<Map<String, Object>> history) {
+        try {
+            ObjectNode request = objectMapper.createObjectNode();
+            request.put("user_id", userId);
+            request.put("thread_id", sessionId);
+            request.set("history", normalizeChatHistory(history));
+            putLlmConfig(request);
+            // Python 总预算 90 秒；保留传输余量，避免全局短超时提前中断纪要。
+            JsonNode response = requestJson("POST", config.getChatSummaryUrl(),
+                    objectMapper.writeValueAsString(request), 100_000);
+            requireSuccess(response, "AGENT_SUMMARY_FAILED", "Agent 对话纪要请求失败");
+            JsonNode data = response.path("data");
+            if (!data.path("title").isTextual() || data.path("title").asText().isBlank()
+                    || !data.path("summary").isTextual() || data.path("summary").asText().isBlank()
+                    || !data.path("decisions").isArray() || !data.path("actions").isArray()
+                    || !data.path("open_questions").isArray()) {
+                throw new IllegalStateException("Agent 对话纪要响应格式无效");
+            }
+            // 仅转发契约字段；结构化内容的校验和解析由 Python 负责。
+            Map<String, Object> result = new LinkedHashMap<>();
+            for (String field : List.of("title", "summary", "decisions", "actions", "open_questions")) {
+                result.put(field, objectMapper.convertValue(data.path(field), Object.class));
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("调用 Agent 对话纪要失败，errorType={}", e.getClass().getSimpleName());
+            throw new RuntimeException("调用 Agent 对话纪要失败", e);
         }
     }
 

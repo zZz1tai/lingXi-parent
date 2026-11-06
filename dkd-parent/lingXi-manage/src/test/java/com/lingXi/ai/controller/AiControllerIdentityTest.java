@@ -3,6 +3,7 @@ package com.lingXi.ai.controller;
 import com.lingXi.ai.domain.dto.AgentUserContext;
 import com.lingXi.ai.domain.vo.AnalyzeVO;
 import com.lingXi.ai.domain.vo.ChatVO;
+import com.lingXi.ai.domain.vo.ChatBaseVO;
 import com.lingXi.ai.domain.vo.GenerateQuestionsVO;
 import com.lingXi.ai.domain.vo.MemoryPreferenceVO;
 import com.lingXi.ai.service.IChatSessionService;
@@ -68,6 +69,42 @@ class AiControllerIdentityTest {
         chatSessionService = mock(IChatSessionService.class);
         controller = new TestAiController(
                 qwenService, historyService, chatSessionService);
+    }
+
+    @Test
+    void summaryUsesAuthenticatedIdentityAndRejectsForeignOrDeletingSessions() {
+        ChatBaseVO request = new ChatBaseVO();
+        request.setSessionId("summary-owned");
+        request.setUserId("spoofed");
+        allowOwnedSession("summary-owned");
+        when(qwenService.summarizeConversation("summary-owned", TRUSTED_USER_ID))
+                .thenReturn(Map.of("title", "纪要"));
+        assertEquals(Map.of("title", "纪要"), controller.summarizeConversation(request).get("data"));
+        verify(qwenService).summarizeConversation("summary-owned", TRUSTED_USER_ID);
+
+        ChatSession foreign = new ChatSession();
+        foreign.setUserId("other-user");
+        when(chatSessionService.selectChatSessionBySessionId("summary-foreign")).thenReturn(foreign);
+        request.setSessionId("summary-foreign");
+        assertEquals("会话不存在或无权访问", controller.summarizeConversation(request).get("msg"));
+        verify(qwenService, never()).summarizeConversation("summary-foreign", TRUSTED_USER_ID);
+
+        foreign.setUserId(TRUSTED_USER_ID);
+        foreign.setStatus("DELETING");
+        assertEquals("会话正在删除中，无法继续操作", controller.summarizeConversation(request).get("msg"));
+        verify(qwenService, never()).summarizeConversation("summary-foreign", TRUSTED_USER_ID);
+    }
+
+    @Test
+    void summaryReturnsUsefulEmptyMessageAndHidesProviderFailures() {
+        allowOwnedSession("summary-empty");
+        ChatBaseVO request = new ChatBaseVO();
+        request.setSessionId("summary-empty");
+        when(qwenService.summarizeConversation("summary-empty", TRUSTED_USER_ID))
+                .thenThrow(new ServiceException("当前会话暂无可总结的文字消息"))
+                .thenThrow(new RuntimeException("provider-secret"));
+        assertEquals("当前会话暂无可总结的文字消息", controller.summarizeConversation(request).get("msg"));
+        assertEquals("生成对话纪要失败，请稍后重试", controller.summarizeConversation(request).get("msg"));
     }
 
     @Test

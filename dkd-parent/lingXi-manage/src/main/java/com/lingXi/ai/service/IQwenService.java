@@ -137,6 +137,9 @@ public interface IQwenService {
      */
     List<String> generateSmartQuestions(String sessionId, String userId, String userName, List<java.util.Map<String, Object>> chatHistory);
 
+    /** 从已鉴权会话的持久化历史生成纪要，不修改对话或记忆。 */
+    Map<String, Object> summarizeConversation(String sessionId, String userId);
+
     /**
      * 清理指定用户会话在 Python Agent 中保存的 checkpoint 记忆。
      * @param sessionId 会话唯一标识

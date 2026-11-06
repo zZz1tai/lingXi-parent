@@ -125,4 +125,17 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         order by created_at desc
         limit #{limit}
     </select>
+    <!-- 用户消息受理后保持 ACCEPTED；旧版本未记录状态的文本仍可使用。 -->
+    <select id="selectSummaryHistory" resultMap="ModelHistoryResult">
+        select id, session_id, user_id, content, message_type, status, error_code, created_at
+        from tb_model_history
+        where session_id = #{sessionId} and user_id = #{userId}
+          and message_type in ('user', 'assistant')
+          and (status is null or status = '' or status = 'SUCCEEDED'
+               or (message_type = 'user' and status = 'ACCEPTED'))
+          and (error_code is null or error_code = '')
+          and content is not null and trim(content) != ''
+        order by created_at desc, id desc
+        limit 101
+    </select>
 </mapper>
