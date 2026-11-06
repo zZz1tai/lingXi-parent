@@ -1,5 +1,10 @@
 # 灵犀内部知识索引
 
+仓库提供 `platform-guide.jsonl`，包含对话纪要和引用证据功能的使用说明，可作为本地初始知识索引。
+引用展开后可复制证据与来源，或下载纯文本；导出保留版本与截断提示，不包含内部存储地址。
+本地启用时设置 `KNOWLEDGE_BACKEND=jsonl`、`KNOWLEDGE_INDEX_PATH=knowledge/platform-guide.jsonl`
+（从 `lingXi-agent` 目录启动），然后重启 Agent。对话模型仍须具备供应商调用权限。
+
 当前支持 UTF-8 JSONL 索引：每行是一个可独立理解的知识片段。索引应由受控
 发布流程生成，不接受聊天用户上传，也不应包含实时库存、订单明细、密钥、
 验证码或不必要的个人信息。

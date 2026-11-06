@@ -16,7 +16,7 @@ from app.chains.business_chat import (
     stream_context_analysis,
 )
 from app.main import app
-from app.schemas.request import ChatMode, ChatRequest, LLMConfig, SmartQuestionHistoryItem
+from app.schemas.request import ChatMode, ChatRequest, LLMConfig, SmartQuestionHistoryItem, SmartQuestionsRequest
 from app.utils.exceptions import InputValidationError
 
 
@@ -31,6 +31,15 @@ class CapturingModel:
 
 
 class BusinessChatChainTests(unittest.IsolatedAsyncioTestCase):
+    async def test_smart_questions_endpoint_accepts_request_without_thread(self) -> None:
+        model = CapturingModel('{"questions":["如何使用？","有什么例子？","下一步做什么？"]}')
+        request = SmartQuestionsRequest(chat_history=[{"role": "user", "content": "介绍知识引用"}])
+        with patch.object(chat_api, "create_llm", return_value=RunnableLambda(model.__call__)), \
+             patch.object(chat_api, "with_trace", return_value={}):
+            result = await chat_api.smart_questions(request, request_id="smart-question-test")
+        self.assertTrue(result.success)
+        self.assertEqual(len(result.data.questions), 3)
+
     async def test_context_prompt_is_built_in_python_from_structured_data(self) -> None:
         model = CapturingModel("库存异常来自设备 A")
         result = await analyze_context(

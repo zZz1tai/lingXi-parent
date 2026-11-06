@@ -21,12 +21,31 @@
         <p v-else class="citation-hint">该引用未包含原文片段。</p>
         <p v-if="citation.excerpt_truncated" class="citation-truncated">片段较长，仅保存部分内容。</p>
         <p class="citation-hint">这是回答生成时的检索快照，不代表资料当前版本。</p>
+        <el-button size="small" @click="copyCitation(citation)">复制证据与来源</el-button>
+        <el-button size="small" @click="downloadCitation(citation)">下载证据</el-button>
       </div>
     </details>
   </section>
 </template>
 
 <script setup>
+import { ElButton, ElMessage } from 'element-plus'
+import { saveAs } from 'file-saver'
+import { citationText } from '@/utils/citationText'
+
+async function copyCitation(citation) {
+  try {
+    await navigator.clipboard.writeText(citationText(citation))
+    ElMessage.success('证据与来源已复制')
+  } catch {
+    ElMessage.warning('剪贴板不可用，请点击“下载证据”保存文本。')
+  }
+}
+
+function downloadCitation(citation) {
+  saveAs(new Blob([citationText(citation)], { type: 'text/plain;charset=utf-8' }), '知识引用证据.txt')
+}
+
 defineProps({
   citations: { type: Array, default: () => [] }
 })

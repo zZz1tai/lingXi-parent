@@ -771,7 +771,6 @@ async def smart_questions(
                 {},
                 "generate-smart-questions",
                 user_id=request.user_id or "",
-                thread_id=request.thread_id or "",
                 tags=["chat"],
                 metadata={"request_id": request_id},
             ),

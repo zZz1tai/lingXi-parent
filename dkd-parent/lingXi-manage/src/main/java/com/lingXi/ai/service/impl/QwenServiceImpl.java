@@ -786,6 +786,8 @@ saveAssistantReply(
         history.setMessageType("assistant");
         history.setModelName("agent");
         history.setStatus(status);
+        // 失败和取消没有正文，仍需满足历史表的 NOT NULL 约束。
+        history.setContent("");
         history.setErrorCode(errorCode);
         history.setRequestId(RequestIdFilter.current());
         history.setCompletedAt(new Date());
