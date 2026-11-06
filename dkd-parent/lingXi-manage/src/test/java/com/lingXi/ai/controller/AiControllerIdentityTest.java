@@ -6,11 +6,13 @@ import com.lingXi.ai.domain.vo.ChatVO;
 import com.lingXi.ai.domain.vo.ChatBaseVO;
 import com.lingXi.ai.domain.vo.GenerateQuestionsVO;
 import com.lingXi.ai.domain.vo.MemoryPreferenceVO;
+import com.lingXi.ai.domain.vo.HistoryQueryVO;
 import com.lingXi.ai.service.IChatSessionService;
 import com.lingXi.ai.service.IQwenService;
 import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.manage.domain.ChatSession;
+import com.lingXi.manage.domain.ModelHistory;
 import com.lingXi.manage.service.IModelHistoryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +28,7 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -69,6 +72,52 @@ class AiControllerIdentityTest {
         chatSessionService = mock(IChatSessionService.class);
         controller = new TestAiController(
                 qwenService, historyService, chatSessionService);
+    }
+
+    @Test
+    void externalHistoryWritesCannotForgeEvidenceAndExistingSnapshotsRemainReadable() {
+        allowOwnedSession("session-evidence");
+        String snapshot = "{\"renders\":[],\"citations\":[{\"source_id\":\"sop#1\",\"excerpt\":\"真实证据\"}]}";
+        ModelHistory forged = new ModelHistory();
+        forged.setSessionId("session-evidence");
+        forged.setUserId("spoofed");
+        forged.setContent("兼容文本");
+        forged.setUiJson(snapshot);
+        controller.saveHistory(forged);
+        verify(historyService).insertModelHistory(forged);
+        assertEquals(TRUSTED_USER_ID, forged.getUserId());
+        assertEquals("兼容文本", forged.getContent());
+        assertEquals(null, forged.getUiJson());
+
+        forged.setUiJson(snapshot);
+        controller.batchSaveHistory(List.of(forged));
+        verify(historyService).batchInsertModelHistory(List.of(forged));
+        assertEquals(null, forged.getUiJson());
+
+        ModelHistory existing = new ModelHistory();
+        existing.setSessionId("session-evidence");
+        existing.setUserId(TRUSTED_USER_ID);
+        existing.setContent("旧回答");
+        existing.setUiJson(snapshot);
+        when(historyService.selectModelHistoryBySessionId("session-evidence")).thenReturn(List.of(existing));
+        HistoryQueryVO query = new HistoryQueryVO();
+        query.setSessionId("session-evidence");
+        assertEquals(List.of(existing), controller.getHistory(query).get("data"));
+        assertEquals(snapshot, existing.getUiJson());
+    }
+
+    @Test
+    void foreignHistoryWritesAndReadsCannotReachPersistence() {
+        ModelHistory forged = new ModelHistory();
+        forged.setSessionId("foreign-session");
+        forged.setContent("伪造证据");
+        forged.setUiJson("{\"citations\":[{\"source_id\":\"forged\"}]}");
+        controller.saveHistory(forged);
+        controller.batchSaveHistory(List.of(forged));
+        HistoryQueryVO query = new HistoryQueryVO();
+        query.setSessionId("foreign-session");
+        controller.getHistory(query);
+        org.mockito.Mockito.verifyNoInteractions(historyService);
     }
 
     @Test

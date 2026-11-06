@@ -217,20 +217,7 @@
                         </el-button>
                       </div>
                     </section>
-                    <div v-if="item.citations?.length" class="citation-strip">
-                      <div class="citation-heading">参考资料</div>
-                      <div class="citation-list">
-                        <span
-                          v-for="citation in item.citations"
-                          :key="citation.source_id"
-                          class="citation-chip"
-                          :title="citation.source_id"
-                        >
-                          {{ citation.title || '内部资料' }}
-                          <small v-if="citation.section">{{ citation.section }}</small>
-                        </span>
-                      </div>
-                    </div>
+                    <KnowledgeCitations :citations="item.citations || []" />
                     <div v-if="item.memorySaved?.length" class="memory-saved-note">
                       <el-icon><CircleCheck /></el-icon>
                       已记住：{{ item.memorySaved.map(memoryPreferenceText).join('、') }}
@@ -774,9 +761,10 @@ import useAiChatStore from '@/store/modules/aiChat';
 import useUserStore from '@/store/modules/user';
 import AgentExecutionTrace from './components/AgentExecutionTrace.vue';
 import ChatSummary from './components/ChatSummary.vue';
+import KnowledgeCitations from './components/KnowledgeCitations.vue';
 import OpenUIRenderer from './components/openui/OpenUIRenderer.vue';
 import { OPEN_UI_ENABLED } from '@/config/openui';
-import { restoreUiRendersFromHistory } from '@/store/modules/agentStreamDraft';
+import { restoreCitationsFromHistory, restoreUiRendersFromHistory } from '@/store/modules/agentStreamDraft';
 import {
   createLatestSingleFlight,
   smartQuestionRequestKey
@@ -1830,6 +1818,9 @@ const loadChatHistory = async () => {
       const formattedHistory = data.map(item => ({
         ...item,
         isUser: item.messageType === 'user',
+        citations: item.messageType === 'assistant'
+          ? restoreCitationsFromHistory(item.uiJson)
+          : [],
         uiRenders: item.messageType === 'assistant'
           ? restoreUiRendersFromHistory(item.uiJson)
           : []
@@ -2799,47 +2790,6 @@ onBeforeUnmount(() => {
         justify-content: flex-end;
         gap: 8px;
         margin-top: 14px;
-      }
-    }
-
-    .citation-strip {
-      margin: 12px 0 14px;
-      padding-top: 10px;
-      border-top: 1px solid #e2e8f0;
-
-      .citation-heading {
-        margin-bottom: 7px;
-        color: #64748b;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-      }
-
-      .citation-list {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-      }
-
-      .citation-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        max-width: 100%;
-        padding: 5px 8px;
-        color: #0f5f5a;
-        background: #ecfdf5;
-        border: 1px solid #ccfbf1;
-        border-radius: 6px;
-        font-size: 12px;
-
-        small {
-          overflow: hidden;
-          max-width: 180px;
-          color: #64748b;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
       }
     }
 

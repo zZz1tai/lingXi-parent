@@ -76,6 +76,7 @@ from app.schemas.response import (
 from app.utils.exceptions import AgentError, AgentTimeoutError, SearchError
 from app.utils.logger import logger
 from app.services.memory import MemoryPreference
+from app.services.knowledge import safe_knowledge_citation
 
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
@@ -972,13 +973,7 @@ def _safe_custom_event(
             thread_id=thread_id,
         )
     if event_type == "citation" and isinstance(chunk.get("citation"), dict):
-        raw_citation = chunk["citation"]
-        citation = {
-            key: raw_citation[key]
-            for key in ("title", "section", "version", "source_id", "score")
-            if key in raw_citation
-            and isinstance(raw_citation[key], (str, int, float))
-        }
+        citation = safe_knowledge_citation(chunk["citation"])
         return StreamEvent(
             type="citation",
             tool=tool_name,
@@ -1000,6 +995,42 @@ def _safe_custom_event(
         request_id=request_id,
         thread_id=thread_id,
     )
+
+
+def _current_turn_knowledge_citations(messages: Any) -> list[dict[str, object]]:
+    """只恢复本轮已授权证据快照，禁止把以前轮次的引用混入新答案。"""
+    if not isinstance(messages, (list, tuple)):
+        return []
+    start = next(
+        (index for index in range(len(messages) - 1, -1, -1)
+         if isinstance(messages[index], HumanMessage)),
+        None,
+    )
+    if start is None:
+        return []
+    citations: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for message in messages[start + 1:]:
+        if not isinstance(message, ToolMessage) or message.name != "search_knowledge":
+            continue
+        artifact = message.artifact
+        if not isinstance(artifact, dict) or artifact.get("provider") != "internal_knowledge":
+            continue
+        candidates = artifact.get("citations")
+        if not isinstance(candidates, list):
+            continue
+        for raw in candidates:
+            if not isinstance(raw, dict):
+                continue
+            citation = safe_knowledge_citation(raw)
+            source_id = citation.get("source_id")
+            if not isinstance(source_id, str) or not source_id.strip() or source_id in seen:
+                continue
+            seen.add(source_id)
+            citations.append(citation)
+            if len(citations) == 20:
+                return citations
+    return citations
 
 
 def _safe_public_action(raw: Any) -> dict[str, Any]:
@@ -1199,6 +1230,7 @@ async def _stream_agent_events(
     agent_stream: Any = None
     tool_call_started: dict[str, tuple[float, int]] = {}
     next_tool_sequence = 0
+    seen_citation_ids: set[str] = set()
     openui_mode = (
         settings.agent_openui_enabled
         and isinstance(request, ChatRequest)
@@ -1237,6 +1269,18 @@ async def _stream_agent_events(
         agent_input: dict[str, Any] | Command
         if resume:
             assert isinstance(request, ActionResumeRequest)
+            # 与恢复执行使用同一用户隔离的命名空间；证据保持生成时的历史快照语义。
+            snapshot = await agent.aget_state(
+                _build_agent_config(request, request_id=request_id)
+            )
+            if not snapshot.next:
+                raise ValueError("当前会话没有待恢复的操作")
+            for citation in _current_turn_knowledge_citations(snapshot.values.get("messages")):
+                seen_citation_ids.add(citation["source_id"])
+                yield _format_sse_event(StreamEvent(
+                    type="citation", tool="search_knowledge", data=citation,
+                    request_id=request_id, thread_id=public_thread_id,
+                ))
             agent_input = Command(
                 resume={"action_id": request.action_id, "decision": request.decision}
             )
@@ -1296,13 +1340,18 @@ async def _stream_agent_events(
                 continue
 
             if stream_mode == "custom":
-                yield _format_sse_event(
-                    _safe_custom_event(
-                        chunk,
-                        request_id=request_id,
-                        thread_id=public_thread_id,
-                    )
+                event = _safe_custom_event(
+                    chunk,
+                    request_id=request_id,
+                    thread_id=public_thread_id,
                 )
+                if event.type == "citation":
+                    source_id = (event.data or {}).get("source_id")
+                    if (not isinstance(source_id, str) or not source_id.strip()
+                            or source_id in seen_citation_ids or len(seen_citation_ids) >= 20):
+                        continue
+                    seen_citation_ids.add(source_id)
+                yield _format_sse_event(event)
                 continue
 
             if stream_mode != "updates":

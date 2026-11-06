@@ -94,6 +94,33 @@ function findLastOpenUiRender(draft, renderId) {
   return [...draft.uiRenders].reverse().find(item => item.renderId === key);
 }
 
+// 流式和历史回放共用同一份白名单；引用只展示文本，不能携带内部存储地址。
+function normalizeCitation(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const sourceId = typeof raw.source_id === 'string' ? raw.source_id : ''
+  if (!sourceId.trim() || Array.from(sourceId).length > 512) return null
+  const citation = { source_id: sourceId }
+  for (const [field, limit] of Object.entries({
+    title: 300, section: 300, version: 128, document_type: 128, excerpt: 2000
+  })) {
+    if (typeof raw[field] === 'string') {
+      citation[field] = Array.from(raw[field]).slice(0, limit).join('')
+    }
+  }
+  citation.excerpt_truncated = raw.excerpt_truncated === true
+    || (typeof raw.excerpt === 'string' && Array.from(raw.excerpt).length > 2000)
+  if (typeof raw.score === 'number' && Number.isFinite(raw.score)) citation.score = raw.score
+  return citation
+}
+
+function appendCitation(citations, raw) {
+  if (citations.length >= 20) return
+  const citation = normalizeCitation(raw)
+  if (citation && !citations.some(item => item.source_id === citation.source_id)) {
+    citations.push(citation)
+  }
+}
+
 /** 新建会话草稿（与 aiChat store 初始化结构一致）。 */
 export function createStreamDraft({
   message,
@@ -186,9 +213,8 @@ export function applyStreamEvent(draft, event) {
     updateToolStep(draft, event, event.type === 'tool_end')
     return
   }
-  if (event.type === 'citation' && event.data?.source_id) {
-    const exists = draft.citations.some(item => item.source_id === event.data.source_id)
-    if (!exists) draft.citations.push(event.data)
+  if (event.type === 'citation') {
+    appendCitation(draft.citations, event.data)
     return
   }
   if (event.type === 'memory_saved' && event.data?.preference) {
@@ -248,4 +274,21 @@ export function restoreUiRendersFromHistory(uiJson) {
       errorCode: '',
       sections: Array.isArray(item.spec) ? item.spec : []
     }))
+}
+
+/** 从已保存的回答中恢复检索证据快照，兼容不含引用的旧版历史。 */
+export function restoreCitationsFromHistory(uiJson) {
+  if (!uiJson || typeof uiJson !== 'string') return []
+  try {
+    const parsed = JSON.parse(uiJson)
+    if (!Array.isArray(parsed?.citations)) return []
+    const citations = []
+    for (const raw of parsed.citations) {
+      appendCitation(citations, raw)
+      if (citations.length === 20) break
+    }
+    return citations
+  } catch {
+    return []
+  }
 }

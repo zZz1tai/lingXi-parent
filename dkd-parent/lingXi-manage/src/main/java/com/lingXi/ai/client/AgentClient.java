@@ -61,7 +61,7 @@ public class AgentClient {
         /** 收到完整回答并确认流正常终止。 */
         void onReply(String fullReply);
 
-        /** 收到 OpenUI 渲染历史（成功回答时携带，未产生则为 null）。 */
+        /** 收到 OpenUI 与知识引用快照（成功回答时携带，未产生则为 null）。 */
         default void onUiArtifacts(String uiJson) {
         }
 
@@ -79,6 +79,8 @@ public class AgentClient {
 
     // ── OpenUI 表现层限制（与 Python app/openui 保持一致）──────────────
     private static final int OPENUI_MAX_SPEC_BYTES = 256 * 1024;
+    /** 与 MySQL MEDIUMTEXT 字节容量一致，避免展示快照导致正文持久化失败。 */
+    static final int MAX_UI_SNAPSHOT_BYTES = 16_777_215;
     private static final int OPENUI_MAX_NODES = 120;
     private static final int OPENUI_MAX_DEPTH = 8;
     private static final int OPENUI_MAX_TEXT = 4096;
@@ -1240,6 +1242,9 @@ public class AgentClient {
                                 sendSafeStreamError(emitter, structuredEvents,
                                         "Agent 流式请求失败，请稍后重试");
                                 break;
+                            } else if (!structuredEvents && "citation".equals(eventType)) {
+                                // 旧版文本流也保存证据快照，但不向旧客户端发送结构化事件。
+                                collectCitation(node, collectedUi);
                             } else if (structuredEvents && isStructuredEvent(eventType)) {
                                 if ("approval_required".equals(eventType)) {
                                     approvalPending = true;
@@ -1664,15 +1669,10 @@ public class AgentClient {
         } else if ("tool_start".equals(eventType)) {
             safe.putObject("data").put("status", "started");
             copyDisplayText(source, safe, "input_summary", 256);
-        } else if ("citation".equals(eventType) && data.isObject()) {
-            ObjectNode citation = safe.putObject("data");
-            copyDisplayText(data, citation, "title", 256);
-            copyDisplayText(data, citation, "section", 256);
-            copyDisplayText(data, citation, "version", 128);
-            copyDisplayText(data, citation, "source_id", 256);
-            if (data.path("score").isNumber()) {
-                citation.put("score", data.path("score").asDouble());
-            }
+        } else if ("citation".equals(eventType)) {
+            ObjectNode citation = collectCitation(source, uiArtifacts);
+            if (citation == null) return;
+            safe.set("data", citation);
         } else if ("memory_saved".equals(eventType) && data.isObject()) {
             ObjectNode memory = safe.putObject("data");
             copyLabel(data, memory, "preference", 64);
@@ -1769,17 +1769,84 @@ public class AgentClient {
         return false;
     }
 
-    /** 将收集到的 OpenUI 渲染打包为 {@code {"renders":[...]}}；无渲染时返回 null。 */
+    /** 每条回答最多保存 20 个来源，同一来源保留首次证据，与前端展示一致。 */
+    private ObjectNode collectCitation(JsonNode source, List<ObjectNode> artifacts) {
+        ObjectNode citation = sanitizeCitation(source.path("data"));
+        if (citation == null) return null;
+        int count = 0;
+        for (ObjectNode artifact : artifacts) {
+            if (!"citation".equals(artifact.path("type").asText())) continue;
+            count++;
+            if (citation.path("source_id").equals(artifact.path("data").path("source_id"))) return null;
+        }
+        if (count >= 20) return null;
+        ObjectNode event = objectMapper.createObjectNode().put("type", "citation");
+        event.set("data", citation);
+        artifacts.add(event);
+        return citation;
+    }
+
+    /** 重建引用证据白名单；标识不能截断，避免不同来源合并为同一条。 */
+    private ObjectNode sanitizeCitation(JsonNode data) {
+        JsonNode sourceId = data.path("source_id");
+        if (!data.isObject() || !sourceId.isTextual() || sourceId.asText().isBlank()
+                || sourceId.asText().codePointCount(0, sourceId.asText().length()) > 512) {
+            return null;
+        }
+        ObjectNode citation = objectMapper.createObjectNode();
+        citation.put("source_id", sourceId.asText());
+        copyUnicodeText(data, citation, "title", 300);
+        copyUnicodeText(data, citation, "section", 300);
+        copyUnicodeText(data, citation, "version", 128);
+        copyUnicodeText(data, citation, "document_type", 128);
+        boolean truncated = copyUnicodeText(data, citation, "excerpt", 2_000);
+        if (citation.has("excerpt") && data.path("excerpt_truncated").isBoolean()) {
+            citation.put("excerpt_truncated", truncated || data.path("excerpt_truncated").asBoolean());
+        } else if (truncated) {
+            citation.put("excerpt_truncated", true);
+        }
+        if (data.path("score").isNumber() && Double.isFinite(data.path("score").asDouble())) {
+            citation.put("score", data.path("score").asDouble());
+        }
+        return citation;
+    }
+
+    /** 按 Unicode 码点裁剪展示文本，保留完整代理对并返回是否发生截断。 */
+    private static boolean copyUnicodeText(
+            JsonNode source, ObjectNode target, String field, int maxLength) {
+        JsonNode value = source.path(field);
+        if (!value.isTextual()) return false;
+        String text = value.asText();
+        int count = text.codePointCount(0, text.length());
+        target.put(field, text.substring(0, text.offsetByCodePoints(0, Math.min(count, maxLength))));
+        return count > maxLength;
+    }
+
+    /** 按类型保存 OpenUI 与知识引用快照；旧的 renders 结构保持兼容。 */
     private String serializeUiArtifacts(List<ObjectNode> artifacts) {
         if (artifacts == null || artifacts.isEmpty()) {
             return null;
         }
         try {
             ObjectNode envelope = objectMapper.createObjectNode();
-            envelope.set("renders", objectMapper.valueToTree(artifacts));
-            return objectMapper.writeValueAsString(envelope);
+            ArrayNode renders = envelope.putArray("renders");
+            ArrayNode citations = objectMapper.createArrayNode();
+            for (ObjectNode artifact : artifacts) {
+                if ("citation".equals(artifact.path("type").asText())) {
+                    citations.add(artifact.path("data"));
+                } else {
+                    renders.add(artifact);
+                }
+            }
+            if (!citations.isEmpty()) envelope.set("citations", citations);
+            String serialized = objectMapper.writeValueAsString(envelope);
+            if (serialized.getBytes(StandardCharsets.UTF_8).length > MAX_UI_SNAPSHOT_BYTES) {
+                log.warn("回答展示快照超过持久化容量，仅保存回答正文");
+                return null;
+            }
+            return serialized;
         } catch (Exception serializationError) {
-            log.warn("序列化 OpenUI 渲染历史失败，将忽略该次渲染", serializationError);
+            log.warn("序列化回答展示快照失败，errorType={}", serializationError.getClass().getSimpleName());
             return null;
         }
     }

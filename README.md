@@ -84,7 +84,7 @@ lingXi-parent/
 - **AI 对话与分析**：Java 负责权限、业务数据和事务；Agent 负责 Prompt、模型调用、结构化输出与短期记忆。Agent 连接层带熔断降级：连续连接故障快速失败，熔断期间同步/流式对话返回固定兜底回复（SUCCEEDED + `AGENT_DEGRADED`），半开窗口自动恢复探测。
 - **AI 小说创作**：作品设定卡管理、三层大纲（全书→卷→章）AI 生成与断链检查报告、伏笔登记与追踪（按状态/优先级管理，未解伏笔随创作请求注入智能体）。
 - **AI 视频创作**：从小说章节生成章节规划、场景、分镜、人物/场景/关键帧提示词，并异步提交图片、视频任务（outbox 事件投递、指数退避重试、重启恢复扫描）。用户确认关键帧后才允许提交视频任务；支持供应商回调（HMAC 验签、时间戳防重放、eventId 幂等）与生成队列页（筛选、详情、重试、自动刷新）。
-- **内部知识检索**：Agent 按登录角色、文档有效期和版本过滤后检索 JSONL 知识索引，默认关闭。
+- **内部知识检索与证据回看**：Agent 按登录角色、文档有效期和版本过滤后检索 JSONL 知识索引，默认关闭。启用后可展开回答中的参考资料，查看原文片段、章节与版本；成功回答保存检索快照，刷新或切换会话后仍可回看。
 - **AI 对话纪要**：在对话页点击“对话纪要”，从已保存的有效文本中整理摘要、关键结论、待办和待确认事项，支持复制及下载 Markdown。超长会话只总结最近部分并显示截断提示；不改写原对话，也不自动执行待办。
 - **业务数据工具**：启用后 Agent 可调用 Java 网关查询销售汇总、任务统计、异常设备等只读数据。
 - **人工确认受控写操作**：模型只能生成维修工单提案，用户在登录端批准后才由 Java 执行创建。
@@ -161,6 +161,7 @@ mysql -u root -p < dkd-parent/sql/lingxi_all.sql
 | `lingxi_all.sql` | 新环境一站式初始化（系统表、种子数据、AI 视频工作流、小说大纲/伏笔、任务尝试记录、安全配置项等） |
 | `migration_ai_novel_outline.sql` | 创建 AI 小说三层大纲表 `ai_novel_outline`（既有环境补齐用） |
 | `migration_ai_model_history_ui_json.sql` | AI 对话历史表增加 OpenUI 渲染历史 `ui_json` 字段 |
+| `migration_ai_model_history_ui_json_capacity.sql` | 将对话正文 `content` 与快照 `ui_json` 扩大为 MEDIUMTEXT，容纳长中文消息、知识证据与 OpenUI；升级证据回看功能前执行 |
 | `migration_ai_video_generation_task_recover_count.sql` | 生成任务表增加 `recover_count` 字段并修复异常租约数据 |
 
 ## 首次安装

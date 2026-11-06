@@ -482,6 +482,10 @@ class StreamingContractTests(unittest.IsolatedAsyncioTestCase):
         captured: dict[str, object] = {}
 
         class ResumeAgent:
+            async def aget_state(self, config):
+                captured["snapshot_config"] = config
+                return SimpleNamespace(values={"messages": []}, next=("tools",))
+
             async def astream(self, agent_input, **kwargs):
                 captured["input"] = agent_input
                 captured["config"] = kwargs["config"]
@@ -536,6 +540,10 @@ class StreamingContractTests(unittest.IsolatedAsyncioTestCase):
             captured["config"]["configurable"]["thread_id"],
             checkpoint_thread_id("42", "thread-1"),
         )
+        self.assertEqual(
+            captured["snapshot_config"]["configurable"]["thread_id"],
+            checkpoint_thread_id("42", "thread-1"),
+        )
 
     async def test_v1_stream_modes_and_content_blocks_are_normalized(self) -> None:
         class FakeAgent:
@@ -585,6 +593,9 @@ class StreamingContractTests(unittest.IsolatedAsyncioTestCase):
                             "version": "2026-06",
                             "source_id": "sop#3.2",
                             "score": 0.91,
+                            "document_type": "sop",
+                            "excerpt": "补货完成后核对实际数量。",
+                            "excerpt_truncated": False,
                             "source_uri": "internal://must-not-escape",
                         },
                     },
@@ -632,6 +643,9 @@ class StreamingContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(progress["data"], {"status": "completed", "result_count": 2})
         self.assertNotIn("internal_url", json.dumps(progress))
         self.assertEqual(citation["data"]["source_id"], "sop#3.2")
+        self.assertEqual(citation["data"]["excerpt"], "补货完成后核对实际数量。")
+        self.assertIs(citation["data"]["excerpt_truncated"], False)
+        self.assertEqual(citation["data"]["document_type"], "sop")
         self.assertNotIn("source_uri", json.dumps(citation))
         self.assertEqual(
             [payload["type"] for payload in payloads].count("done"),

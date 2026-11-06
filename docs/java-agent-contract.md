@@ -1,8 +1,8 @@
 # Java ↔ Agent 服务契约（v1）
 
-> 版本：v1.1（兼容扩展：对话纪要）
+> 版本：v1.2（兼容扩展：知识引用证据快照）
 > 日期：2026-11-06
-> 状态：基线及新增纪要契约
+> 状态：基线及纪要、引用快照契约
 > 适用范围：`dkd-parent/lingXi-manage` 与 `lingXi-agent` 之间的全部 HTTP/SSE 交互
 
 本文是阶段 0 的交付物：以一份独立、可审核的文档固定 Java 与 Python Agent
@@ -194,7 +194,7 @@ Agent 返回 `success=true` 和以下 `data`。Java 使用 AjaxResult 信封返�
 | `tool_start` | 工具开始 | 仅审计摘要 | `type`、`tool`、`data.status=started` |
 | `tool_progress` | 工具进度 | 仅审计摘要 | `type`、`tool`、`data.status`、`data.result_count` |
 | `tool_end` | 工具完成 | 仅审计摘要 | `type`、`tool`、`data.status`、`data.result_count` |
-| `citation` | 知识引用 | 仅审计摘要 | `type`、`data.{title,section,version,source_id,score}` |
+| `citation` | 知识引用 | 成功回答保存证据快照 | `type`、`data.{title,section,version,source_id,score,document_type,excerpt,excerpt_truncated}` |
 | `clarification` | 澄清请求 | 建议持久化 | `type`、`content` |
 | `memory_saved` | 偏好已保存 | 保存事件不复制正文 | `type`、`data.{preference,value}` |
 | `approval_required` | 受控写操作待确认 | 必须持久化动作提案 | `type`、`data.{action_id,action_type,status,description,impact,expires_at,target.inner_code}` |
@@ -207,6 +207,46 @@ Java 白名单实现：`AgentClient.isStructuredEvent` 与 `sendStructuredEvent`
 重建事件，禁止透传工具原始参数、内部节点和任意扩展字段。
 
 新增事件必须保持旧客户端可忽略；删除或改变语义时升级 API 版本。
+
+### 6.3 知识引用证据快照（v1.2 新增）
+
+`excerpt` 取自本次检索已经裁剪并交给模型的证据，不扩大检索权限或读取完整源文件。
+Python、Java、前端均只接受白名单字段：`title`、`section` 各最多 300 个 Unicode 码点，
+`version`、`document_type` 各最多 128；`source_id` 必须为非空字符串且最多 512，
+超长标识丢弃，不截断后合并。`score` 只接受有限数字。`excerpt` 最多 2000 码点，保留原文空白，
+`excerpt_truncated` 只接受布尔值；任何一次片段裁剪都会将其置为真。
+`source_uri`、`visibility_roles`、完整 `content` 等内部字段不转发、不保存。
+
+每个回答按来源标识首次去重，最多保留 20 条。Java 将清洗后的引用随成功回答保存到已有
+`ui_json` 的 `citations` 数组，与 `renders` 共存；没有 OpenUI 的回答也能保存引用。
+字段类型为 `MEDIUMTEXT`；既有环境上线前执行独立迁移
+`dkd-parent/sql/migration_ai_model_history_ui_json_capacity.sql`，同步扩容正文 `content`，
+避免合法长中文消息与快照超过旧 `TEXT` 容量。
+展示快照总量按 UTF-8 编码限制在 16,777,215 字节以内；异常超限时仅保存正文，
+不让展示元数据导致整条消息保存失败。
+正常对话、数据分析、恢复流使用相同收集逻辑。审批暂停不生成成功历史；恢复时 Agent 只从
+同一用户/会话 checkpoint 的最近用户消息之后重放知识工具引用，再随恢复成功的回答落库。
+失败、取消或没有正常结束的流不保存新的成功快照。
+
+```json
+{
+  "renders": [],
+  "citations": [{
+    "source_id": "sop-network#3.2",
+    "title": "设备网络排查规范",
+    "section": "3.2 连接检查",
+    "version": "2026-11",
+    "document_type": "sop",
+    "excerpt": "先检查设备网络连接。",
+    "excerpt_truncated": false
+  }]
+}
+```
+
+旧历史的 `citations` 可缺省；前端不补造证据，片段采用纯文本展示。客户端 `/history` 与
+`/history/batch` 写入不能提供生成元数据，服务端清空传入的 `uiJson`；服务器生成的历史不受影响。
+历史访问沿用会话归属控制，快照不代表文档当前版本或当前角色的重新授权结果。
+设计决策见 [知识引用证据快照 ADR](./ai-citation-evidence-adr.md)。
 
 ## 7. 请求体边界（Agent 校验）
 

@@ -11,6 +11,7 @@ import com.lingXi.ai.config.AgentConfig;
 import com.lingXi.ai.domain.dto.AgentUserContext;
 import com.lingXi.ai.domain.dto.AiImageOcrRequestDTO;
 import com.lingXi.ai.domain.dto.AiImageOcrResultDTO;
+import com.lingXi.ai.domain.vo.ChatBaseVO;
 import com.lingXi.ai.domain.dto.tool.AgentToolException;
 import com.lingXi.ai.service.AgentToolTokenService;
 import com.lingXi.common.core.domain.entity.SysRole;
@@ -28,9 +29,12 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -702,6 +706,150 @@ class AgentClientContractTest {
     }
 
     @Test
+    void fullUnicodeEvidenceAndOpenUiFitBothInstallationAndMigrationCapacity() throws Exception {
+        StringBuilder events = new StringBuilder();
+        for (int i = 0; i < 20; i++) {
+            events.append(citationEvent(objectMapper.createObjectNode().put("source_id", "capacity-" + i)
+                    .put("excerpt", "证据".repeat(999) + "😀😀")));
+        }
+        events.append("data: {\"type\":\"ui_complete\",\"render_id\":\"capacity-render\","
+                + "\"spec\":[{\"type\":\"Text\",\"text\":\"知识引用说明\"}]}\n\n"
+                + "data: {\"type\":\"token\",\"content\":\"完成\"}\n\ndata: [DONE]\n\n");
+        streamResponse.set(events.toString());
+        AtomicReference<String> snapshot = new AtomicReference<>();
+        client.streamChatV2("问题", "session-capacity", AgentUserContext.minimal("42", "用户"),
+                null, snapshotListener(snapshot));
+        awaitClientTasks();
+        int bytes = snapshot.get().getBytes(StandardCharsets.UTF_8).length;
+        assertTrue(bytes > 65_535, "完整引用超过旧 TEXT 容量");
+        assertTrue(bytes <= AgentClient.MAX_UI_SNAPSHOT_BYTES);
+        JsonNode envelope = objectMapper.readTree(snapshot.get());
+        assertEquals(20, envelope.path("citations").size());
+        assertEquals(1, envelope.path("renders").size());
+
+        Path sql = Path.of(System.getProperty("basedir", ".")).resolve("../sql");
+        String initial = Files.readString(sql.resolve("lingxi_all.sql"), StandardCharsets.UTF_8);
+        String migration = Files.readString(sql.resolve("migration_ai_model_history_ui_json_capacity.sql"), StandardCharsets.UTF_8);
+        assertTrue(java.util.regex.Pattern.compile("(?i)ui_json\\s+MEDIUMTEXT\\b").matcher(initial).find());
+        String historySchema = initial.substring(initial.indexOf("CREATE TABLE tb_model_history"),
+                initial.indexOf("-- 创建聊天会话表"));
+        assertTrue(java.util.regex.Pattern.compile("(?i)content\\s+MEDIUMTEXT\\s+NOT\\s+NULL")
+                .matcher(historySchema).find());
+        assertTrue(java.util.regex.Pattern.compile(
+                "(?is)ALTER\\s+TABLE\\s+tb_model_history\\s+MODIFY\\s+COLUMN\\s+ui_json\\s+MEDIUMTEXT\\s+NULL\\s+DEFAULT\\s+NULL")
+                .matcher(migration).find());
+        assertTrue(java.util.regex.Pattern.compile("(?i)MODIFY\\s+COLUMN\\s+content\\s+MEDIUMTEXT\\s+NOT\\s+NULL")
+                .matcher(migration).find());
+        assertFalse(java.util.regex.Pattern.compile("(?i)\\b(DROP|TRUNCATE|DELETE)\\b").matcher(migration).find());
+        for (int limit : new int[] { ChatBaseVO.MAX_CHAT_TEXT_LENGTH, AgentClient.MAX_STREAM_REPLY_CHARS }) {
+            int textBytes = "文".repeat(limit).getBytes(StandardCharsets.UTF_8).length;
+            assertTrue(textBytes > 65_535, "合法中文正文超过旧 TEXT 容量");
+            assertTrue(textBytes <= AgentClient.MAX_UI_SNAPSHOT_BYTES);
+        }
+    }
+
+    @Test
+    void oversizedAggregateSnapshotFallsBackToTextWithinDatabaseLimit() throws Exception {
+        Method serialize = AgentClient.class.getDeclaredMethod("serializeUiArtifacts", java.util.List.class);
+        serialize.setAccessible(true);
+        ObjectNode render = objectMapper.createObjectNode().put("type", "ui_complete")
+                .put("fallback_markdown", "字".repeat(100_000));
+        // 每个渲染单独合法，多次渲染合计仍必须服从数据库总字节容量。
+        assertNull(serialize.invoke(client, Collections.nCopies(60, render)));
+    }
+
+    @Test
+    void citationSnapshotsKeepOnlyBoundedPublicEvidenceAndFirstTwentySources() throws Exception {
+        String excerpt = "  原文\n" + "😀".repeat(2_005);
+        ObjectNode citation = objectMapper.createObjectNode()
+                .put("source_id", "source-first").put("title", "题".repeat(310))
+                .put("section", "章".repeat(310)).put("version", "v".repeat(140))
+                .put("document_type", "类".repeat(140)).put("excerpt", excerpt)
+                .put("excerpt_truncated", false).put("score", 0.75)
+                .put("internal", "PRIVATE_CITATION_SENTINEL");
+        StringBuilder events = new StringBuilder();
+        events.append(citationEvent(objectMapper.createObjectNode().put("source_id", "x".repeat(513))));
+        events.append(citationEvent(objectMapper.createObjectNode().put("source_id", 42)));
+        events.append(citationEvent(citation));
+        events.append(citationEvent(objectMapper.createObjectNode()
+                .put("source_id", "source-first").put("excerpt", "不得替换首次证据")));
+        ObjectNode malformedFields = objectMapper.createObjectNode().put("source_id", "source-invalid-fields")
+                .put("score", true).put("excerpt_truncated", "true").put("document_type", false);
+        malformedFields.putObject("excerpt").put("secret", "PRIVATE_CITATION_SENTINEL");
+        events.append(citationEvent(malformedFields));
+        for (int i = 1; i <= 25; i++) {
+            events.append(citationEvent(objectMapper.createObjectNode()
+                    .put("source_id", "source-" + i).put("title", "来源" + i)));
+        }
+        streamResponse.set(events + "data: {\"type\":\"token\",\"content\":\"完成\"}\n\ndata: [DONE]\n\n");
+        AtomicReference<String> snapshot = new AtomicReference<>();
+        SseEmitter emitter = client.streamChatV2("问题", "session-evidence",
+                AgentUserContext.minimal("42", "用户"), null, snapshotListener(snapshot));
+        awaitClientTasks();
+        JsonNode envelope = objectMapper.readTree(snapshot.get());
+        assertEquals(0, envelope.path("renders").size());
+        JsonNode citations = envelope.path("citations");
+        assertEquals(20, citations.size());
+        JsonNode first = citations.get(0);
+        String kept = first.path("excerpt").asText();
+        assertEquals(2_000, kept.codePointCount(0, kept.length()));
+        assertTrue(kept.startsWith("  原文\n"));
+        assertTrue(kept.endsWith("😀"));
+        assertTrue(first.path("excerpt_truncated").asBoolean());
+        assertEquals(300, first.path("title").asText().length());
+        assertEquals(300, first.path("section").asText().length());
+        assertEquals(128, first.path("version").asText().length());
+        assertEquals(128, first.path("document_type").asText().length());
+        assertEquals(0.75, first.path("score").asDouble());
+        assertEquals(1, citations.get(1).size());
+        String emitted = emittedData(emitter);
+        assertFalse(emitted.contains("PRIVATE_CITATION_SENTINEL"));
+        assertFalse(emitted.contains("不得替换首次证据"));
+        assertFalse(emitted.contains("\"source_id\":\"source-19\""));
+        assertFalse(snapshot.get().contains("PRIVATE_CITATION_SENTINEL"));
+    }
+
+    @Test
+    void allConversationStreamRoutesKeepCitationOnlySnapshotsIncludingLegacy() throws Exception {
+        streamResponse.set(citationEvent(objectMapper.createObjectNode().put("source_id", "sop#1")
+                .put("title", "旧版引用，无摘录"))
+                + "data: {\"type\":\"token\",\"content\":\"完成\"}\n\ndata: [DONE]\n\n");
+        config.setChatResumeUrl("/stream");
+        AgentUserContext context = AgentUserContext.minimal("42", "用户");
+        for (String route : java.util.List.of("chat", "analysis", "resume", "legacy")) {
+            AtomicReference<String> snapshot = new AtomicReference<>();
+            AgentClient.StreamOutcomeListener listener = snapshotListener(snapshot);
+            SseEmitter emitter = switch (route) {
+                case "analysis" -> client.streamAnalyzeV2("问题", "session-analysis", context, null, listener);
+                case "resume" -> client.streamResumeAction("session-resume", context, "action-1", "reject", null, listener);
+                case "legacy" -> client.streamChat("问题", "session-legacy", context, null, listener);
+                default -> client.streamChatV2("问题", "session-chat", context, null, listener);
+            };
+            awaitClientTasks();
+            JsonNode envelope = objectMapper.readTree(snapshot.get());
+            assertEquals(0, envelope.path("renders").size());
+            assertEquals("sop#1", envelope.path("citations").get(0).path("source_id").asText());
+            assertFalse(envelope.path("citations").get(0).has("excerpt"));
+            if ("legacy".equals(route)) assertFalse(emittedData(emitter).contains("citation"));
+        }
+    }
+
+    private String citationEvent(ObjectNode data) {
+        ObjectNode event = objectMapper.createObjectNode().put("type", "citation");
+        event.set("data", data);
+        return "data: " + objectMapper.writeValueAsString(event) + "\n\n";
+    }
+
+    private AgentClient.StreamOutcomeListener snapshotListener(AtomicReference<String> snapshot) {
+        return new AgentClient.StreamOutcomeListener() {
+            public void onUiArtifacts(String ui) { snapshot.set(ui); }
+            public void onReply(String reply) { }
+            public void onFailed(String code) { }
+            public void onCancelled() { }
+        };
+    }
+
+    @Test
     void successStreamDeliversSanitizedUiJsonToOutcomeListener() throws Exception {
         String secret = "SENTINEL_PRIVATE_UI_VALUE";
         String renderId = "ui-render-hist-1";
@@ -711,7 +859,9 @@ class AgentClientContractTest {
                     .put("type", "Text").put("text", "x".repeat(4096)));
         }
         streamResponse.set(
-                "data: {\"type\":\"ui_start\",\"render_id\":\"" + renderId + "\","
+                citationEvent(objectMapper.createObjectNode().put("source_id", "coexisting-source")
+                        .put("excerpt", "图表解释的证据"))
+                + "data: {\"type\":\"ui_start\",\"render_id\":\"" + renderId + "\","
                         + "\"schema_version\":1}\n\n"
                 // 有效渲染收集进历史；Script 与 evil 字段被清洗
                 + "data: {\"type\":\"ui_complete\",\"render_id\":\"" + renderId + "\","
@@ -779,12 +929,15 @@ class AgentClientContractTest {
         JsonNode envelope = objectMapper.readTree(delivered);
         assertTrue(envelope.path("renders").isArray());
         assertEquals(2, envelope.path("renders").size());
+        assertEquals("图表解释的证据", envelope.path("citations").get(0).path("excerpt").asText());
     }
 
     @Test
     void failedStreamDoesNotDeliverUiJsonToOutcomeListener() throws Exception {
         streamResponse.set(
-                "data: {\"type\":\"ui_complete\",\"render_id\":\"ui-render-fail-1\","
+                citationEvent(objectMapper.createObjectNode().put("source_id", "failed-source")
+                        .put("excerpt", "失败时不能落库"))
+                + "data: {\"type\":\"ui_complete\",\"render_id\":\"ui-render-fail-1\","
                         + "\"spec\":[{\"type\":\"Text\",\"text\":\"正常\"}]}\n\n"
                 + "data: {\"type\":\"error\"}\n\n");
         CountDownLatch failed = new CountDownLatch(1);

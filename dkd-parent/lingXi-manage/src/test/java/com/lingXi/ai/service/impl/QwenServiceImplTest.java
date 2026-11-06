@@ -180,6 +180,7 @@ class QwenServiceImplTest {
     @SuppressWarnings("unchecked")
     @Test
     void structuredStreamingReplyUsesTheSameSinglePersistenceBoundary() {
+        String snapshot = "{\"renders\":[],\"citations\":[{\"source_id\":\"sop#1\",\"excerpt\":\"证据\"}]}";
         AgentClient agentClient = mock(AgentClient.class);
         IModelHistoryService historyService = mock(IModelHistoryService.class);
         IDashBoardService dashboardService = mock(IDashBoardService.class);
@@ -190,6 +191,7 @@ class QwenServiceImplTest {
                 .thenAnswer(invocation -> {
                     AgentClient.StreamOutcomeListener outcome =
                             invocation.getArgument(4);
+                    outcome.onUiArtifacts(snapshot);
                     outcome.onReply("V2 完整回复");
                     outcome.onReply("V2 完整回复");
                     return new SseEmitter();
@@ -212,6 +214,7 @@ class QwenServiceImplTest {
                 .findFirst()
                 .orElseThrow(AssertionError::new);
         assertEquals("SUCCEEDED", assistant.getStatus());
+        assertEquals(snapshot, assistant.getUiJson());
     }
 
     @SuppressWarnings("unchecked")
@@ -227,6 +230,7 @@ class QwenServiceImplTest {
                 .thenAnswer(invocation -> {
                     AgentClient.StreamOutcomeListener outcome =
                             invocation.getArgument(4);
+                    outcome.onUiArtifacts("{\"citations\":[{\"source_id\":\"failed-source\"}]}");
                     outcome.onFailed("AGENT_STREAM_OVER_LIMIT");
                     outcome.onFailed("AGENT_STREAM_OVER_LIMIT");
                     return new SseEmitter();
@@ -245,6 +249,7 @@ class QwenServiceImplTest {
                 .orElseThrow(AssertionError::new);
         assertEquals("FAILED", assistant.getStatus());
         assertEquals("AGENT_STREAM_OVER_LIMIT", assistant.getErrorCode());
+        org.junit.jupiter.api.Assertions.assertNull(assistant.getUiJson());
     }
 
     @SuppressWarnings("unchecked")
@@ -260,6 +265,7 @@ class QwenServiceImplTest {
                 .thenAnswer(invocation -> {
                     AgentClient.StreamOutcomeListener outcome =
                             invocation.getArgument(4);
+                    outcome.onUiArtifacts("{\"citations\":[{\"source_id\":\"cancelled-source\"}]}");
                     outcome.onCancelled();
                     return new SseEmitter();
                 });
@@ -276,6 +282,7 @@ class QwenServiceImplTest {
                 .findFirst()
                 .orElseThrow(AssertionError::new);
         assertEquals("CANCELLED", assistant.getStatus());
+        org.junit.jupiter.api.Assertions.assertNull(assistant.getUiJson());
     }
 
     @Test

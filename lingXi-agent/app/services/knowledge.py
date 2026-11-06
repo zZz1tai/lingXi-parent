@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import threading
 import unicodedata
@@ -19,6 +20,35 @@ from app.utils.exceptions import ConfigurationError
 
 _SAFE_LABEL = re.compile(r"^[A-Za-z0-9*:_./-]+$")
 _ASCII_TERM = re.compile(r"[a-z0-9][a-z0-9:_./-]*")
+MAX_CITATION_EXCERPT_CHARS = 2_000
+
+
+def safe_knowledge_citation(raw: dict[str, object]) -> dict[str, object]:
+    """工具产出和 SSE 共用的引用白名单，不序列化内部元数据。"""
+    safe: dict[str, object] = {}
+    for key, limit in (
+        ("title", 300), ("section", 300), ("version", 128),
+        ("source_id", 512), ("document_type", 128),
+    ):
+        value = raw.get(key)
+        if isinstance(value, str) and (key != "source_id" or len(value) <= limit):
+            safe[key] = value[:limit]
+    score = raw.get("score")
+    if type(score) in (int, float):
+        try:
+            if math.isfinite(score):
+                safe["score"] = round(score, 4)
+        except OverflowError:
+            # 超出浮点数范围的任意精度整数不适合作为前端相关度。
+            pass
+    excerpt = raw.get("excerpt")
+    if isinstance(excerpt, str):
+        safe["excerpt"] = excerpt[:MAX_CITATION_EXCERPT_CHARS]
+        if len(excerpt) > MAX_CITATION_EXCERPT_CHARS:
+            safe["excerpt_truncated"] = True
+        elif type(raw.get("excerpt_truncated")) is bool:
+            safe["excerpt_truncated"] = raw["excerpt_truncated"]
+    return safe
 
 
 class KnowledgeChunk(BaseModel):
@@ -82,25 +112,29 @@ class KnowledgeSearchResult:
 
     def model_payload(self) -> dict[str, object]:
         """返回给模型的有界证据，不暴露内部存储 URI。"""
-        return {
+        payload = safe_knowledge_citation({
             "title": self.chunk.title,
             "section": self.chunk.section,
-            "content": self.chunk.content,
             "document_type": self.chunk.document_type,
             "version": self.chunk.version,
             "source_id": self.chunk.source_id,
-            "score": round(self.score, 4),
-        }
+            "score": self.score,
+        })
+        payload["content"] = self.chunk.content
+        return payload
 
-    def citation_payload(self) -> dict[str, object]:
-        """返回适合前端展示的引用元数据。"""
-        return {
+    def citation_payload(self, model_content: str) -> dict[str, object]:
+        """引用只能使用本轮已交给模型的片段，不能借预览扩大证据范围。"""
+        return safe_knowledge_citation({
             "title": self.chunk.title,
             "section": self.chunk.section,
             "version": self.chunk.version,
             "source_id": self.chunk.source_id,
-            "score": round(self.score, 4),
-        }
+            "score": self.score,
+            "document_type": self.chunk.document_type,
+            "excerpt": model_content,
+            "excerpt_truncated": len(model_content) < len(self.chunk.content),
+        })
 
 
 class KnowledgeRetriever(Protocol):

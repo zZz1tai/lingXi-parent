@@ -279,6 +279,8 @@ public class AiController {
             requireActiveSession(history.getSessionId(), userId);
             history.setUserId(userId);
             history.setUserName(currentUsername());
+            // 渲染与证据快照只能来自服务端 Agent，兼容写入仅保留聊天文本。
+            history.setUiJson(null);
             int result = modelHistoryService.insertModelHistory(history);
             return AjaxResult.success(result);
         } catch (Exception e) {
@@ -305,6 +307,7 @@ public class AiController {
                 requireActiveSession(history.getSessionId(), userId);
                 history.setUserId(userId);
                 history.setUserName(username);
+                history.setUiJson(null);
             }
             int result = modelHistoryService.batchInsertModelHistory(histories);
             return AjaxResult.success(result);

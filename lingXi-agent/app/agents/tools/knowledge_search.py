@@ -85,11 +85,12 @@ def create_knowledge_search_tool(retriever: KnowledgeRetriever) -> BaseTool:
         citations: list[dict[str, object]] = []
         for result in results:
             model_payload = result.model_payload()
-            model_payload["content"] = str(model_payload["content"])[
+            model_content = str(model_payload["content"])[
                 : settings.knowledge_model_chunk_chars
             ]
+            model_payload["content"] = model_content
             model_results.append(model_payload)
-            citation = result.citation_payload()
+            citation = result.citation_payload(model_content)
             citations.append(citation)
             runtime.stream_writer(
                 {
