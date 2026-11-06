@@ -350,6 +350,9 @@
                 class="message-input"
                 resize="none"
               />
+              <p v-if="inputDraftStatus" class="input-draft-status" role="status" title="仅保存文字，按账号、会话和模式区分；不保存附件。退出登录会清空，不跨设备同步。">
+                {{ inputDraftStatus }}
+              </p>
               <input
                 ref="attachmentInput"
                 class="attachment-input"
@@ -797,6 +800,7 @@ import ChatArchive from './components/ChatArchive.vue';
 import ChatCompare from './components/ChatCompare.vue';
 import ChatFollowUp from './components/ChatFollowUp.vue';
 import { appendFollowUp } from '@/utils/chatFollowUp';
+import { clearChatInputDrafts, useChatInputDraft } from '@/utils/chatInputDraft';
 import ChatSearch from './components/ChatSearch.vue';
 import KnowledgeCitations from './components/KnowledgeCitations.vue';
 import OpenUIRenderer from './components/openui/OpenUIRenderer.vue';
@@ -1016,6 +1020,11 @@ const currentEditingSession = ref(null);
 
 // 获取当前用户信息
 const userStore = useUserStore();
+const inputDraftStatus = useChatInputDraft(message, () => [
+  userStore.id,
+  currentSessionId.value,
+  quickVideoModeActive.value ? 'video' : enableDataAnalysis.value ? 'analysis' : 'chat'
+]);
 const aiChatStore = useAiChatStore();
 const currentDraft = computed(() => aiChatStore.draftFor(currentSessionId.value));
 const loading = computed(() => ['streaming', 'resuming'].includes(currentDraft.value?.status));
@@ -1995,6 +2004,7 @@ const deleteSession = async (session) => {
     );
     
     await deleteSessionById(session.sessionId);
+    clearChatInputDrafts(userStore.id, session.sessionId);
     const index = sessions.value.findIndex(s => s.id === session.id);
     if (index !== -1) {
       sessions.value.splice(index, 1);
@@ -2063,6 +2073,7 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 @import '@/assets/styles/dialog-styles.scss';
+.input-draft-status { margin: 4px 12px; color: var(--el-text-color-secondary); font-size: 12px; }
 .ai-chat-page {
   height: 100dvh;
   background:

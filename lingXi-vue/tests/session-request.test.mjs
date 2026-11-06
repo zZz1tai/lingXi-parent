@@ -29,17 +29,20 @@ test('路由接口或解析失败会拒绝 Promise，避免导航一直等待', 
 
 test('服务端登出失败仍清理本地令牌和上一个用户信息', async () => {
   let removed = false;
+  let draftsCleared = false;
   const source = await moduleSource('../src/store/modules/user.js');
   const useStore = runInNewContext(source, {
     defineStore,
     getToken: () => 'old-token',
     logout: () => Promise.reject(new Error('网络中断')),
-    removeToken: () => { removed = true; }
+    removeToken: () => { removed = true; },
+    clearChatInputDrafts: () => { draftsCleared = true; }
   });
   const store = useStore(createPinia());
   Object.assign(store, { id: 42, name: '旧用户', avatar: '/old.png', roles: ['admin'], permissions: ['*:*:*'] });
   await store.logOut();
   assert.equal(removed, true);
+  assert.equal(draftsCleared, true);
   for (const key of ['token', 'id', 'name', 'avatar']) assert.equal(store[key], '');
   assert.equal(store.roles.length, 0);
   assert.equal(store.permissions.length, 0);

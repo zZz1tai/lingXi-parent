@@ -1,6 +1,7 @@
 import { login, logout, getInfo } from '@/api/login'
 import { getToken, setToken, removeToken } from '@/utils/auth'
 import defAva from '@/assets/images/profile.jpg'
+import { clearChatInputDrafts } from '@/utils/chatInputDraft'
 
 const useUserStore = defineStore(
   'user',
@@ -58,6 +59,7 @@ const useUserStore = defineStore(
         return logout(this.token).catch(() => {
           // 服务端不可用时仍然退出本地会话，避免失效令牌阻断重新登录。
         }).finally(() => {
+          clearChatInputDrafts()
           this.token = ''
           this.id = ''
           this.name = ''
