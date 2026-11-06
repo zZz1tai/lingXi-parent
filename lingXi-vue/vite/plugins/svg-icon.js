@@ -67,7 +67,7 @@ export default function createSvgIcon() {
         .map(entry => path.join(entry.parentPath, entry.name)).sort()
       const ids = files.map(file => iconSymbolId(path.relative(iconDir, file)))
       if (new Set(ids).size !== ids.length) throw new Error('SVG 图标 ID 重复，请调整目录或文件名')
-      this.addWatchFile(iconDir)
+      // 目录由 configureServer 监听，不能作为虚拟模块的导入依赖。
       files.forEach(file => this.addWatchFile(file))
       if (id === `\0${namesId}`) return `export default ${JSON.stringify(ids)}`
       const symbols = await Promise.all(files.map(async (file, index) => toSvgSymbol(await readFile(file, 'utf8'), ids[index])))

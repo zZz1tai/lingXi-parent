@@ -66,6 +66,7 @@ test('虚拟模块完整注册仓库图标，重复执行不会追加第二个 s
   assert.equal(appends, 1)
   assert.equal((sprite.innerHTML.match(/<symbol\b/g) || []).length, ids.length)
   assert.ok(watched.includes(path.join(root, 'src/assets/icons/svg/button.svg')))
+  assert.ok(watched.every(file => file.endsWith('.svg')), '目录不能作为 Vite 模块依赖')
   assert.equal(plugin.resolveId('unrelated'), null)
   assert.equal(await plugin.load.call(context, 'unrelated'), null)
 })
