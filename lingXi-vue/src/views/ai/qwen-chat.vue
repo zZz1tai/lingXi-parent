@@ -231,6 +231,13 @@
                         </el-button>
                       </div>
                     </section>
+                    <el-button
+                      v-if="item.content?.trim()"
+                      text
+                      size="small"
+                      :disabled="followUpDisabled"
+                      @click="followUpDialog?.open(item.content)"
+                    >引用追问</el-button>
                     <KnowledgeCitations :citations="item.citations || []" />
                     <div v-if="item.memorySaved?.length" class="memory-saved-note">
                       <el-icon><CircleCheck /></el-icon>
@@ -318,6 +325,12 @@
                   </el-button>
                 </div>
               </div>
+              <ChatFollowUp
+                :key="currentSessionId"
+                ref="followUpDialog"
+                :disabled="followUpDisabled"
+                @insert="insertFollowUp"
+              />
               <el-input
                 v-model="message"
                 type="textarea"
@@ -776,6 +789,8 @@ import useUserStore from '@/store/modules/user';
 import AgentExecutionTrace from './components/AgentExecutionTrace.vue';
 import ChatSummary from './components/ChatSummary.vue';
 import ChatArchive from './components/ChatArchive.vue';
+import ChatFollowUp from './components/ChatFollowUp.vue';
+import { appendFollowUp } from '@/utils/chatFollowUp';
 import ChatSearch from './components/ChatSearch.vue';
 import KnowledgeCitations from './components/KnowledgeCitations.vue';
 import OpenUIRenderer from './components/openui/OpenUIRenderer.vue';
@@ -998,6 +1013,8 @@ const userStore = useUserStore();
 const aiChatStore = useAiChatStore();
 const currentDraft = computed(() => aiChatStore.draftFor(currentSessionId.value));
 const loading = computed(() => ['streaming', 'resuming'].includes(currentDraft.value?.status));
+const followUpDialog = ref(null);
+const followUpDisabled = computed(() => loading.value || historyLoading.value || quickVideoModeActive.value || currentDraft.value?.status === 'awaiting_approval');
 
 const memoryPreferenceText = item => {
   const labels = {
@@ -1779,6 +1796,17 @@ const handleEnter = (event) => {
     if (quickVideoModeActive.value) return;
     event.preventDefault();
     sendMessage();
+  }
+};
+
+// 引用追问追加到当前草稿，由用户确认后发送。
+const insertFollowUp = (quote, question) => {
+  if (followUpDisabled.value) return;
+  try {
+    usePreset(appendFollowUp(message.value, quote, question));
+    ElMessage.success('追问已追加到输入框，确认后可发送');
+  } catch (err) {
+    ElMessage.warning(err.message);
   }
 };
 
