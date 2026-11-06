@@ -236,6 +236,7 @@
                         </el-button>
                       </div>
                     </section>
+                    <ChatAnswerActions :message="item" :position="messageIndex + 1" :disabled="loading || historyLoading" />
                     <el-button
                       v-if="item.content?.trim()"
                       text
@@ -799,6 +800,7 @@ import ChatSummary from './components/ChatSummary.vue';
 import ChatArchive from './components/ChatArchive.vue';
 import ChatCompare from './components/ChatCompare.vue';
 import ChatFollowUp from './components/ChatFollowUp.vue';
+import ChatAnswerActions from './components/ChatAnswerActions.vue';
 import { appendFollowUp } from '@/utils/chatFollowUp';
 import { clearChatInputDrafts, useChatInputDraft } from '@/utils/chatInputDraft';
 import ChatSearch from './components/ChatSearch.vue';
