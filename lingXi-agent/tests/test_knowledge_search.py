@@ -373,6 +373,7 @@ class KnowledgeConfigurationTests(unittest.TestCase):
                     "convert_units",
                     "date_calculator",
                     "analyze_csv",
+                    "compare_text",
                     "get_weather",
                     "search_knowledge",
                 ],

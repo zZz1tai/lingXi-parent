@@ -67,6 +67,7 @@ def compose_system_prompt(
     business_tools_available: bool = False,
     general_tools_available: bool = False,
     csv_analysis_available: bool = False,
+    text_compare_available: bool = False,
     weather_available: bool = False,
     image_generation_available: bool = False,
     current_date: date | None = None,
@@ -141,6 +142,14 @@ def compose_system_prompt(
         "- 实时业务数据查询：" + ("可用" if business_tools_available else "不可用"),
     ]
     base_prompt += "\n\n## 当前能力状态\n" + "\n".join(capability_lines)
+    if text_compare_available:
+        base_prompt += (
+            "\n文本版本核对工具 compare_text 可用。用户要求核对两版文字的具体改动时，"
+            "按修改前 before、修改后 after 的顺序传入完整原文，不能自行重写或截断。"
+            "不要未经用户要求忽略空白。引用工具返回的行号和差异，区分字面变化与自己的语义分析；"
+            "字面相似不代表语义一致或质量提高。truncated=true 时必须说明差异片段未完整展示，"
+            "请用户缩小范围以查看其余细节；缺少任一版本时先索取，不能臆造另一版。"
+        )
     if csv_analysis_available:
         base_prompt += (
             "\n用户表格统计工具 analyze_csv 可用。用户粘贴 CSV/TSV 或附件已提取出完整表格文本时，"
@@ -209,6 +218,7 @@ def get_system_prompt(request: ModelRequest[AgentContext]) -> str:
         ),
         weather_available="get_weather" in tool_names,
         csv_analysis_available="analyze_csv" in tool_names,
+        text_compare_available="compare_text" in tool_names,
         image_generation_available=(
             "generate_image" in tool_names
             and context is not None

@@ -251,6 +251,7 @@ class BusinessDataToolTests(unittest.IsolatedAsyncioTestCase):
                     "convert_units",
                     "date_calculator",
                     "analyze_csv",
+                    "compare_text",
                     "get_weather",
                     "query_sales_summary",
                     "query_task_statistics",
