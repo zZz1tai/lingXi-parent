@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "5691291b-d937-4534-9085-58661909e537",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "D:\\code\\lingXi-parent\\.archify\\architecture-lingxi-runtime-20260929-005531\\candidate.json",
+  "output": "D:\\code\\lingXi-parent\\.archify\\architecture-lingxi-runtime-20260929-005531\\lingxi-runtime.html",
+  "specification": {
+    "sha256": "e5d6d2c647d3a9e04387563b440f618003c1465320b8194ef917e74c3a95d14f",
+    "bytes": 7526
+  },
+  "artifact": {
+    "sha256": "bf4307746528967d7b55aa03ff641a0d8881320c0c6fbc7e3ce89665d37bd1e6",
+    "bytes": 768148
+  }
+}

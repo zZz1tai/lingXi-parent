@@ -1,5 +1,7 @@
 # One-click concurrent launcher: Python Agent + Java backend + Vue frontend.
 # Keep this file ASCII-only so Windows PowerShell 5.1 can parse it without a UTF-8 BOM.
+param([switch]$CheckOnly)
+
 $ErrorActionPreference = 'Stop'
 
 $RootDir = $PSScriptRoot
@@ -118,7 +120,12 @@ function Import-PersistedAgentEnvironment {
 function Import-JavaDatabaseCredentials {
     param([Parameter(Mandatory = $true)][string]$EnvFile)
 
-    foreach ($name in @('DB_PASSWORD', 'REDIS_PASSWORD', 'DRUID_PASSWORD', 'RUOYI_PROFILE', 'TOKEN_SECRET')) {
+    foreach ($name in @(
+        'DB_USERNAME', 'DB_PASSWORD', 'REDIS_PASSWORD', 'DRUID_USERNAME',
+        'DRUID_PASSWORD', 'RUOYI_PROFILE', 'TOKEN_SECRET',
+        'SPRING_DATASOURCE_DRUID_MASTER_URL', 'SPRING_DATA_REDIS_HOST',
+        'SPRING_DATA_REDIS_PORT', 'SPRING_DATA_REDIS_DATABASE'
+    )) {
         if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name, 'Process'))) {
             $persisted = Get-DotEnvValue -Path $EnvFile -Name $name
             if (-not [string]::IsNullOrWhiteSpace($persisted)) {
@@ -287,7 +294,7 @@ function Resolve-WindowsTerminalCommand {
         return $command.Source
     }
 
-    throw 'Windows Terminal (wt.exe) was not found.'
+    return $null
 }
 
 function Start-LingXiTerminalTab {
@@ -297,9 +304,19 @@ function Start-LingXiTerminalTab {
         [Parameter(Mandatory = $true)][string]$CommandLine
     )
 
-    $terminalArguments = '-w LingXiServices new-tab --title "{0}" --suppressApplicationTitle --startingDirectory "{1}" cmd.exe /k {2}' -f `
-        $Title, $WorkingDirectory, $CommandLine
-    Start-Process -FilePath $WindowsTerminalCommand -ArgumentList $terminalArguments
+    if ($WindowsTerminalCommand) {
+        $terminalArguments = '-w LingXiServices new-tab --title "{0}" --suppressApplicationTitle --startingDirectory "{1}" cmd.exe /k {2}' -f `
+            $Title, $WorkingDirectory, $CommandLine
+        Start-Process -FilePath $WindowsTerminalCommand -ArgumentList $terminalArguments -WindowStyle Hidden
+    }
+    else {
+        $logDirectory = Join-Path $RootDir 'output'
+        [void][System.IO.Directory]::CreateDirectory($logDirectory)
+        $logPath = Join-Path $logDirectory (($Title -replace ' ', '-') + '.log')
+        $backgroundCommand = '/d /s /c "{0} > "{1}" 2>&1"' -f $CommandLine, $logPath
+        $process = Start-Process -FilePath 'cmd.exe' -ArgumentList $backgroundCommand -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru
+        Write-Host ('      PID {0}; log: {1}' -f $process.Id, $logPath)
+    }
 }
 
 Write-Host '========================================' -ForegroundColor Cyan
@@ -311,6 +328,20 @@ try {
     $PythonCommand = Resolve-PythonCommand
     $MavenCommand = Resolve-MavenCommand
     $WindowsTerminalCommand = Resolve-WindowsTerminalCommand
+    foreach ($requiredCommand in @('java', 'javac', 'node', 'npm.cmd')) {
+        if (-not (Get-Command $requiredCommand -ErrorAction SilentlyContinue)) {
+            throw ('Required command not found: ' + $requiredCommand + '. See README.md.')
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $VueDir 'node_modules\vite\package.json'))) {
+        throw 'Frontend dependencies missing. Run .\setup.ps1 first.'
+    }
+    & $PythonCommand -c 'import uvicorn, fastapi, langchain, langgraph'
+    if ($LASTEXITCODE -ne 0) { throw 'Agent dependencies missing. Run .\setup.ps1 first.' }
+    if ($CheckOnly) {
+        Write-Host 'Tool and dependency checks passed. No services started; database connectivity/configuration was not checked.' -ForegroundColor Green
+        return
+    }
     Import-PersistedAgentEnvironment
     Initialize-AgentServiceKey -EnvFile $AgentEnvFile
     Import-JavaDatabaseCredentials -EnvFile $AgentEnvFile
@@ -389,6 +420,5 @@ try {
 catch {
     Write-Host ''
     Write-Host ('Launcher failed: ' + $_.Exception.Message) -ForegroundColor Red
-    Read-Host 'Press Enter to close this launcher window'
     exit 1
 }

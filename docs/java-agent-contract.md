@@ -219,8 +219,7 @@ Python、Java、前端均只接受白名单字段：`title`、`section` 各最�
 
 每个回答按来源标识首次去重，最多保留 20 条。Java 将清洗后的引用随成功回答保存到已有
 `ui_json` 的 `citations` 数组，与 `renders` 共存；没有 OpenUI 的回答也能保存引用。
-字段类型为 `MEDIUMTEXT`；既有环境上线前执行独立迁移
-`dkd-parent/sql/migration_ai_model_history_ui_json_capacity.sql`，同步扩容正文 `content`，
+字段类型为 `MEDIUMTEXT`；既有环境上线前先备份并核对结构，再按差异扩容 `ui_json` 及正文 `content`，
 避免合法长中文消息与快照超过旧 `TEXT` 容量。
 展示快照总量按 UTF-8 编码限制在 16,777,215 字节以内；异常超限时仅保存正文，
 不让展示元数据导致整条消息保存失败。

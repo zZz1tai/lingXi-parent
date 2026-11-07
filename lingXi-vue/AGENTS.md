@@ -1,5 +1,12 @@
 # AGENTS.md — lingXi-vue（Vue 3 管理端 + Tauri 桌面端）
 
+## 新环境入口与验证
+
+遵循根目录 AGENTS.md；完整部署见 [根 README](../README.md)，前端说明见本目录 README。
+使用 Node 20.19+（20.x）或 22.12+，先 `npm ci` 再 `npm run dev`；浏览器开发不需要 Rust、Tauri 系统构建工具或 Python。
+登录及业务接口需要可用的 Java 后端；只查看前端页面不等于全栈部署成功。
+前端修改后禁止以编译或生产构建作为验证，除非用户明确要求；按影响运行 `npm test` 或开发态检查。
+
 ## 项目概览
 
 基于 RuoYi-Vue 演进的灵犀管理端：Vue 3.5 + Vite 7 + Element Plus 2.14 + Pinia + Vue Router 4，

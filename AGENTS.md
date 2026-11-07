@@ -3,6 +3,21 @@
 本仓库是一个多服务仓库，不是单体应用。修改任何功能前，先确认它属于哪个子系统，
 并阅读对应的子 AGENTS.md。文档与代码注释使用中文。
 
+## 分支管理
+
+- 直接在当前分支编写和修改代码，不需要新建分支。
+- 除非用户明确要求，否则不要创建新分支（包括 `codex/` 分支），也不要为任务创建新的 Git worktree。
+
+## 新电脑部署与验证
+
+- 部署入口以根目录 [README.md](README.md) 为准；先核对实际依赖清单，不沿用旧机器的绝对路径、虚拟环境、缓存或凭据。
+- 浏览器全栈最小环境：Git、JDK 17（含 javac）、Maven、Node.js、Python 3.12、MySQL 8、Redis。具体版本与步骤见 README。
+- Windows 首次执行 `./setup.ps1`（开发测试加 `-Dev`），再初始化空数据库、启动 Redis、配置本地凭据；执行 `./start.ps1 -CheckOnly` 检查工具与依赖，最后 `./start.ps1` 启动。检查模式不验证数据库、Redis、密钥或模型连通性。
+- 不要求安装 IDE、Windows Terminal、Docker、Rust、PostgreSQL、Langfuse 或配置模型 Key 才能完成基础启动。实际 AI 请求需要在 Java 模型管理中配置供应商；上传/视频资产功能另需 OSS。
+- 不自动安装系统软件、不重建已有数据库、不覆盖已有 `.env`。启动脚本生成本地服务密钥，不打印密钥。手动启动需给 Java 与 Agent 提供一致的服务密钥。
+- 前端修改后不运行编译或生产构建验证，除非用户明确要求；按影响运行 `npm test` 或开发态检查。
+- 修改部署流程、端口或依赖后，同步更新根 README 与对应子 README，保留唯一的全栈部署入口，避免复制失效的版本要求。
+
 ## 系统组成
 
 ```text
@@ -63,7 +78,7 @@ Windows 一键启动见 `start.ps1`（Agent → Java → 前端）。
 - 敏感配置不写死代码：OSS 密钥、Token 密钥、Agent Key 等存数据库 `sys_config`（参数管理→安全配置），
   或通过环境变量注入。`lingXi-agent/.env`、`application.yml`、`.env*` 都是本地配置，禁止修改后提交。
 - 不要提交密钥/密码/生产地址；`.env` 类文件内容不得进 diff 或日志。
-- 数据库脚本：新环境用 `dkd-parent/sql/lingxi_all.sql`；既有环境只能执行独立迁移脚本，禁止反复导入重建脚本。
+- 数据库脚本：新环境用 `dkd-parent/sql/lingxi_all.sql`；既有环境先备份并核对结构差异，再编写本次升级 SQL，禁止反复导入总初始化脚本。
 
 ## 定位指引
 

@@ -16,7 +16,7 @@ Python 与 Java 只转发白名单字段，前端使用原生详情展开元素�
 成功回答将引用与 OpenUI 渲染共存保存，旧历史兼容，不新增依赖、配置项、表或字段。
 已有 `ui_json` 和正文 `content` 从 `TEXT` 扩大为 `MEDIUMTEXT`：20 条中文证据、
 合法的 32,000 字符中文输入或长回答都可能超过 64 KiB，
-需在发布前执行独立迁移 `dkd-parent/sql/migration_ai_model_history_ui_json_capacity.sql`。
+需在发布前备份并核对结构，按差异扩容字段；新环境直接使用 `dkd-parent/sql/lingxi_all.sql`。
 展示快照超过 MEDIUMTEXT 的 UTF-8 字节上限时丢弃该快照，仍保存正文，避免展示数据阻塞对话持久化。
 审批恢复时从该用户该会话的当前轮工具记录重放引用，以便最终回答保留暂停前的证据。
 

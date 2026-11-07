@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "灵犀智能应用平台 · 高层运行时架构",
+    "locale": "zh-CN",
+    "output": ".archify/architecture-lingxi-runtime-20260929-005531/lingxi-runtime.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/zZz1tai/lingXi-parent.git",
+      "provider": "github",
+      "revision": "00f07cec857f807f6afc2cb4fb3aec6dccb3394b"
+    }
+  },
+  "components": [
+    {
+      "id": "client",
+      "type": "external",
+      "label": "用户端",
+      "sublabel": "浏览器 / Tauri 桌面",
+      "pos": [45, 80],
+      "size": [150, 64]
+    },
+    {
+      "id": "vue",
+      "type": "frontend",
+      "label": "lingXi-vue 管理端",
+      "sublabel": "Vue 3 · Vite :3000",
+      "pos": [40, 240],
+      "size": [160, 76],
+      "sources": [
+        { "path": "lingXi-vue/vite.config.js", "line": 41, "end_line": 46, "label": "dev-api 代理" },
+        { "path": "lingXi-vue/src/utils/request.js", "line": 26, "label": "axios baseURL" }
+      ]
+    },
+    {
+      "id": "java",
+      "type": "backend",
+      "label": "Java 业务后端",
+      "sublabel": "Spring Boot · :8080",
+      "pos": [330, 240],
+      "size": [200, 76],
+      "sources": [
+        { "path": "dkd-parent/lingXi-admin/src/main/java/com/lingXi/LingXiApplication.java", "line": 15, "end_line": 16, "label": "启动与组件扫描" },
+        { "path": "dkd-parent/lingXi-manage/src/main/java/com/lingXi/ai/client/AgentClient.java", "line": 2873, "label": "服务密钥请求头" },
+        { "path": "dkd-parent/lingXi-admin/src/main/resources/application.yml", "line": 154, "label": "Agent base-url" }
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "lingXi-agent",
+      "sublabel": "FastAPI · :5000",
+      "tag": "LangGraph",
+      "pos": [780, 240],
+      "size": [180, 76],
+      "sources": [
+        { "path": "lingXi-agent/app/main.py", "line": 203, "end_line": 208, "label": "受保护路由注册" },
+        { "path": "lingXi-agent/app/api/auth.py", "line": 15, "label": "服务密钥头" },
+        { "path": "lingXi-agent/app/services/agent_tool_client.py", "line": 74, "label": "回调 Java 工具网关" }
+      ]
+    },
+    {
+      "id": "providers",
+      "type": "external",
+      "label": "模型与媒体供应商",
+      "sublabel": "对话 · 图片 · 视频",
+      "tag": "OUTBOUND_ALLOWED_HOSTS",
+      "pos": [1115, 240],
+      "size": [185, 76],
+      "sources": [
+        { "path": "lingXi-agent/app/security/outbound.py", "line": 75, "label": "出站白名单校验" },
+        { "path": "lingXi-agent/app/api/dependencies.py", "line": 119, "label": "OpenAI 兼容模型构造" },
+        { "path": "dkd-parent/lingXi-manage/src/main/java/com/lingXi/aiVedio/callback/AiVideoProviderCallbackService.java", "line": 45, "label": "HmacSHA256 验签" }
+      ]
+    },
+    {
+      "id": "mysql",
+      "type": "database",
+      "label": "MySQL 8",
+      "sublabel": "业务/权限/任务",
+      "pos": [345, 450],
+      "size": [115, 60],
+      "sources": [
+        { "path": "dkd-parent/lingXi-admin/src/main/resources/application-druid.yml", "line": 9, "label": "JDBC 数据源" }
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "缓存/会话",
+      "pos": [480, 450],
+      "size": [110, 60],
+      "sources": [
+        { "path": "dkd-parent/lingXi-admin/src/main/resources/application.yml", "line": 68, "label": "Redis 配置" }
+      ]
+    },
+    {
+      "id": "oss",
+      "type": "cloud",
+      "label": "阿里云 OSS",
+      "sublabel": "文件与生成资产",
+      "pos": [610, 450],
+      "size": [120, 60],
+      "sources": [
+        { "path": "dkd-parent/lingXi-manage/src/main/java/com/lingXi/system/config/SystemSecurityConfigService.java", "line": 86, "label": "OSS 密钥读取" },
+        { "path": "dkd-parent/lingXi-admin/src/main/java/com/lingXi/LingXiApplication.java", "line": 14, "label": "文件存储组件" }
+      ]
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "会话记忆 · 可选",
+      "pos": [802.5, 450],
+      "size": [135, 60],
+      "sources": [
+        { "path": "lingXi-agent/app/agents/checkpoints.py", "line": 51, "label": "AsyncPostgresSaver" }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Java 业务侧（Agent 不读写）",
+      "wraps": ["java", "mysql", "redis", "oss"],
+      "pad": 10
+    },
+    {
+      "kind": "region",
+      "label": "Agent 记忆侧（独立于业务库）",
+      "wraps": ["agent", "pg"],
+      "pad": 10
+    }
+  ],
+  "connections": [
+    {
+      "id": "client-to-vue",
+      "from": "client",
+      "to": "vue",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "vue-to-java",
+      "from": "vue",
+      "to": "java",
+      "label": "/dev-api 代理"
+    },
+    {
+      "id": "java-to-agent",
+      "from": "java",
+      "to": "agent",
+      "label": "HTTP + X-Agent-Service-Key",
+      "variant": "emphasis"
+    },
+    {
+      "id": "agent-to-providers",
+      "from": "agent",
+      "to": "providers",
+      "label": "HTTPS + 出站白名单"
+    },
+    {
+      "id": "java-to-mysql",
+      "from": "java",
+      "to": "mysql",
+      "label": "SQL",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "java-to-redis",
+      "from": "java",
+      "to": "redis",
+      "label": "缓存",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "java-to-oss",
+      "from": "java",
+      "to": "oss",
+      "label": "上传/转存",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "agent-to-pg",
+      "from": "agent",
+      "to": "pg",
+      "label": "记忆（可选）",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "providers-to-java-callback",
+      "from": "providers",
+      "to": "java",
+      "label": "视频任务回调（HMAC 验签）",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [[1207.5, 190], [430, 190]]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "服务间契约",
+      "items": [
+        "Java 经 HTTP 调用 Agent，所有非健康检查路由要求 X-Agent-Service-Key",
+        "Agent 可反向调用 Java 只读工具网关 /internal/ai/tools/invoke（默认关闭）",
+        "模型名、供应商密钥与 Base URL 由 Java 按请求搬运，两侧不保留模型默认值",
+        "Agent 返回已校验的模型结果，Java 负责任务状态、资产关系与事务"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "数据与控制点",
+      "items": [
+        "MySQL 持有业务、权限、任务状态与资产关系；OSS 承接上传与生成资产转存",
+        "会话短期记忆默认进程内存，生产可切换 PostgreSQL checkpoint",
+        "关键帧须用户批准后才提交视频任务；submission_uncertain 进入人工核对"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "安全与出站",
+      "items": [
+        "Agent 出站仅允许 OUTBOUND_ALLOWED_HOSTS 白名单内的 HTTPS 主机",
+        "服务密钥与 OSS、Token 密钥存 sys_config，经参数管理→安全配置维护",
+        "只读业务工具与人工确认写操作默认关闭，需 Java 与 Python 两侧开关同时开启"
+      ]
+    }
+  ]
+}

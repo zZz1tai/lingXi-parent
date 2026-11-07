@@ -4,7 +4,7 @@
 
 本仓库不是单体应用：浏览器管理端、Java 业务服务与 Python AI 服务需要协同运行。
 
-当前版本：**3.8.7**（前后端版本号保持一致；桌面端安装包见根目录 `LingXiTerminal_1.0.0_x64-setup.exe`）。
+当前版本：**3.8.7**（前后端版本号保持一致）。
 
 ## 系统组成
 
@@ -97,12 +97,12 @@ lingXi-parent/
 | Java | JDK 17 | 后端 POM 的 `java.version` 为 17。 |
 | Maven | 3.6+ | 用于构建和启动 Java 多模块项目。 |
 | Node.js | 20.19+ 或 22.12+ | 用于 Vite 7 前端构建；使用 npm。 |
-| Python | 3.12+（建议） | 用于 FastAPI / LangChain Agent。 |
+| Python | 3.12（与 CI 一致） | 用于 FastAPI / LangChain Agent。 |
 | MySQL | 8.0+ | 整合初始化脚本以 MySQL 8.0 / `utf8mb4` 为目标。 |
 | Redis | 6+ | 默认连接 `localhost:6379`。 |
 | PostgreSQL | 14+（可选） | 用于 Agent 生产环境的 checkpoint 和用户记忆持久化；本地开发可用内存模式。 |
-| Rust / Tauri CLI | 可选 | 仅构建桌面端（`npm run build:desktop`、`npm run build:exe`）需要；发布流水线见 `.github/workflows/release-desktop.yml`。 |
-| Windows Terminal | 可选 | 仅根目录一键启动脚本需要 `wt.exe`。 |
+| Rust / MSVC / WebView2 | 可选 | 仅 Tauri 桌面应用开发与打包需要；浏览器版无需安装。 |
+| Windows Terminal | 可选 | 有 `wt.exe` 时打开标签页；未安装时后台运行并写入 `output/` 日志。 |
 
 ## 配置与安全
 
@@ -148,43 +148,74 @@ Agent 默认只允许向 `OUTBOUND_ALLOWED_HOSTS` 指定的 HTTPS 主机发送�
 
 使用 [`dkd-parent/sql/lingxi_all.sql`](dkd-parent/sql/lingxi_all.sql) 完成一站式初始化：它会创建并切换到 `dkd` 数据库，导入系统表和种子数据，创建 AI 视频工作流、小说大纲/伏笔、任务尝试记录等表，写入 AI 视频菜单及管理员角色授权，并初始化安全配置项。
 
+从仓库根目录启动 MySQL 客户端（需要 MySQL CLI；也可用数据库管理工具导入文件）：
+
 ```powershell
-mysql -u root -p < dkd-parent/sql/lingxi_all.sql
+mysql --default-character-set=utf8mb4 -h 127.0.0.1 -u root -p
 ```
 
-该脚本面向**新环境**。对已有环境，请在备份后审阅并按需执行 `dkd-parent/sql` 中的独立迁移脚本；不要反复导入含有基础表重建语句的完整初始化脚本。
+进入 MySQL 提示符后执行（`SOURCE` 是 MySQL 命令，不是 PowerShell 命令）：
 
-`dkd-parent/sql` 下各脚本用途：
+```sql
+SOURCE dkd-parent/sql/lingxi_all.sql;
+```
 
-| 脚本 | 用途 |
+PowerShell 不支持 shell 的 `<` 输入重定向，不要直接粘贴 Bash 的导入写法。
+
+该脚本面向**新环境**，已整合所有历史迁移。`dkd-parent/sql/` 只保留 `lingxi_all.sql`，不再需要按顺序执行多个 SQL 文件。
+
+2026-11-07 已通过 JDBC 只读查询本机数据库的表结构，核对全部 80 张表及字段、索引；未读取业务行或修改数据库。核对说明见 [数据库结构核对记录](docs/sql-schema-audit.md)。
+
+**已有数据库禁止重新导入总脚本**：其中含有 DROP TABLE。升级时先备份、对比实际结构，再编写仅针对差异的升级 SQL；历史迁移可在 Git 历史中查阅，不能不经核对整批执行。
+
+## 新电脑从零部署
+
+浏览器全栈需要 Git、JDK 17（含 `javac`）、Maven、Node、Python、MySQL、Redis。Docker 和 IDE 均不是必需项；MySQL/Redis 可使用已有可访问服务。Agent 的 PostgreSQL、Langfuse、Tavily、知识索引以及 OSS 都按功能配置，不必一次安装。模型 Key 不影响进程基础启动，但真实 AI 请求必须有可用供应商配置。
+
+1. 克隆仓库，在当前分支工作。不要复制旧电脑的 `.venv`、`node_modules`、`target` 或本地密钥。
+2. 检查 `git --version`、`java -version`、`javac -version`、`mvn -version`、`node --version`、`npm --version`、`python --version`。Maven 使用的 Java 也必须是 JDK 17；路径有空格时使用引号。
+3. 在仓库根目录运行以下命令（联网下载 npm/PyPI 依赖，失败即停止，不安装系统软件或初始化数据库）：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+# 需要运行 Python 测试时改用：
+# powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Dev
+```
+
+4. 启动 MySQL、Redis；按前一节仅对新环境导入数据库。配置连接信息；默认 MySQL `localhost:3306/dkd`、账号 `root`，Redis `localhost:6379`、库 `0`、无密码。生产不可沿用这些假设。
+5. 设置本地密码及路径，可在当前 PowerShell 进程设置环境变量，也可把下表允许的变量添加到忽略的 `lingXi-agent/.env`。无需复制整个 `.env.example` 才能启动；它的服务密钥是占位符，照抄后必须替换为真实随机密钥。不要覆盖已有文件。
+6. 运行 `./start.ps1 -CheckOnly` 检查本地工具和依赖，然后 `./start.ps1`。首次 Java 启动还需联网下载 Maven 依赖。检查模式不会启动服务、写密钥或验证 MySQL/Redis 连接、表结构及模型。
+7. 按“部署验收”验证登录和业务，最后再在模型管理及安全配置页面启用 AI、OSS 等所需能力。
+
+### 本地配置入口
+
+`start.ps1` 导入下列 `.env` 变量给 Java，已有进程变量优先。手动启动或生产进程管理必须自行注入环境变量，Java 不会自动读取 Python `.env`。
+
+| 变量 | 用途 |
 | --- | --- |
-| `lingxi_all.sql` | 新环境一站式初始化（系统表、种子数据、AI 视频工作流、小说大纲/伏笔、任务尝试记录、安全配置项等） |
-| `migration_ai_novel_outline.sql` | 创建 AI 小说三层大纲表 `ai_novel_outline`（既有环境补齐用） |
-| `migration_ai_model_history_ui_json.sql` | AI 对话历史表增加 OpenUI 渲染历史 `ui_json` 字段 |
-| `migration_ai_model_history_ui_json_capacity.sql` | 将对话正文 `content` 与快照 `ui_json` 扩大为 MEDIUMTEXT，容纳长中文消息、知识证据与 OpenUI；升级证据回看功能前执行 |
-| `migration_ai_video_generation_task_recover_count.sql` | 生成任务表增加 `recover_count` 字段并修复异常租约数据 |
+| `DB_USERNAME` / `DB_PASSWORD` | MySQL 账号 / 密码 |
+| `SPRING_DATASOURCE_DRUID_MASTER_URL` | 自定义完整 JDBC URL（默认本地 dkd）；远程 MySQL 或自定义端口时设置 |
+| `SPRING_DATA_REDIS_HOST` / `SPRING_DATA_REDIS_PORT` / `SPRING_DATA_REDIS_DATABASE` | 自定义 Redis 地址、端口、库 |
+| `REDIS_PASSWORD` | Redis 密码；无密码时留空 |
+| `RUOYI_PROFILE` | 可写上传目录；默认相对启动目录 `./uploadPath` |
+| `TOKEN_SECRET` | Token 签名密钥；生产必须使用独立高强度值 |
+| `DRUID_USERNAME` / `DRUID_PASSWORD` | Druid 控制台账号 / 密码 |
 
-## 首次安装
+`LINGXI_JAVA_PORT`（优先）或 `SERVER_PORT` 可在运行启动脚本前设置，脚本同步默认前端代理和 Agent 工具回调地址。自定义 `VITE_APP_PROXY_TARGET`、`AGENT_TOOL_BASE_URL` 时保留显式值。
 
-以下命令在仓库根目录执行。Windows PowerShell 示例中的路径分隔符可按系统替换。
+### macOS / Linux 首次依赖安装
 
-```powershell
-# 1. 前端依赖（package-lock.json 存在，推荐 npm ci）
-cd lingXi-vue
-npm ci
+在仓库根目录执行，先完成相同的系统工具、数据库和环境变量准备：
 
-# 2. Python 虚拟环境与 Agent 依赖
-cd ..\lingXi-agent
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env
-
-# 3. 编辑配置后回到仓库根目录
-cd ..
+```bash
+npm --prefix lingXi-vue ci
+python3.12 -m venv lingXi-agent/.venv
+lingXi-agent/.venv/bin/python -m pip install -r lingXi-agent/requirements.txt
+# 需要 pytest 时使用 requirements-dev.txt
+lingXi-agent/.venv/bin/python -m pip check
 ```
 
-`start.ps1` 不会安装 npm 或 Python 依赖；上述准备只需首次执行，依赖变更后再重复执行即可。
+手动启动前为两个终端注入同一 `AGENT_SERVICE_API_KEY`；可以用 `python3.12 -c 'import secrets; print(secrets.token_urlsafe(32))'` 在私有终端生成，再安全保存。不要将输出粘贴到仓库、聊天或共享日志。
 
 ## 启动
 
@@ -196,13 +227,13 @@ cd ..
 .\start.bat
 ```
 
-脚本会打开三个 Windows Terminal 标签页，并按下列顺序运行：
+脚本优先打开 Windows Terminal 标签页；未安装时使用系统自带 cmd 在后台运行，打印 PID，日志保存在忽略的 `output/LingXi-*.log`。三个服务并发启动，随后等待后端就绪：
 
-1. Agent：`uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload`，等待 `http://127.0.0.1:5000/readyz` 就绪；
+1. Agent：`uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload`；就绪地址为 `http://127.0.0.1:5000/readyz`；
 2. Java：先执行 `mvn -pl lingXi-admin -am -DskipTests install`，再启动 `LingXiApplication`，监听 8080；
 3. 前端：在 `lingXi-vue` 执行 `npm run dev`。Vite 会自动打开浏览器，默认端口为 3000。
 
-启动前脚本会检查 Python、Maven、Windows Terminal，以及 5000/8080 端口可用性。若端口已被未就绪的服务占用，需先停止对应进程。
+启动前检查 Python 运行依赖、Java/Javac、Maven、Node/npm 和 Vite 安装情况。Agent 端口被非就绪服务占用时会报错；Java 端口已监听时会跳过启动，但这不证明占用者就是本项目，需核实。停止时关闭对应服务终端；后台模式按打印的 PID 定位进程树，确认归属后再停止，勿批量结束所有 Java/Python/Node 进程。
 
 ### 手动启动
 
@@ -233,6 +264,8 @@ npm run dev
 
 ## 常用命令
 
+根启动脚本的离线回归检查：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/launcher.test.ps1`，不会启动业务服务；检查 PowerShell 语法、配置导入优先级和后台日志路径引用。
+
 ```powershell
 # 前端
 cd lingXi-vue
@@ -249,6 +282,7 @@ mvn -pl lingXi-manage -am test
 
 # Agent：所有测试均可离线运行，不调用真实模型服务
 cd ..\lingXi-agent
+# pytest 需要先安装 requirements-dev.txt
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m pip check
@@ -264,6 +298,28 @@ cd ..\lingXi-agent
 | 后端 Swagger | `http://localhost:8080/swagger-ui/index.html` | `swagger.enabled=true` 时可用；如版本差异导致路径不同，请查看启动日志。 |
 
 Agent 的对话、章节分析、图片生成和视频任务接口统一在 `/api/v1` 下；健康检查以外的接口需要服务密钥。完整接口清单、流式协议、记忆后端和视频流程见 [`lingXi-agent/README.md`](lingXi-agent/README.md)。
+
+## 部署验收与排错
+
+| 验收 / 现象 | 检查与处理 |
+| --- | --- |
+| Agent 就绪 | `GET http://127.0.0.1:5000/readyz` 返回成功；这不代表模型可用 |
+| Java 启动 | 日志出现应用启动成功；TCP 8080 监听仅作为初步检查 |
+| 完整业务 | 打开 Vite 实际地址，使用本环境管理员账号登录，验证验证码、动态菜单和一项列表查询；新库账号由种子数据提供，首次登录即修改密码 |
+| AI 验收 | 在模型管理配置 Key、模型名、Base URL，确保主机在 Agent 出站白名单，再发送一次测试消息 |
+| 依赖安装失败 | 检查包源、代理、网络和运行时版本；不要关闭 TLS 校验或移除版本约束 |
+| 数据库连接失败 | 检查 URL、用户名密码、网络授权及是否创建 dkd；禁止为排错重导整库 |
+| Redis 连接失败 | 确认服务已启动、密码一致，远端地址用上述 Spring 环境变量 |
+| `/dev-api` 502 / 连接拒绝 | 检查 Java 是否成功启动以及 `VITE_APP_PROXY_TARGET`，修改后重启 Vite |
+| Agent 401 | 两端服务密钥或数据库安全配置中的覆盖值不一致；修正后重启服务，不打印密钥 |
+| PostgreSQL 连接失败 | 仅启用 postgres checkpoint / Store 时需要；本地可选择 memory，不要把它当 MySQL 替代品 |
+
+## 生产部署边界
+
+`setup.ps1` / `start.ps1` 是本地开发工具，带热重载，不用于公网生产运行。生产由进程管理器分别托管 Java、Agent 和 Web 静态资源，准备 TLS 反向代理、持久化上传目录、日志及备份。
+Java 明确设置 `SPRING_PROFILES_ACTIVE=druid,prod`，通过环境注入 MySQL URL/账号密码、`REDIS_HOST` / `REDIS_PASSWORD`、`TOKEN_SECRET`、`AIVIDEO_CALLBACK_SECRET`、Agent 共享密钥等；先审阅 `application-prod.yml` 的必填变量。
+Agent 去掉 `--reload`，仅向内网开放 5000，按需为 checkpoint/Store 部署 PostgreSQL；内存状态在重启后丢失，不能跨实例共享。
+Web 发布产物由静态服务器托管，`/prod-api` 反向代理到 Java 并剥离前缀，SSE 关闭代理缓冲。数据库、Redis、Agent 不直接暴露公网。
 
 ## 数据与职责边界
 

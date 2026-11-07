@@ -1,7 +1,8 @@
-﻿-- LingXi/DKD complete database initialization script
--- Target: MySQL 8.0+
--- Generated from the repository SQL files plus schemas required by current mappers.
--- This script creates database `dkd` and can be imported directly on a fresh MySQL server.
+-- 灵犀数据库总初始化脚本：唯一的新环境 SQL 入口，适用于 MySQL 8.0+。
+-- 已整合历史迁移：对话扩容、小说大纲/计划章号/节奏/软删除/异步任务、视频恢复计数与菜单。
+-- 2026-11-07 已只读核对当前数据库的 80 张表，未导出业务数据或配置值。
+-- 包含 DROP TABLE 和种子数据，仅用于新环境，禁止直接导入已有业务数据库。
+-- 既有环境先备份，再根据实际结构差异编写本次升级 SQL，不可重跑本脚本。
 
 CREATE DATABASE IF NOT EXISTS `dkd`
   DEFAULT CHARACTER SET utf8mb4
@@ -2283,8 +2284,16 @@ VALUES
   (2010, '人员管理', 2000, 10, 'emp', 'manage/emp/index', '', 1, 0, 'C', '0', '0', 'manage:emp:list', '#', 'admin', NOW(), '', NULL, ''),
   (2011, '工单管理', 2000, 11, 'task', NULL, '', 1, 0, 'M', '0', '0', '', 'form', 'admin', NOW(), '', NULL, ''),
   (2012, '运营工单', 2011, 1, 'business', 'manage/task/business', '', 1, 0, 'C', '0', '0', 'manage:task:list', '#', 'admin', NOW(), '', NULL, ''),
-  (2013, '运维工单', 2011, 2, 'operation', 'manage/task/operation', '', 1, 0, 'C', '0', '0', 'manage:task:list', '#', 'admin', NOW(), '', NULL, ''),
-  (2015, '灵犀智能助手', 2000, 12, 'ai', 'ai/qwen-chat', '', 1, 0, 'C', '0', '0', 'ai:chat:list', 'message', 'admin', NOW(), '', NULL, '');
+  (2013, '运维工单', 2011, 2, 'operation', 'manage/task/operation', '', 1, 0, 'C', '0', '0', 'manage:task:list', '#', 'admin', NOW(), '', NULL, '');
+
+-- AI 对话是独立一级菜单，不属于灵犀业务，也不生成业务 CRUD 按钮。
+-- 保留菜单 ID 与页面组件，RuoYi 将一级 C 菜单包装为 Layout，访问路径为 /ai。
+INSERT INTO `sys_menu`
+(`menu_id`,`menu_name`,`parent_id`,`order_num`,`path`,`component`,`query`,`is_frame`,`is_cache`,`menu_type`,`visible`,`status`,`perms`,`icon`,`create_by`,`create_time`,`update_by`,`update_time`,`remark`)
+VALUES
+  (2015, '灵犀智能助手', 0, 14, 'ai', 'ai/qwen-chat', '', 1, 0, 'C', '0', '0', 'ai:chat:list', 'message', 'admin', NOW(), '', NULL, 'AI对话独立入口');
+
+INSERT INTO sys_role_menu (role_id, menu_id) VALUES (1, 2015);
 
 -- Common button permissions used by v-hasPermi. They do not appear as routes.
 INSERT INTO `sys_menu`
@@ -2299,7 +2308,7 @@ JOIN (
   UNION ALL SELECT 4, '删除', 'remove'
   UNION ALL SELECT 5, '导出', 'export'
 ) p
-WHERE m.menu_id BETWEEN 2001 AND 2015
+WHERE m.perms LIKE 'manage:%'
   AND m.menu_type = 'C'
   AND m.perms <> '';
 
@@ -2317,9 +2326,6 @@ CREATE TABLE IF NOT EXISTS tb_order_detail (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 SET FOREIGN_KEY_CHECKS = 1;
-
--- Initialization summary
-SELECT 'dkd database initialized successfully' AS message;
 
 -- ============================================================
 -- AI controlled write actions (from ai_agent_action_migration.sql)
@@ -3116,3 +3122,6 @@ WHERE NOT EXISTS (SELECT 1 FROM sys_config WHERE config_key = 'security.agent.se
 INSERT INTO sys_config (config_name, config_key, config_value, config_type, create_by, create_time, remark)
 SELECT '联网搜索-Tavily API Key', 'security.search.tavilyApiKey', '', 'Y', 'admin', NOW(), '系统安全配置页面维护'
 WHERE NOT EXISTS (SELECT 1 FROM sys_config WHERE config_key = 'security.search.tavilyApiKey');
+
+-- 全部表结构、菜单权限和安全配置处理完成后再输出成功提示。
+SELECT 'dkd database initialized successfully' AS message;

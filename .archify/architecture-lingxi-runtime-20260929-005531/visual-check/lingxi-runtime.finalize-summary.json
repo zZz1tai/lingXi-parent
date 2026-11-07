@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "D:\\code\\lingXi-parent\\.archify\\architecture-lingxi-runtime-20260929-005531\\candidate.json",
+    "sha256": "62cd4290176b354a1e65ed6846591f49be354302907e79175790ca7d4f2657c0",
+    "bytes": 7524
+  },
+  "artifact": {
+    "path": "D:\\code\\lingXi-parent\\.archify\\architecture-lingxi-runtime-20260929-005531\\lingxi-runtime.html",
+    "sha256": "16882b73ffed59de53a41d7a83bb8464b69fac3239c8d67fa38fb9964ecc4e16",
+    "bytes": 768438
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\code\\lingXi-parent\\.archify\\architecture-lingxi-runtime-20260929-005531\\visual-check\\lingxi-runtime.finalize.json",
+    "summaryReceipt": "D:\\code\\lingXi-parent\\.archify\\architecture-lingxi-runtime-20260929-005531\\visual-check\\lingxi-runtime.finalize-summary.json",
+    "browserCheckReceipt": "D:\\code\\lingXi-parent\\.archify\\architecture-lingxi-runtime-20260929-005531\\visual-check\\lingxi-runtime.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.0.1",
+    "releaseNotes": null,
+    "checkedAt": "2026-09-29T00:34:58.598Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 5593,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "routesOverSuggestedBends": 1,
+      "routesOverSuggestedStretch": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [],
+      "detours": [
+        {
+          "relationship": {
+            "id": "agent-to-pg",
+            "from": "agent",
+            "to": "pg",
+            "label": "记忆（可选）",
+            "collectionIndex": 7,
+            "artifactIndex": 8
+          },
+          "bends": 4,
+          "stretch": 1.238
+        },
+        {
+          "relationship": {
+            "id": "providers-to-java-callback",
+            "from": "providers",
+            "to": "java",
+            "label": "视频任务回调（HMAC 验签）",
+            "collectionIndex": 8,
+            "artifactIndex": 9
+          },
+          "bends": 2,
+          "stretch": 1.36,
+          "directCorridorBlockers": [
+            {
+              "id": "agent",
+              "label": "lingXi-agent",
+              "box": [
+                780,
+                240,
+                180,
+                76
+              ]
+            }
+          ]
+        }
+      ],
+      "truncated": false
+    },
+    "hints": [
+      "agent → pg needs 4 bends: move node agent or pg so they share a row or column with matching centers, or sit diagonally with a clear corner."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}

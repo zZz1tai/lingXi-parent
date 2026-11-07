@@ -4,6 +4,8 @@
 
 ## 职责边界
 
+新电脑的完整部署入口见 [根 README](../README.md)，智能体规则见 [AGENTS.md](AGENTS.md)。运行使用 Python 3.12（与 CI 一致），依赖安装需要联网；离线测试是指不调用真实模型。Agent 单服务不需要 MySQL / Redis，默认内存 checkpoint 不需要 PostgreSQL。模型、OSS、搜索服务按功能配置，不是健康检查的前置条件。
+
 | 能力 | Python `lingXi-agent` | Java `lingXi-manage` |
 |---|---|---|
 | 文本/图片/视频模型调用 | 负责 | 不直连模型 |
@@ -265,19 +267,22 @@ Java 同样设置 `AGENT_WRITE_ACTIONS_ENABLED=true`。批准时只允许修改�
 cd lingXi-agent
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 # 修改 .env，设置 AGENT_SERVICE_API_KEY；模型 API Key 由 Java 模型配置页面逐请求传入
- .\.venv\Scripts\python.exe -m app.run
+.\.venv\Scripts\python.exe -m app.run
 ```
 
 Swagger 默认关闭；仅在受控开发环境设置 `DOCS_ENABLED=true` 后访问
 `http://localhost:5000/docs`。
+
+模板中的服务密钥是占位符，启动前必须替换。完整 Windows 部署可直接使用根 `setup.ps1` / `start.ps1`，无需手动复制模板；未配置密钥时启动脚本会安全生成并传给 Java。不要覆盖已有 `.env`。验证 `GET /readyz` 只说明服务就绪，不会验证模型供应商。
 
 ## 离线验证
 
 测试使用本地 Fake/Runnable，不会请求真实文本、图片或视频模型：
 
 ```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m pip check
@@ -286,5 +291,6 @@ Swagger 默认关闭；仅在受控开发环境设置 `DOCS_ENABLED=true` 后访
 Java 侧编译：
 
 ```powershell
-mvn -pl dkd-parent/lingXi-manage -am -DskipTests compile
+cd ../dkd-parent
+mvn -pl lingXi-manage -am -DskipTests compile
 ```

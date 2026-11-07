@@ -1,5 +1,13 @@
 # AGENTS.md — dkd-parent（Java 后端）
 
+## 新环境入口
+
+遵循根目录 AGENTS.md 的分支与安全规则；全栈部署见 [根 README](../README.md)。
+本模块需要 JDK 17（含 javac）、Maven、已初始化的 MySQL 8 与 Redis；只运行单元测试无需数据库服务。
+先在空库导入 `sql/lingxi_all.sql`，已有库先备份并核对差异，再编写升级 SQL，禁止重新导入总脚本。不要把旧 README 中 JDK 8 / MySQL 5.7 当作当前要求。
+根 `start.ps1` 才会向 Java 导入 `lingXi-agent/.env` 的指定变量；手动 Maven 启动必须自行设置环境变量。
+实际变量与自定义数据库地址说明见根 README，不修改提交本地连接配置。
+
 ## 项目概览
 
 基于 RuoYi-Vue 演进的 Spring Boot 多模块工程：灵犀智能零售终端管理 + AI 对话 / 视频 / 小说业务。
@@ -58,8 +66,8 @@ Java 负责登录、权限、业务数据、数据库事务、任务状态、资
   通过参数管理→安全配置界面维护；`application.yml` / `application-druid.yml` / `.env*`
   中的地址凭据仅限本地，禁止提交修改后的值。
 - 密钥字段（SecretStr / @JsonIgnore 等）不得出现在日志或接口响应中。
-- 数据库脚本在 `sql/`：新环境用 `lingxi_all.sql` 一站式初始化；**既有环境只能执行独立
-  迁移脚本**，禁止反复导入重建语句。新增表结构变化要提供独立迁移脚本。
+- 数据库脚本在 `sql/`：新环境用 `lingxi_all.sql` 一站式初始化；**既有环境必须先备份并核对结构差异，再编写本次升级 SQL**，禁止反复导入重建语句。
+  总初始化脚本始终保持当前完整结构；升级 SQL 按实际变更单独交付，不在初始化目录累计重复脚本。
 
 ## 常用命令
 

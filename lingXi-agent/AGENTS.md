@@ -1,5 +1,12 @@
 # AGENTS.md — LingXi Agent（Python AI 执行层）
 
+## 新环境入口
+
+遵循根目录 AGENTS.md；全栈部署见 [根 README](../README.md)，单服务运行见本目录 README。
+使用 Python 3.12 创建本机 `.venv`，不要复制旧电脑的虚拟环境；运行依赖用 `requirements.txt`，测试依赖用 `requirements-dev.txt`。
+Agent 基础启动不依赖 MySQL、Redis、PostgreSQL 或模型 Key；受保护接口需要服务密钥，真实推理需要 Java 传入模型配置。
+内存 checkpoint 足够本地开发，PostgreSQL 与长期记忆按需启用，不应作为默认安装项。
+
 ## 项目概览
 
 灵犀系统统一的 Python AI 执行层：基于 FastAPI + LangChain v1 / LangGraph v1，
@@ -14,11 +21,12 @@ Java 后端负责权限、业务数据、事务与人工确认，**不直连模�
 - 模型供应商：OpenAI 兼容（对话）、Qwen Image（图片）、HappyHorse（视频）
 - 可选：Tavily（搜索）、Open-Meteo（天气）、PostgreSQL checkpoint / Store、Langfuse 观测
 
-## 运行与测试（全部离线可跑）
+## 运行与测试（安装依赖需要联网，测试不调用真实模型）
 
 ```powershell
 cd lingXi-agent
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt   # 依赖安装
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt # 需要 pytest 时
 .\.venv\Scripts\python.exe -m app.run                           # 本地启动（端口 5000）
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v     # 单元测试
 .\.venv\Scripts\python.exe -m pytest -q
