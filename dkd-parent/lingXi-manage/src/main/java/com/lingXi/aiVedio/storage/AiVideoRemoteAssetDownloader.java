@@ -133,7 +133,8 @@ public class AiVideoRemoteAssetDownloader
         return uri;
     }
 
-    static InetAddress[] resolvePublicAddresses(String host) throws UnknownHostException
+    /** 在实际连接的 DNS 解析点校验公网地址；同模块的视频流代理等出站组件复用。 */
+    public static InetAddress[] resolvePublicAddresses(String host) throws UnknownHostException
     {
         InetAddress[] addresses = InetAddress.getAllByName(host);
         for (InetAddress address : addresses)

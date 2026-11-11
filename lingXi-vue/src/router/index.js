@@ -184,6 +184,20 @@ export const dynamicRoutes = [
     ]
   },
   {
+    path: '/aiVedio/douyin-player',
+    component: Layout,
+    hidden: true,
+    permissions: ['aivideo:project:list'],
+    children: [
+      {
+        path: 'index',
+        component: () => import('@/views/aiVedio/douyinPlayer/index'),
+        name: 'AiVedioDouyinPlayer',
+        meta: { title: '抖音视频解析', activeMenu: '/aiVedio/project' }
+      }
+    ]
+  },
+  {
     path: '/system/security-config',
     component: Layout,
     hidden: true,

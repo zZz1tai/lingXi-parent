@@ -13,6 +13,9 @@
         <el-button v-hasPermi="['aivideo:project:edit']" size="large" :icon="Connection" @click="router.push('/aiVedio/model-config/index')">
           模型配置
         </el-button>
+        <el-button size="large" :icon="VideoPlay" @click="router.push('/aiVedio/douyin-player/index')">
+          抖音解析
+        </el-button>
         <el-button type="primary" size="large" :icon="Plus" @click="handleAddProject">
           新建项目
         </el-button>
