@@ -198,6 +198,20 @@ export const dynamicRoutes = [
     ]
   },
   {
+    path: '/aiVedio/douyin-explore',
+    component: Layout,
+    hidden: true,
+    permissions: ['aivideo:project:list'],
+    children: [
+      {
+        path: 'index',
+        component: () => import('@/views/aiVedio/douyinExplore/index'),
+        name: 'AiVedioDouyinExplore',
+        meta: { title: '刷抖音', activeMenu: '/aiVedio/project', noCache: true }
+      }
+    ]
+  },
+  {
     path: '/system/security-config',
     component: Layout,
     hidden: true,

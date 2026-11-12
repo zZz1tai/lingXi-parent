@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
+import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.BindException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -91,6 +92,35 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ClientAbortException.class)
     public void handleClientAbortException(ClientAbortException e, HttpServletRequest request) {
         log.debug("客户端中断请求 '{}': {}", request.getRequestURI(), e.getMessage());
+    }
+
+    /**
+     * 响应写入失败：多为客户端中途断开被包装后的异常（如视频流转发/大响应写出时刷新页面），
+     * 属正常现象仅记简短日志；真正的序列化失败仍按错误记录
+     */
+    @ExceptionHandler(HttpMessageNotWritableException.class)
+    public void handleResponseWriteException(HttpMessageNotWritableException e, HttpServletRequest request) {
+        if (isClientGone(e)) {
+            log.debug("客户端中断响应写入 '{}': {}", request.getRequestURI(), e.getMessage());
+        } else {
+            log.error("请求地址'{}',响应写入失败: {}", request.getRequestURI(), e.getMessage());
+        }
+    }
+
+    /** 判断异常链中是否为客户端断开类原因 */
+    private static boolean isClientGone(Throwable e) {
+        Throwable current = e;
+        for (int depth = 0; current != null && depth < 10; depth++) {
+            String name = current.getClass().getName();
+            String message = String.valueOf(current.getMessage());
+            if (name.contains("ClientAbort") || name.contains("AsyncRequestNotUsable")
+                    || message.contains("Connection reset")
+                    || message.contains("主机中的软件中止")) {
+                return true;
+            }
+            current = current.getCause() == current ? null : current.getCause();
+        }
+        return false;
     }
 
     /**

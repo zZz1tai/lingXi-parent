@@ -16,6 +16,9 @@
         <el-button size="large" :icon="VideoPlay" @click="router.push('/aiVedio/douyin-player/index')">
           抖音解析
         </el-button>
+        <el-button size="large" :icon="VideoPlay" @click="router.push('/aiVedio/douyin-explore/index')">
+          刷抖音
+        </el-button>
         <el-button type="primary" size="large" :icon="Plus" @click="handleAddProject">
           新建项目
         </el-button>
