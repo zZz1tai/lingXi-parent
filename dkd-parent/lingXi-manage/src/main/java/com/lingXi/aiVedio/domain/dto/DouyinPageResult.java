@@ -1,5 +1,6 @@
 package com.lingXi.aiVedio.domain.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.Data;
@@ -22,4 +23,8 @@ public class DouyinPageResult<T>
 
     /** 游标（透传给下次翻页请求） */
     private Long cursor;
+
+    /** 抖音搜索要求用户在官方页面完成验证。 */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Boolean verificationRequired;
 }

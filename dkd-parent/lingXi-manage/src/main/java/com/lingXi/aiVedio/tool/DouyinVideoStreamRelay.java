@@ -8,7 +8,6 @@ import java.net.UnknownHostException;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
-import com.lingXi.aiVedio.storage.AiVideoRemoteAssetDownloader;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.http.Header;
@@ -43,6 +42,8 @@ public class DouyinVideoStreamRelay
     private static final Pattern RANGE_PATTERN = Pattern.compile("^bytes=\\d*-\\d*(,\\d*-\\d*)*$");
 
     private static final int MAX_REDIRECTS = 3;
+
+    private final DouyinCdnDnsResolver dnsResolver = new DouyinCdnDnsResolver();
 
     /**
      * 将视频流转发给客户端。
@@ -91,7 +92,7 @@ public class DouyinVideoStreamRelay
                 .setConnectionRequestTimeout(10000).setSocketTimeout(60000).build();
         // 复用 OSS 已引入的 HttpClient；DNS 解析点做公网校验，手动跟随重定向并逐跳校验。
         try (CloseableHttpClient client = HttpClients.custom()
-                .setDnsResolver(AiVideoRemoteAssetDownloader::resolvePublicAddresses)
+                .setDnsResolver(dnsResolver)
                 .setDefaultRequestConfig(config).disableRedirectHandling().disableAutomaticRetries()
                 .build())
         {

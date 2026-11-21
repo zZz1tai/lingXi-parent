@@ -177,19 +177,24 @@ public class DouyinVideoToolService
      */
     public DouyinVideoPage videoPage(String awemeId)
     {
+        return videoPage(awemeId, true);
+    }
+
+    public DouyinVideoPage videoPage(String awemeId, boolean includeComments)
+    {
         requireAwemeId(awemeId);
-        String cacheKey = "page:" + awemeId;
+        String cacheKey = (includeComments ? "page:" : "page:extras:") + awemeId;
         DouyinVideoPage cached = fromCache(cacheKey);
         if (cached != null)
         {
             return cached;
         }
-        DouyinVideoPage page = captureVideoPage(awemeId);
+        DouyinVideoPage page = captureVideoPage(awemeId, includeComments);
         if (page.getVideo() == null)
         {
             // 详情接口偶发漏抓（被次要接口提前收线或响应未就绪），换新标签页重抓一次
             log.info("视频详情页抓取不完整，自动重试一次：awemeId={}", awemeId);
-            page = captureVideoPage(awemeId);
+            page = captureVideoPage(awemeId, includeComments);
         }
         if (page.getVideo() == null)
         {
@@ -200,12 +205,16 @@ public class DouyinVideoToolService
     }
 
     /** 抓取并解析视频详情页数据（不抛异常，详情缺失时返回 video=null）。 */
-    private DouyinVideoPage captureVideoPage(String awemeId)
+    private DouyinVideoPage captureVideoPage(String awemeId, boolean includeComments)
     {
         CaptureRequest request = new CaptureRequest();
         request.setPageUrl("https://www.douyin.com/video/" + awemeId);
-        request.setMarkers(List.of("/aweme/v1/web/aweme/detail", "/danmaku/get_v2",
-                "/comment/list", "/aweme/related"));
+        List<String> markers = new ArrayList<>(List.of("/aweme/v1/web/aweme/detail", "/danmaku/get_v2", "/aweme/related"));
+        if (includeComments)
+        {
+            markers.add("/comment/list");
+        }
+        request.setMarkers(markers);
         // 详情响应体最大、往往最晚到达：必须等到它才收线，避免被弹幕等次要接口提前结束等待
         request.setRequiredMarker("/aweme/v1/web/aweme/detail");
         request.setMinResponses(3);
@@ -242,37 +251,7 @@ public class DouyinVideoToolService
     public DouyinPageResult<DouyinComment> comments(String awemeId, int page)
     {
         requireAwemeId(awemeId);
-        String cacheKey = "comments:" + awemeId + ":" + page;
-        DouyinPageResult<DouyinComment> cached = fromCache(cacheKey);
-        if (cached != null)
-        {
-            return cached;
-        }
-        CaptureRequest request = new CaptureRequest();
-        request.setPageUrl("https://www.douyin.com/video/" + awemeId);
-        request.setMarkers(List.of("/comment/list"));
-        request.setMinResponses(1);
-        request.setTimeoutMs(28_000);
-        request.setNavDelayMs(3_000);
-        request.setScrollTimes(Math.max(1, page) + 1);
-        request.setScrollIntervalMs(2_500);
-        DouyinPageResult<DouyinComment> result = null;
-        for (int attempt = 0; attempt < 2; attempt++)
-        {
-            List<CapturedBody> bodies = browserClient.capture(request);
-            result = parseComments(nthBody(bodies, "/comment/list", page));
-            if (!result.getItems().isEmpty())
-            {
-                break;
-            }
-            log.info("评论页抓取为空，自动重试一次：awemeId={}, page={}", awemeId, page);
-        }
-        if (result.getItems().isEmpty())
-        {
-            throw new ServiceException("评论加载失败，请稍后重试");
-        }
-        putCache(cacheKey, result);
-        return result;
+        return parseComments(browserClient.captureComments(awemeId, Math.max(0, page)));
     }
 
     /**
@@ -425,6 +404,16 @@ public class DouyinVideoToolService
      */
     public DouyinPageResult<DouyinVideoCard> search(String keyword, int page)
     {
+        return search(keyword, page, false);
+    }
+
+    public DouyinPageResult<DouyinVideoCard> searchAfterUserVerification(String keyword)
+    {
+        return search(keyword, 0, true);
+    }
+
+    private DouyinPageResult<DouyinVideoCard> search(String keyword, int page, boolean interactive)
+    {
         String trimmed = keyword == null ? "" : keyword.trim();
         if (trimmed.isEmpty() || trimmed.length() > 30)
         {
@@ -432,7 +421,7 @@ public class DouyinVideoToolService
         }
         String cacheKey = "search:" + trimmed + ":" + page;
         DouyinPageResult<DouyinVideoCard> cached = fromCache(cacheKey);
-        if (cached != null)
+        if (!interactive && cached != null)
         {
             return cached;
         }
@@ -440,57 +429,98 @@ public class DouyinVideoToolService
         {
             throw new ServiceException("搜索需要登录抖音后使用，请点击“浏览器登录”完成一次性登录");
         }
-        DouyinPageResult<DouyinVideoCard> result = captureSearch(trimmed, page);
-        if (result.getItems().isEmpty())
+        DouyinPageResult<DouyinVideoCard> result = captureSearch(trimmed, page, interactive);
+        if (!interactive && result.getItems().isEmpty() && !Boolean.TRUE.equals(result.getVerificationRequired()))
         {
             // 搜索流程偶发被抖动打断，换新标签页自动重抓一次
             log.info("搜索结果为空，自动重试一次：keyword={}", trimmed);
-            result = captureSearch(trimmed, page);
+            result = captureSearch(trimmed, page, false);
+        }
+        if (Boolean.TRUE.equals(result.getVerificationRequired()))
+        {
+            return result;
         }
         if (result.getItems().isEmpty())
         {
             log.warn("搜索未截获到有效结果：keyword={}", trimmed);
-            throw new ServiceException("搜索失败（可能触发抖音安全校验），请稍后重试，或在“浏览器登录”中登录抖音后使用");
+            throw new ServiceException("未获取到抖音搜索结果，请稍后重试");
         }
         putCache(cacheKey, result);
         return result;
     }
 
     /** 执行一次搜索抓取并解析（不抛异常，失败返回空结果）。 */
-    private DouyinPageResult<DouyinVideoCard> captureSearch(String keyword, int page)
+    private DouyinPageResult<DouyinVideoCard> captureSearch(String keyword, int page, boolean interactive)
     {
         CaptureRequest request = new CaptureRequest();
         request.setPageUrl("https://www.douyin.com/video/" + FALLBACK_SAFE_AWEME_ID);
-        // 宽匹配搜索接口（点搜索按钮后的实际路径不固定），排除联想词/热搜榜等干扰接口
-        request.setMarkers(List.of("search", "!search/sug", "!suggest", "!hot/search"));
+        request.setMarkers(List.of("/aweme/v1/web/general/search/stream/", "/aweme/v1/web/search/item/"));
         request.setMinResponses(1);
         request.setNavDelayMs(2_500);
-        request.setMinWaitMs(10_000);
-        request.setTimeoutMs(28_000);
+        request.setMinWaitMs(5_000);
+        request.setTimeoutMs(interactive ? 100_000 : 25_000);
         request.setActions(List.of(CaptureAction.eval(searchFlowScript(keyword))));
         request.setScrollTimes(Math.max(0, page));
-        List<CapturedBody> bodies = browserClient.capture(request);
-        return parseSearchBody(firstUsableSearchBody(bodies, page));
+        List<CapturedBody> bodies = interactive
+                ? browserClient.captureAfterUserVerification(request, this::hasSearchVideoResults)
+                : browserClient.capture(request);
+        return selectSearchPage(bodies, page, interactive);
     }
 
-    /** 挑选搜索结果响应：跳过空结果等无效响应，取第 page 个可用结果（原始流式文本）。 */
-    private String firstUsableSearchBody(List<CapturedBody> bodies, int page)
+    private boolean hasSearchVideoResults(String raw)
     {
-        List<String> usable = new ArrayList<>();
+        for (String frame : extractJsonObjects(raw))
+        {
+            try
+            {
+                JsonNode node = MAPPER.readTree(frame);
+                for (JsonNode item : node.path("data"))
+                {
+                    if (item.hasNonNull("aweme_id") || item.path("aweme_info").hasNonNull("aweme_id"))
+                    {
+                        return true;
+                    }
+                }
+                for (JsonNode item : node.path("aweme_list"))
+                {
+                    if (item.hasNonNull("aweme_id"))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                // 跳过无法解析的块，继续等待官方页面响应。
+            }
+        }
+        return false;
+    }
+
+    private DouyinPageResult<DouyinVideoCard> selectSearchPage(List<CapturedBody> bodies, int page,
+            boolean interactive)
+    {
+        List<DouyinPageResult<DouyinVideoCard>> usable = new ArrayList<>();
+        DouyinPageResult<DouyinVideoCard> empty = new DouyinPageResult<>();
         for (CapturedBody body : bodies)
         {
-            if (!body.marker().contains("search") || body.body().isBlank())
+            DouyinPageResult<DouyinVideoCard> result = parseSearchBody(body.body());
+            if (!result.getItems().isEmpty())
             {
-                continue;
+                usable.add(result);
             }
-            if (!parseSearchBody(body.body()).getItems().isEmpty())
+            if (Boolean.TRUE.equals(result.getVerificationRequired()))
             {
-                usable.add(body.body());
+                empty.setVerificationRequired(true);
             }
         }
         if (usable.isEmpty())
         {
-            return null;
+            if (interactive)
+            {
+                empty.setVerificationRequired(true);
+            }
+            return empty;
         }
         return usable.get(Math.min(Math.max(page, 0), usable.size() - 1));
     }
@@ -512,6 +542,10 @@ public class DouyinVideoToolService
             try
             {
                 JsonNode node = MAPPER.readTree(object);
+                if ("verify_check".equals(node.path("search_nil_info").path("search_nil_type").asText()))
+                {
+                    result.setVerificationRequired(true);
+                }
                 for (JsonNode entry : node.path("data"))
                 {
                     JsonNode info = entry.path("aweme_info");
@@ -663,7 +697,7 @@ public class DouyinVideoToolService
     /** 登录态（带 60 秒缓存）。 */
     private boolean isLoggedInCached()
     {
-        if (System.currentTimeMillis() - loginStatusCheckedAt < LOGIN_STATUS_CACHE_MS)
+        if (loginStatusCached && System.currentTimeMillis() - loginStatusCheckedAt < LOGIN_STATUS_CACHE_MS)
         {
             return loginStatusCached;
         }
@@ -676,6 +710,7 @@ public class DouyinVideoToolService
     public void startBrowserLogin()
     {
         browserClient.startLoginBrowser();
+        loginStatusCheckedAt = 0;
     }
 
     /** 关闭登录窗口并恢复无头模式。 */

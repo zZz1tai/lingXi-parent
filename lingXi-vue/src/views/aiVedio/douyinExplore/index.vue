@@ -14,18 +14,20 @@
           class="search-input"
           placeholder="搜索抖音视频（需登录）"
           clearable
+          maxlength="30"
           @keyup.enter="doSearch"
         />
-        <el-button type="primary" :icon="Search" :loading="listLoading" @click="doSearch">搜索</el-button>
+        <el-button type="primary" :icon="Search" :disabled="searchVerifying" :loading="listLoading && mode === 'search' && keyword.trim() === searchKeyword" @click="doSearch">搜索</el-button>
       </div>
       <div class="login-area">
-        <el-tag v-if="loggedIn" type="success" effect="plain">已登录抖音</el-tag>
-        <el-button v-else :icon="User" :loading="loginOpening" @click="openLogin">浏览器登录</el-button>
+        <el-button v-if="loginWindowOpen" :loading="loginBusy" @click="cancelLogin">取消登录</el-button>
+        <el-tag v-else-if="loggedIn" type="success" effect="plain">已登录抖音</el-tag>
+        <el-button v-else :icon="User" :loading="loginBusy" @click="openLogin">浏览器登录</el-button>
       </div>
     </header>
 
     <div class="channel-bar">
-      <el-radio-group :model-value="channel" @change="switchChannel">
+      <el-radio-group :model-value="channel" :disabled="searchVerifying" @change="switchChannel">
         <el-radio-button v-for="item in channels" :key="item.value" :value="item.value">
           {{ item.label }}
         </el-radio-button>
@@ -69,9 +71,19 @@
               </p>
             </div>
           </div>
-          <div v-if="listLoading" class="list-hint">加载中…</div>
+          <div v-if="searchVerifying" class="list-hint" role="status">
+            请在抖音浏览器窗口完成验证。如果验证后没有自动返回结果，请在该窗口再点一次搜索。
+          </div>
+          <div v-else-if="listLoading" class="list-hint">{{ mode === 'search' ? '正在搜索抖音视频…' : '加载中…' }}</div>
+          <div v-else-if="searchVerificationRequired" class="list-hint">
+            <p>抖音要求完成安全验证</p>
+            <el-button text type="primary" @click="loadList(true, true)">去抖音验证</el-button>
+          </div>
+          <div v-else-if="listFailed" class="list-hint">
+            <el-button text type="primary" @click="loadList(!listItems.length)">重新加载</el-button>
+          </div>
           <div v-else-if="listItems.length && !listHasMore" class="list-hint">没有更多了</div>
-          <el-empty v-if="!listItems.length && !listLoading" description="暂无视频" />
+          <el-empty v-if="!listItems.length && !listLoading && !listFailed && !searchVerificationRequired" description="暂无视频" />
         </div>
       </aside>
 
@@ -87,9 +99,25 @@
               :poster="current.coverUrl || undefined"
               :src="streamUrl"
               @timeupdate="onTimeUpdate"
+              @seeking="onVideoSeeking"
+              @seeked="onVideoSeeked"
+              @playing="onVideoPlaying"
+              @pause="videoPlaying = false"
+              @waiting="videoPlaying = false"
+              @ended="videoPlaying = false"
+              @ratechange="videoRate = $event.target.playbackRate"
               @error="onVideoError"
             />
-            <danmaku-layer :danmaku="danmaku" :current-time="currentTime" :enabled="danmakuEnabled" />
+            <danmaku-layer
+              :key="playerKey"
+              :danmaku="danmaku"
+              :current-time="currentTime"
+              :enabled="danmakuEnabled"
+              :playing="videoPlaying"
+              :seeking="videoSeeking"
+              :seek-version="seekVersion"
+              :playback-rate="videoRate"
+            />
             <div class="danmaku-switch">
               <el-switch v-model="danmakuEnabled" active-text="弹幕" />
             </div>
@@ -122,7 +150,11 @@
                   <p class="comment-text">{{ comment.text }}</p>
                 </div>
               </div>
-              <div v-if="commentsLoading" class="list-hint">加载中…</div>
+              <div v-if="commentsLoading" class="list-hint" role="status">正在加载评论…</div>
+              <div v-else-if="commentsRetryPage !== null" class="list-hint">
+                {{ commentsError }}
+                <el-button text type="primary" @click="loadComments(commentsRetryPage)">重试评论</el-button>
+              </div>
               <el-button
                 v-else-if="commentsHasMore"
                 class="load-more"
@@ -131,21 +163,18 @@
                 @click="loadMoreComments"
               >加载更多评论</el-button>
               <div v-else-if="comments.length" class="list-hint">没有更多评论了</div>
-              <div v-if="pageLoading" class="list-hint">正在加载弹幕与评论…</div>
-              <el-empty
-                v-else-if="pageFailed"
-                :image-size="60"
-                description="评论加载失败"
-              >
-                <el-button type="primary" size="small" @click="retryVideoPage">重新加载</el-button>
-              </el-empty>
-              <el-empty v-else-if="!comments.length && !commentsLoading" :image-size="60" description="暂无评论" />
+              <el-empty v-else :image-size="60" description="暂无评论" />
             </div>
           </section>
 
-          <section v-if="related.length" class="related-panel">
+          <section v-if="related.length || pageLoading || pageFailed" class="related-panel">
             <h3>相关推荐</h3>
-            <div class="related-grid">
+            <div v-if="pageLoading" class="list-hint" role="status">正在加载相关推荐…</div>
+            <div v-else-if="pageFailed" class="list-hint">
+              推荐与弹幕加载失败
+              <el-button text type="primary" @click="retryVideoPage">重试</el-button>
+            </div>
+            <div v-else class="related-grid">
               <div
                 v-for="item in related"
                 :key="item.awemeId"
@@ -175,7 +204,8 @@ import {
   getDouyinUser,
   getDouyinVideoPage,
   searchDouyin,
-  startDouyinBrowserLogin
+  startDouyinBrowserLogin,
+  verifyDouyinSearch
 } from '@/api/aiVedio/douyin'
 import { formatCount, formatDurationMs, formatRelativeTime } from '@/utils/douyinVideo'
 import DanmakuLayer from './components/DanmakuLayer.vue'
@@ -194,12 +224,16 @@ const channels = [
 ]
 
 const keyword = ref('')
+const searchKeyword = ref('')
 const channel = ref('sports')
 const mode = ref('feed')
 const listItems = ref([])
 const listHasMore = ref(false)
 const listPage = ref(0)
 const listLoading = ref(false)
+const listFailed = ref(false)
+const searchVerificationRequired = ref(false)
+const searchVerifying = ref(false)
 const listRef = ref()
 const userInfo = ref(null)
 
@@ -207,22 +241,31 @@ const current = ref(null)
 const streamUrl = ref('')
 const playerKey = ref(0)
 const currentTime = ref(0)
+const videoPlaying = ref(false)
+const videoSeeking = ref(false)
+const seekVersion = ref(0)
+const videoRate = ref(1)
 const danmaku = ref([])
 const danmakuEnabled = ref(true)
 const comments = ref([])
 const commentsHasMore = ref(false)
 const commentsPage = ref(0)
 const commentsLoading = ref(false)
+const commentsRetryPage = ref(null)
+const commentsError = ref('')
 const related = ref([])
 const pageLoading = ref(false)
 const pageFailed = ref(false)
 
 const loggedIn = ref(false)
-const loginOpening = ref(false)
+const loginWindowOpen = ref(false)
+const loginBusy = ref(false)
 let loginPollTimer = null
+let loginStatusVersion = 0
+let disposed = false
 
 const listTitle = computed(() => {
-  if (mode.value === 'search') return `搜索：${keyword.value}`
+  if (mode.value === 'search') return `搜索：${searchKeyword.value}`
   if (mode.value === 'user') return '作者作品'
   const found = channels.find((item) => item.value === channel.value)
   return `${found ? found.label : channel.value}频道`
@@ -234,17 +277,21 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (loginPollTimer) clearInterval(loginPollTimer)
+  disposed = true
+  stopLoginPolling()
 })
 
 let listRequestId = 0
 
-async function loadList(reset) {
+async function loadList(reset, verify = false) {
   // 仅防翻页重入；切换频道/搜索属于 reset，立即生效不受加载中限制
-  if (!reset && listLoading.value) return
+  if (searchVerifying.value || (!reset && listLoading.value)) return
   const requestId = ++listRequestId
   const requestMode = mode.value
   listLoading.value = true
+  listFailed.value = false
+  searchVerificationRequired.value = false
+  searchVerifying.value = verify
   if (reset) {
     listPage.value = 0
     listItems.value = []
@@ -255,7 +302,9 @@ async function loadList(reset) {
   try {
     let response
     if (requestMode === 'search') {
-      response = await searchDouyin(keyword.value, listPage.value)
+      response = verify
+        ? await verifyDouyinSearch(searchKeyword.value)
+        : await searchDouyin(searchKeyword.value, listPage.value)
     } else if (requestMode === 'user') {
       response = await getDouyinUser(userInfo.value?.secUid, listPage.value)
     } else {
@@ -263,6 +312,11 @@ async function loadList(reset) {
     }
     if (requestId !== listRequestId) return
     const data = response.data
+    if (requestMode === 'search' && data.verificationRequired) {
+      searchVerificationRequired.value = true
+      listHasMore.value = false
+      return
+    }
     const page = requestMode === 'user' ? data.posts : data
     if (requestMode === 'user' && data.profile) {
       userInfo.value = data.profile
@@ -275,6 +329,7 @@ async function loadList(reset) {
     listHasMore.value = Boolean(page.hasMore)
   } catch {
     if (requestId !== listRequestId) return
+    listFailed.value = true
     if (reset) {
       // 错误提示已由统一请求层展示；清空以便用户重试
       listItems.value = []
@@ -286,6 +341,7 @@ async function loadList(reset) {
   } finally {
     if (requestId === listRequestId) {
       listLoading.value = false
+      searchVerifying.value = false
     }
   }
 }
@@ -298,20 +354,22 @@ function switchChannel(value) {
 }
 
 function doSearch() {
+  if (searchVerifying.value) return
   const text = (keyword.value || '').trim()
   if (!text) {
     proxy.$modal.msgWarning('请输入搜索关键词')
     return
   }
-  keyword.value = text
+  if (listLoading.value && mode.value === 'search' && searchKeyword.value === text) return
+  searchKeyword.value = text
   mode.value = 'search'
   userInfo.value = null
-  loadList(true)
+  return loadList(true)
 }
 
 function onListScroll() {
   const el = listRef.value
-  if (!el || !listHasMore.value || listLoading.value) return
+  if (!el || !listHasMore.value || listLoading.value || listFailed.value) return
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
     // 页码在 loadList 内统一维护：失败会回退，避免跳页
     loadList(false)
@@ -334,14 +392,26 @@ async function playCard(card) {
   streamUrl.value = douyinStreamUrl(card.playToken)
   playerKey.value += 1
   currentTime.value = 0
+  videoPlaying.value = false
+  videoSeeking.value = false
+  videoRate.value = 1
   danmaku.value = []
   comments.value = []
   commentsHasMore.value = false
   commentsPage.value = 0
+  commentsLoading.value = false
+  commentsRetryPage.value = null
+  commentsError.value = ''
   related.value = []
   pageLoading.value = true
   pageFailed.value = false
-  loadVideoPage(card.awemeId)
+  const playback = playerKey.value
+  loadComments(0).finally(() => {
+    // 优先让抖音评论页完成首屏加载，再打开推荐与弹幕的抓取标签。
+    if (playerKey.value === playback) {
+      loadVideoPage(card.awemeId)
+    }
+  })
 }
 
 function retryVideoPage() {
@@ -352,49 +422,65 @@ function retryVideoPage() {
 }
 
 async function loadVideoPage(awemeId) {
+  const playback = playerKey.value
   try {
     const response = await getDouyinVideoPage(awemeId)
     const data = response.data
-    if (current.value?.awemeId !== awemeId) return
+    if (playerKey.value !== playback) return
     if (data.video?.playToken && !current.value.playToken) {
       current.value = { ...current.value, playToken: data.video.playToken }
       streamUrl.value = douyinStreamUrl(data.video.playToken)
     }
     danmaku.value = data.danmaku || []
-    comments.value = data.comments || []
-    commentsHasMore.value = Boolean(data.commentsHasMore)
     related.value = data.related || []
   } catch {
-    // 弹幕/评论缺失不阻断播放，错误提示已由统一请求层展示
-    if (current.value?.awemeId === awemeId) {
+    // 弹幕和推荐的失败不影响视频与评论。
+    if (playerKey.value === playback) {
       pageFailed.value = true
     }
   } finally {
-    if (current.value?.awemeId === awemeId) {
+    if (playerKey.value === playback) {
       pageLoading.value = false
     }
   }
 }
 
-async function loadMoreComments() {
+function loadMoreComments() {
+  if (commentsHasMore.value) {
+    return loadComments(commentsPage.value + 1)
+  }
+}
+
+async function loadComments(page) {
   if (!current.value || commentsLoading.value) return
+  const playback = playerKey.value
+  const awemeId = current.value.awemeId
   commentsLoading.value = true
+  commentsRetryPage.value = null
   try {
-    commentsPage.value += 1
-    const response = await getDouyinComments(current.value.awemeId, commentsPage.value)
+    const response = await getDouyinComments(awemeId, page)
+    if (playerKey.value !== playback) return
     const data = response.data
     // 按评论 ID 去重：翻页偶发返回重复页时列表也能继续增长
     const existing = new Set(comments.value.map((item) => item.cid))
     const fresh = (data.items || []).filter((item) => item.cid && !existing.has(item.cid))
     comments.value = [...comments.value, ...fresh]
+    commentsPage.value = page
     commentsHasMore.value = Boolean(data.hasMore)
-    if (!fresh.length) {
+    if (page > 0 && !fresh.length && data.hasMore) {
       proxy.$modal.msgWarning('没有加载到新评论，稍后可再试一次')
     }
-  } catch {
-    commentsPage.value -= 1
+  } catch (error) {
+    if (playerKey.value === playback) {
+      commentsError.value = error?.message === '抖音要求登录后才能查看更多评论'
+        ? error.message
+        : '评论加载失败'
+      commentsRetryPage.value = page
+    }
   } finally {
-    commentsLoading.value = false
+    if (playerKey.value === playback) {
+      commentsLoading.value = false
+    }
   }
 }
 
@@ -412,46 +498,83 @@ function onTimeUpdate(event) {
   currentTime.value = event.target.currentTime || 0
 }
 
+function onVideoSeeking(event) {
+  onTimeUpdate(event)
+  videoSeeking.value = true
+  seekVersion.value += 1
+}
+
+function onVideoSeeked(event) {
+  onTimeUpdate(event)
+  videoSeeking.value = false
+}
+
+function onVideoPlaying(event) {
+  onTimeUpdate(event)
+  videoRate.value = event.target.playbackRate
+  videoPlaying.value = true
+}
+
 function onVideoError() {
+  videoPlaying.value = false
   proxy.$modal.msgError('视频播放失败，播放地址可能已过期，请点击列表重新播放')
 }
 
 async function refreshLoginStatus() {
+  const version = ++loginStatusVersion
   try {
     const response = await getDouyinLoginStatus()
+    if (disposed || version !== loginStatusVersion) return
+    const wasOpen = loginWindowOpen.value
     loggedIn.value = Boolean(response.data?.loggedIn)
+    loginWindowOpen.value = Boolean(response.data?.windowOpen)
+    if (wasOpen && !loginWindowOpen.value && loggedIn.value) {
+      proxy.$modal.msgSuccess('抖音登录成功，现在可以使用搜索与推荐流')
+    }
   } catch {
     // 状态查询失败不影响浏览
+  } finally {
+    if (!disposed && version === loginStatusVersion && loginWindowOpen.value) {
+      loginPollTimer = setTimeout(refreshLoginStatus, 3000)
+    }
   }
 }
 
+function stopLoginPolling() {
+  clearTimeout(loginPollTimer)
+  loginPollTimer = null
+  loginStatusVersion += 1
+}
+
 async function openLogin() {
-  loginOpening.value = true
+  if (loginBusy.value) return
+  stopLoginPolling()
+  loginBusy.value = true
   try {
     await startDouyinBrowserLogin()
-    proxy.$modal.msgSuccess('登录窗口已打开，请在弹出的浏览器中扫码/验证码登录抖音')
-    if (loginPollTimer) clearInterval(loginPollTimer)
-    let polls = 0
-    loginPollTimer = setInterval(async () => {
-      polls += 1
-      await refreshLoginStatus()
-      if (loggedIn.value || polls > 40) {
-        clearInterval(loginPollTimer)
-        loginPollTimer = null
-        if (loggedIn.value) {
-          proxy.$modal.msgSuccess('抖音登录成功，现在可以使用搜索与推荐流')
-          try {
-            await closeDouyinBrowserLogin()
-          } catch {
-            // 关闭失败不影响后续使用
-          }
-        }
-      }
-    }, 3000)
+    if (disposed) return
+    loginWindowOpen.value = true
+    proxy.$modal.msgSuccess('请在弹出的浏览器中完成抖音登录')
   } catch {
     // 错误提示已由统一请求层展示
   } finally {
-    loginOpening.value = false
+    loginBusy.value = false
+    if (!disposed) refreshLoginStatus()
+  }
+}
+
+async function cancelLogin() {
+  if (loginBusy.value) return
+  stopLoginPolling()
+  loginBusy.value = true
+  try {
+    await closeDouyinBrowserLogin()
+    loginWindowOpen.value = false
+  } catch {
+    // 关闭失败时继续查询窗口实际状态。
+  } finally {
+    loginBusy.value = false
+    if (!disposed) refreshLoginStatus()
   }
 }
 </script>

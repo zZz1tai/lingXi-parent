@@ -1,10 +1,16 @@
 <template>
-  <div class="danmaku-layer" aria-hidden="true">
+  <div ref="layer" class="danmaku-layer" aria-hidden="true">
     <span
       v-for="item in flying"
       :key="item.id"
       class="danmaku-item"
-      :style="{ top: item.top + '%', animationDuration: item.duration + 's' }"
+      :style="{
+        top: item.top + '%',
+        animationDuration: item.duration + 's',
+        animationDelay: -item.elapsedMs + 'ms',
+        animationPlayState: playing && !seeking ? 'running' : 'paused'
+      }"
+      @animationstart="syncAnimationRate($event.currentTarget)"
       @animationend="removeItem(item.id)"
     >{{ item.text }}</span>
   </div>
@@ -19,61 +25,56 @@ const props = defineProps({
   /** 当前播放时刻（秒） */
   currentTime: { type: Number, default: 0 },
   /** 是否开启弹幕 */
-  enabled: { type: Boolean, default: true }
+  enabled: { type: Boolean, default: true },
+  playing: { type: Boolean, default: false },
+  seeking: { type: Boolean, default: false },
+  seekVersion: { type: Number, default: 0 },
+  playbackRate: { type: Number, default: 1 }
 })
 
+const layer = ref(null)
 const flying = ref([])
-const pointer = ref(0)
-const lastTimeMs = ref(0)
+let pointer = 0
 let uid = 0
 
 watch(
-  () => props.currentTime,
-  (time) => {
+  [() => props.currentTime, () => props.danmaku, () => props.enabled, () => props.seekVersion, () => props.seeking],
+  ([time, danmaku, enabled, seekVersion, seeking], [, previousDanmaku, previousEnabled, previousSeekVersion]) => {
     const currentMs = (Number(time) || 0) * 1000
-    // 进度回退（拖动进度条）时重新开始发射
-    if (currentMs + 1000 < lastTimeMs.value) {
-      pointer.value = 0
+    if (danmaku !== previousDanmaku || enabled !== previousEnabled || seekVersion !== previousSeekVersion) {
+      pointer = 0
       flying.value = []
     }
-    lastTimeMs.value = currentMs
-    if (!props.enabled) return
-    const { due, nextPointer } = collectDueDanmaku(props.danmaku, pointer.value, currentMs)
-    pointer.value = nextPointer
-    for (const item of due.slice(0, 6)) {
+    if (!enabled || seeking) return
+
+    // 跳播或数据晚到时，跳过已经错过的弹幕。
+    const { due, nextPointer } = collectDueDanmaku(danmaku, pointer, currentMs, currentMs - 1000)
+    pointer = nextPointer
+    for (const item of due.slice(-6)) {
       uid += 1
       flying.value.push({
         id: uid,
         text: item.text,
         top: 6 + Math.round(Math.random() * 70),
-        duration: 6 + Math.round(Math.random() * 3)
+        duration: 6 + Math.round(Math.random() * 3),
+        elapsedMs: currentMs - (Number(item.offsetMs) || 0)
       })
     }
     // 同屏上限，防止弹幕过密
     if (flying.value.length > 40) {
       flying.value.splice(0, flying.value.length - 40)
     }
-  }
+  },
+  { immediate: true }
 )
 
-watch(
-  () => props.enabled,
-  (enabled) => {
-    if (!enabled) {
-      flying.value = []
-    }
-  }
-)
+watch(() => props.playbackRate, () => syncAnimationRate(layer.value, true), { flush: 'post' })
 
-// 切换视频时重置
-watch(
-  () => props.danmaku,
-  () => {
-    pointer.value = 0
-    flying.value = []
-    lastTimeMs.value = 0
+function syncAnimationRate(element, subtree = false) {
+  for (const animation of element?.getAnimations?.({ subtree }) ?? []) {
+    animation.updatePlaybackRate(props.playbackRate)
   }
-)
+}
 
 function removeItem(id) {
   const index = flying.value.findIndex((item) => item.id === id)

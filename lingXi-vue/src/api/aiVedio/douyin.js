@@ -1,5 +1,9 @@
 import request from '@/utils/request'
 
+// 浏览器抓取包含页面加载、翻页和一次后端重试。
+const captureTimeout = 120_000
+const loginTimeout = 45_000
+
 /** 解析抖音分享口令/链接，返回视频信息（标题、作者、封面、时长）与播放令牌 */
 export function resolveDouyinVideo(text) {
   return request({
@@ -9,11 +13,13 @@ export function resolveDouyinVideo(text) {
   })
 }
 
-/** 视频详情页数据：详情、弹幕、首屏评论与相关推荐（一次抓取） */
+/** 播放附加信息：详情、弹幕与相关推荐，评论单独加载。 */
 export function getDouyinVideoPage(awemeId) {
   return request({
     url: '/aivideo/tool/douyin/page/' + awemeId,
-    method: 'get'
+    method: 'get',
+    timeout: captureTimeout,
+    params: { includeComments: false }
   })
 }
 
@@ -22,6 +28,7 @@ export function getDouyinComments(awemeId, page = 0) {
   return request({
     url: '/aivideo/tool/douyin/comments/' + awemeId,
     method: 'get',
+    timeout: captureTimeout,
     params: { page }
   })
 }
@@ -40,6 +47,7 @@ export function getDouyinFeed(channel = 'recommend', page = 0) {
   return request({
     url: '/aivideo/tool/douyin/feed',
     method: 'get',
+    timeout: captureTimeout,
     params: { channel, page }
   })
 }
@@ -49,6 +57,7 @@ export function getDouyinUser(secUid, page = 0) {
   return request({
     url: '/aivideo/tool/douyin/user/' + secUid,
     method: 'get',
+    timeout: captureTimeout,
     params: { page }
   })
 }
@@ -58,7 +67,18 @@ export function searchDouyin(keyword, page = 0) {
   return request({
     url: '/aivideo/tool/douyin/search',
     method: 'get',
+    timeout: captureTimeout,
     params: { keyword, page }
+  })
+}
+
+/** 打开抖音官方搜索页，等待用户手动验证后返回结果。 */
+export function verifyDouyinSearch(keyword) {
+  return request({
+    url: '/aivideo/tool/douyin/search/verify',
+    method: 'post',
+    timeout: 150_000,
+    params: { keyword }
   })
 }
 
@@ -66,7 +86,8 @@ export function searchDouyin(keyword, page = 0) {
 export function startDouyinBrowserLogin() {
   return request({
     url: '/aivideo/tool/douyin/browser-login',
-    method: 'post'
+    method: 'post',
+    timeout: loginTimeout
   })
 }
 
@@ -74,15 +95,17 @@ export function startDouyinBrowserLogin() {
 export function getDouyinLoginStatus() {
   return request({
     url: '/aivideo/tool/douyin/browser-login/status',
-    method: 'get'
+    method: 'get',
+    timeout: loginTimeout
   })
 }
 
-/** 关闭登录窗口并恢复无头抓取 */
+/** 取消登录并关闭可见窗口 */
 export function closeDouyinBrowserLogin() {
   return request({
     url: '/aivideo/tool/douyin/browser-login/close',
-    method: 'post'
+    method: 'post',
+    timeout: loginTimeout
   })
 }
 

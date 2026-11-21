@@ -1,24 +1,34 @@
 package com.lingXi.aiVedio.tool;
 
 import java.io.IOException;
-import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -69,6 +79,46 @@ public class DouyinBrowserVideoClient
 
     /** 登录窗口落地页使用的“安全页”作品 ID（仅用于打开页面，不消费其数据）。 */
     private static final String LOGIN_LANDING_AWEME_ID = "7705975349372390656";
+
+    private static final long LOGIN_WINDOW_TIMEOUT_NANOS = TimeUnit.MINUTES.toNanos(2);
+
+    private static final long BROWSER_START_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(15);
+
+    private static final String COMMENT_API = "https://www.douyin.com/aweme/v1/web/comment/list/?";
+
+    private static final Pattern COMMENT_CURSOR = Pattern.compile("[?&]cursor=(\\d+)(?:&|$)");
+
+    private static final Pattern COMMENT_AWEME = Pattern.compile("[?&]aweme_id=(\\d+)(?:&|$)");
+
+    private static final String SCROLL_COMMENTS = """
+            (() => {
+              const list = document.querySelector('[data-e2e="comment-list"]');
+              if (!list) return;
+              const cover = list.querySelector('.video-comment-cover');
+              if (cover?.getClientRects().length && cover.textContent.includes('登录后可查看更多评论')) {
+                return 'login-required';
+              }
+              for (let node = list; node; node = node.parentElement) {
+                if (node.clientHeight > 0 && node.scrollHeight > node.clientHeight + 20
+                    && ['auto', 'scroll'].includes(getComputedStyle(node).overflowY)) {
+                  const bottom = node.scrollHeight - node.clientHeight;
+                  if (node.scrollTop >= bottom - 1) {
+                    // 已在底部时，先离开加载区域，再进入，避免两次滚动被合并。
+                    node.scrollTop = Math.max(0, bottom - node.clientHeight * 2);
+                    requestAnimationFrame(() => requestAnimationFrame(() => {
+                      node.scrollTop = node.scrollHeight;
+                    }));
+                  } else {
+                    node.scrollTop = bottom;
+                  }
+                  return;
+                }
+              }
+              list.lastElementChild?.scrollIntoView({block: 'end'});
+            })()
+            """;
+
+    private static final Pattern BROWSER_DEBUG_PATH = Pattern.compile("/devtools/browser/[0-9a-fA-F-]+");
 
     /**
      * 站内跳转到“推荐”Tab 的脚本（SPA 跳转不触发验证码中间页），页面内自动重试适配渲染时机。
@@ -133,9 +183,31 @@ public class DouyinBrowserVideoClient
     /** 浏览器进程与调试端口的生命周期锁（抓取串行执行）。 */
     private final Object browserLock = new Object();
 
-    private Process browserProcess;
+    private ProcessHandle browserProcess;
 
     private int debugPort;
+
+    private String browserWebSocketUrl;
+
+    /** 只发布已就绪的无头实例，评论标签可以和推荐抓取并行。 */
+    private volatile BrowserEndpoint headlessEndpoint;
+    private final Object commentLock = new Object();
+    private final ScheduledExecutorService commentCleanup = Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "douyin-comment-cleanup");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private CommentTab commentTab;
+    private ScheduledFuture<?> commentExpiry;
+
+    private record BrowserEndpoint(ProcessHandle process, int port)
+    {
+    }
+
+    private record CommentTab(String awemeId, BrowserEndpoint browser, Tab tab, CdpSession session,
+            List<JsonNode> pages)
+    {
+    }
 
     /** 当前是否以可见（登录）模式运行。 */
     private boolean loginWindowMode;
@@ -224,13 +296,158 @@ public class DouyinBrowserVideoClient
      */
     public List<CapturedBody> capture(CaptureRequest request)
     {
+        return capture(request, null);
+    }
+
+    /** 在同一标签页沿抖音自己的评论游标继续滚动。 */
+    public JsonNode captureComments(String awemeId, int page)
+    {
+        synchronized (commentLock)
+        {
+            if (commentExpiry != null)
+            {
+                commentExpiry.cancel(false);
+            }
+            try
+            {
+                BrowserEndpoint browser = headlessEndpoint;
+                if (browser == null || !browser.process().isAlive())
+                {
+                    synchronized (browserLock)
+                    {
+                        requireCaptureMode();
+                        ensureBrowser(false, null);
+                        browser = headlessEndpoint;
+                    }
+                }
+                if (commentTab == null || commentTab.browser() != browser || !awemeId.equals(commentTab.awemeId())
+                        || commentTab.session().webSocket.isInputClosed())
+                {
+                    closeCommentTab();
+                    commentTab = openCommentTab(awemeId, browser);
+                }
+                List<JsonNode> pages = commentTab.pages();
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12);
+                while (pages.size() <= page)
+                {
+                    long cursor = 0;
+                    if (!pages.isEmpty())
+                    {
+                        JsonNode previous = pages.get(pages.size() - 1);
+                        if (!previous.path("has_more").asBoolean() && previous.path("has_more").asInt() != 1)
+                        {
+                            return objectMapper.createObjectNode().put("has_more", 0);
+                        }
+                        cursor = previous.path("cursor").asLong();
+                        if (cursor <= 0)
+                        {
+                            throw new ServiceException("抖音没有返回有效的评论游标");
+                        }
+                    }
+                    pages.add(commentTab.session().awaitCommentPage(cursor, deadline));
+                }
+                return pages.get(page);
+            }
+            catch (ServiceException exception)
+            {
+                throw exception;
+            }
+            catch (InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+                throw new ServiceException("评论加载已中断");
+            }
+            catch (Exception exception)
+            {
+                log.debug("加载抖音评论失败：{}", exception.toString());
+                throw new ServiceException("评论加载失败，请稍后重试");
+            }
+            finally
+            {
+                if (commentTab != null && commentTab.pages().isEmpty())
+                {
+                    closeCommentTab();
+                }
+                if (commentTab != null)
+                {
+                    commentExpiry = commentCleanup.schedule(this::expireCommentTab, 2, TimeUnit.MINUTES);
+                }
+            }
+        }
+    }
+
+    private CommentTab openCommentTab(String awemeId, BrowserEndpoint browser) throws Exception
+    {
+        Tab tab = createTab(browser.port());
+        CdpSession session = null;
+        try
+        {
+            session = new CdpSession(tab.getWebSocketUrl(), objectMapper, 3);
+            session.commentAwemeId = awemeId;
+            session.sendCommand("Network.enable", null, 3);
+            session.sendCommand("Page.navigate", Map.of("url", "https://www.douyin.com/video/" + awemeId), 3);
+            return new CommentTab(awemeId, browser, tab, session, new ArrayList<>());
+        }
+        catch (Exception exception)
+        {
+            if (session != null)
+            {
+                session.close();
+            }
+            closeTabQuietly(tab.getId(), browser.port());
+            throw exception;
+        }
+    }
+
+    private void expireCommentTab()
+    {
+        synchronized (commentLock)
+        {
+            if (commentExpiry != null && commentExpiry.getDelay(TimeUnit.MILLISECONDS) <= 0)
+            {
+                closeCommentTab();
+            }
+        }
+    }
+
+    private void closeCommentTab()
+    {
+        if (commentTab != null)
+        {
+            commentTab.session().close();
+            if (commentTab.browser() == headlessEndpoint)
+            {
+                closeTabQuietly(commentTab.tab().getId(), commentTab.browser().port());
+            }
+            commentTab = null;
+        }
+    }
+
+    /** 打开官方可见页面，让用户完成验证，只在收到实际结果后结束。 */
+    public List<CapturedBody> captureAfterUserVerification(CaptureRequest request, Predicate<String> resultReceived)
+    {
+        return capture(request, resultReceived);
+    }
+
+    private List<CapturedBody> capture(CaptureRequest request, Predicate<String> resultReceived)
+    {
         synchronized (browserLock)
         {
+            requireCaptureMode();
+            boolean interactive = resultReceived != null;
             String tabId = null;
             try
             {
-                ensureBrowser(false, null);
-                Tab tab = createTab();
+                if (interactive)
+                {
+                    stopBrowser();
+                }
+                ensureBrowser(interactive, null);
+                Tab tab = interactive ? findFirstPageTab() : null;
+                if (tab == null)
+                {
+                    tab = createTab();
+                }
                 tabId = tab.getId();
                 try (CdpSession session = new CdpSession(tab.getWebSocketUrl(), objectMapper))
                 {
@@ -245,8 +462,9 @@ public class DouyinBrowserVideoClient
                         session.perform(action);
                         sleepQuietly(2_500);
                     }
-                    session.waitCaptures(request);
-                    return session.getCapturedBodies();
+                    return interactive
+                            ? session.waitForVerifiedResponse(request.getTimeoutMs(), resultReceived)
+                            : session.waitCaptures(request);
                 }
             }
             catch (ServiceException exception)
@@ -260,7 +478,14 @@ public class DouyinBrowserVideoClient
             }
             finally
             {
-                closeTabQuietly(tabId);
+                if (interactive)
+                {
+                    stopBrowser();
+                }
+                else
+                {
+                    closeTabQuietly(tabId);
+                }
             }
         }
     }
@@ -279,6 +504,7 @@ public class DouyinBrowserVideoClient
         }
         synchronized (browserLock)
         {
+            requireCaptureMode();
             String tabId = null;
             try
             {
@@ -317,15 +543,24 @@ public class DouyinBrowserVideoClient
 
     // ==================== 登录会话 ====================
 
-    /**
-     * 切换为可见浏览器窗口，供用户一次性登录抖音（登录态保留在运行目录长期复用）。
-     * 窗口打开即返回；登录面板由后台线程自动唤起（扫码登录弹层）。
-     */
+    private void requireCaptureMode()
+    {
+        if (loginWindowMode)
+        {
+            throw new ServiceException("请先完成抖音登录，或关闭登录窗口后重试");
+        }
+    }
+
+    /** 打开登录窗口，使用同一配置目录保存登录态。 */
     public void startLoginBrowser()
     {
         synchronized (browserLock)
         {
-            loginWindowMode = true;
+            if (loginWindowMode && browserProcess != null && browserProcess.isAlive())
+            {
+                return;
+            }
+            loginWindowMode = false;
             stopBrowser();
             try
             {
@@ -335,66 +570,83 @@ public class DouyinBrowserVideoClient
             {
                 throw new ServiceException("浏览器启动失败：" + exception.getMessage());
             }
+            loginWindowMode = true;
+            ProcessHandle loginProcess = browserProcess;
+            Thread watcher = new Thread(() -> watchLoginWindow(loginProcess), "douyin-login-window");
+            watcher.setDaemon(true);
+            watcher.start();
         }
-        Thread nudge = new Thread(this::nudgeLoginPanel, "douyin-login-nudge");
-        nudge.setDaemon(true);
-        nudge.start();
     }
 
-    /** 后台唤起扫码登录面板并自检结果（不阻塞接口调用；已登录则无需唤起）。 */
-    private void nudgeLoginPanel()
+    /** 成功或超时后由服务端回收窗口，即使前端已停止轮询。 */
+    private void watchLoginWindow(ProcessHandle loginProcess)
     {
+        long deadline = System.nanoTime() + LOGIN_WINDOW_TIMEOUT_NANOS;
+        boolean panelRequested = false;
         try
         {
-            sleepQuietly(4_000);
-            if (isDouyinLoggedIn())
+            while (true)
             {
-                log.info("抖音已登录，无需唤起扫码面板");
-                return;
-            }
-            Tab tab = findFirstPageTab();
-            if (tab == null)
-            {
-                return;
-            }
-            try (CdpSession session = new CdpSession(tab.getWebSocketUrl(), objectMapper))
-            {
-                session.perform(CaptureAction.eval(OPEN_LOGIN_PANEL_SCRIPT));
-                boolean panelShown = false;
-                for (int i = 0; i < 20 && !panelShown; i++)
+                Thread.sleep(2_000);
+                synchronized (browserLock)
                 {
-                    sleepQuietly(1_500);
-                    try
+                    if (!loginWindowMode || browserProcess != loginProcess
+                            || !loginProcess.isAlive() || System.nanoTime() >= deadline || readLoginCookies())
                     {
-                        JsonNode result = session.sendCommand("Runtime.evaluate", Map.of(
-                                "expression",
-                                "(() => document.body ? document.body.innerText.includes('扫码登录') : false)()",
-                                "returnByValue", true));
-                        panelShown = result.path("result").path("value").asBoolean(false);
+                        return;
                     }
-                    catch (Exception exception)
+                    if (!panelRequested)
                     {
-                        break;
+                        panelRequested = nudgeLoginPanel();
                     }
                 }
-                log.info("登录面板唤起状态：{}", panelShown ? "已弹出扫码登录" : "未弹出（可手动点击页面内“登录”）");
             }
+        }
+        catch (InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+        }
+        finally
+        {
+            synchronized (browserLock)
+            {
+                if (loginWindowMode && browserProcess == loginProcess)
+                {
+                    closeLoginBrowser();
+                }
+            }
+        }
+    }
+
+    private boolean nudgeLoginPanel()
+    {
+        Tab tab = findFirstPageTab();
+        if (tab == null)
+        {
+            return false;
+        }
+        try (CdpSession session = new CdpSession(tab.getWebSocketUrl(), objectMapper))
+        {
+            session.perform(CaptureAction.eval(OPEN_LOGIN_PANEL_SCRIPT));
+            return true;
         }
         catch (Exception exception)
         {
-            log.warn("唤起登录面板失败（可手动点击页面内“登录”）：{}", exception.toString());
+            log.debug("唤起登录面板失败（可手动点击页面内“登录”）：{}", exception.toString());
+            return false;
         }
     }
 
-    /**
-     * 关闭登录窗口并恢复无头模式。
-     */
+    /** 关闭可见窗口，后续抓取按需启动无头浏览器。 */
     public void closeLoginBrowser()
     {
         synchronized (browserLock)
         {
-            loginWindowMode = false;
-            restartBrowser(false);
+            if (loginWindowMode)
+            {
+                stopBrowser();
+                loginWindowMode = false;
+            }
         }
     }
 
@@ -407,71 +659,61 @@ public class DouyinBrowserVideoClient
         }
     }
 
-    /**
-     * 检查抖音登录态（是否存在 sessionid Cookie）。
-     *
-     * @return 是否已登录
-     */
     public boolean isDouyinLoggedIn()
     {
         synchronized (browserLock)
         {
-            String tabId = null;
             try
             {
-                ensureBrowser(loginWindowMode, null);
-                Tab tab = createTab();
-                tabId = tab.getId();
-                try (CdpSession session = new CdpSession(tab.getWebSocketUrl(), objectMapper))
+                if (!loginWindowMode)
                 {
-                    JsonNode cookies;
-                    try
-                    {
-                        cookies = session.sendCommand("Network.getAllCookies", null).path("cookies");
-                    }
-                    catch (Exception exception)
-                    {
-                        cookies = session.sendCommand("Storage.getCookies", null).path("cookies");
-                    }
-                    // 抖音登录态以 sid_tt / sid_guard 为准；仅凭 sessionid 无法区分游客会话
-                    for (JsonNode cookie : cookies)
-                    {
-                        String name = cookie.path("name").asText();
-                        if (("sid_tt".equals(name) || "sid_guard".equals(name))
-                                && !cookie.path("value").asText().isBlank())
-                        {
-                            return true;
-                        }
-                    }
-                    return false;
+                    ensureBrowser(false, null);
                 }
+                boolean loggedIn = browserProcess.isAlive() && readLoginCookies();
+                if (loginWindowMode && (loggedIn || !browserProcess.isAlive()))
+                {
+                    closeLoginBrowser();
+                }
+                return loggedIn;
             }
             catch (Exception exception)
             {
                 log.warn("抖音登录态检查失败：{}", exception.toString());
                 return false;
             }
-            finally
+        }
+    }
+
+    private boolean readLoginCookies()
+    {
+        try (CdpSession session = openBrowserSession())
+        {
+            JsonNode cookies = session.sendCommand("Storage.getCookies", null, 3).path("cookies");
+            for (JsonNode cookie : cookies)
             {
-                closeTabQuietly(tabId);
+                String domain = cookie.path("domain").asText();
+                String name = cookie.path("name").asText();
+                if (("douyin.com".equals(domain) || domain.endsWith(".douyin.com"))
+                        && ("sid_tt".equals(name) || "sid_guard".equals(name))
+                        && !cookie.path("value").asText().isBlank())
+                {
+                    return true;
+                }
             }
         }
+        catch (Exception exception)
+        {
+            log.debug("读取抖音登录态失败：{}", exception.toString());
+        }
+        return false;
+    }
+
+    private CdpSession openBrowserSession() throws Exception
+    {
+        return new CdpSession(browserWebSocketUrl, objectMapper, 2);
     }
 
     // ==================== 浏览器生命周期 ====================
-
-    private void restartBrowser(boolean headful)
-    {
-        stopBrowser();
-        try
-        {
-            ensureBrowser(headful, null);
-        }
-        catch (IOException exception)
-        {
-            throw new ServiceException("浏览器启动失败：" + exception.getMessage());
-        }
-    }
 
     private void ensureBrowser(boolean headful, String startupUrl) throws IOException
     {
@@ -501,19 +743,27 @@ public class DouyinBrowserVideoClient
         Files.createDirectories(profile);
         // 上一个实例异常退出后残留的进程会锁住配置目录，启动前按配置目录扫描清理自愈
         killAllOnProfile(profile);
-        debugPort = findFreePort();
+        Path endpoint = profile.resolve("DevToolsActivePort");
+        Files.deleteIfExists(endpoint);
         List<String> command = new ArrayList<>();
-        command.add(findBrowserExecutable());
+        String browserExecutable = findBrowserExecutable();
+        command.add(browserExecutable);
+        if (isWindows() && "msedge.exe".equalsIgnoreCase(Path.of(browserExecutable).getFileName().toString()))
+        {
+            // Edge 会把专用实例中的标签注册给 Windows，即使这些标签在无头窗口里。
+            command.add("--disable-features=msWindowTabManagerPublic");
+        }
         if (!headful)
         {
             command.add("--headless=new");
         }
         command.add("--disable-gpu");
+        command.add("--disable-background-mode");
         command.add("--no-first-run");
         command.add("--no-default-browser-check");
         command.add("--hide-crash-restore-bubble");
         command.add("--user-data-dir=" + profile);
-        command.add("--remote-debugging-port=" + debugPort);
+        command.add("--remote-debugging-port=0");
         if (headful)
         {
             command.add("--start-maximized");
@@ -523,30 +773,71 @@ public class DouyinBrowserVideoClient
         // 浏览器自身输出写入日志文件，避免占用进程管道
         builder.redirectErrorStream(true);
         builder.redirectOutput(profile.resolve("browser.log").toFile());
-        browserProcess = builder.start();
-        try
+        Process launcher = builder.start();
+        browserProcess = launcher.toHandle();
+        long deadline = System.nanoTime() + BROWSER_START_TIMEOUT_NANOS;
+        while (System.nanoTime() < deadline)
         {
-            Files.writeString(profile.resolve("browser.pid"), String.valueOf(browserProcess.pid()));
-        }
-        catch (IOException exception)
-        {
-            log.debug("写入浏览器 PID 文件失败：{}", exception.toString());
-        }
-        for (int i = 0; i < 40; i++)
-        {
-            if (ping())
+            // Windows Edge 的启动器可能提前正常退出，调试端口由接手的浏览器进程稍后写入。
+            ProcessHandle actualBrowser = discoverBrowser(endpoint);
+            if (actualBrowser != null)
             {
+                browserProcess = actualBrowser;
+                if (!headful)
+                {
+                    headlessEndpoint = new BrowserEndpoint(actualBrowser, debugPort);
+                }
                 log.info("抖音抓取浏览器已启动（{}），调试端口：{}", headful ? "登录窗口" : "无头", debugPort);
                 return;
             }
-            if (!browserProcess.isAlive())
+            if (!launcher.isAlive() && launcher.exitValue() != 0)
             {
                 break;
             }
             sleepQuietly(250);
         }
         stopBrowser();
+        killAllOnProfile(profile);
         throw new IOException("浏览器启动超时或异常退出");
+    }
+
+    private ProcessHandle discoverBrowser(Path endpoint)
+    {
+        try
+        {
+            List<String> lines = Files.readAllLines(endpoint);
+            if (lines.size() < 2 || !BROWSER_DEBUG_PATH.matcher(lines.get(1)).matches())
+            {
+                return null;
+            }
+            int port = Integer.parseInt(lines.get(0));
+            if (port < 1 || port > 65535)
+            {
+                return null;
+            }
+            debugPort = port;
+            browserWebSocketUrl = "ws://127.0.0.1:" + port + lines.get(1);
+            try (CdpSession session = openBrowserSession())
+            {
+                for (JsonNode process : session.sendCommand("SystemInfo.getProcessInfo", null, 2).path("processInfo"))
+                {
+                    if ("browser".equalsIgnoreCase(process.path("type").asText()))
+                    {
+                        return ProcessHandle.of(process.path("id").asLong())
+                                .filter(ProcessHandle::isAlive).orElse(null);
+                    }
+                }
+            }
+        }
+        catch (NoSuchFileException exception)
+        {
+            // 浏览器还未写出调试端口。
+        }
+        catch (Exception exception)
+        {
+            log.debug("读取浏览器调试端口或进程失败：{}", exception.toString());
+        }
+        return null;
     }
 
     private boolean ping()
@@ -557,7 +848,8 @@ public class DouyinBrowserVideoClient
                     .uri(URI.create("http://127.0.0.1:" + debugPort + "/json/version"))
                     .timeout(Duration.ofSeconds(2)).GET().build();
             HttpResponse<String> response = HttpHolder.CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.statusCode() == 200;
+            return response.statusCode() == 200 && browserWebSocketUrl.equals(
+                    objectMapper.readTree(response.body()).path("webSocketDebuggerUrl").asText());
         }
         catch (Exception exception)
         {
@@ -571,29 +863,51 @@ public class DouyinBrowserVideoClient
         synchronized (browserLock)
         {
             stopBrowser();
+            loginWindowMode = false;
+        }
+        synchronized (commentLock)
+        {
+            closeCommentTab();
+            commentCleanup.shutdownNow();
         }
     }
 
     private void stopBrowser()
     {
+        headlessEndpoint = null;
         if (browserProcess != null)
         {
-            // 必须连子进程一起终止：残留的渲染/GPU 子进程会锁住配置目录，导致下次启动失败
-            List<ProcessHandle> descendants = browserProcess.toHandle().descendants().toList();
-            browserProcess.destroy();
-            descendants.forEach(ProcessHandle::destroyForcibly);
+            List<ProcessHandle> descendants = browserProcess.descendants().toList();
             try
             {
-                browserProcess.waitFor(3, TimeUnit.SECONDS);
+                // 正常退出会把登录 Cookie 写入配置目录。
+                if (browserWebSocketUrl != null)
+                {
+                    try (CdpSession session = openBrowserSession())
+                    {
+                        session.sendCommand("Browser.close", null, 2);
+                    }
+                    catch (Exception exception)
+                    {
+                        log.debug("浏览器正常退出命令未完成：{}", exception.toString());
+                    }
+                }
+                browserProcess.onExit().get(8, TimeUnit.SECONDS);
             }
             catch (InterruptedException exception)
             {
                 Thread.currentThread().interrupt();
             }
+            catch (ExecutionException | TimeoutException exception)
+            {
+                log.debug("等待浏览器进程退出失败：{}", exception.toString());
+            }
             browserProcess.destroyForcibly();
             descendants.forEach(ProcessHandle::destroyForcibly);
             browserProcess = null;
         }
+        browserWebSocketUrl = null;
+        debugPort = 0;
     }
 
     private static String findBrowserExecutable()
@@ -612,14 +926,6 @@ public class DouyinBrowserVideoClient
         }
         throw new ServiceException(
                 "未找到可用的浏览器，请安装 Microsoft Edge 或 Chrome，或通过环境变量 LINGXI_BROWSER_PATH 指定浏览器路径");
-    }
-
-    private static int findFreePort() throws IOException
-    {
-        try (ServerSocket socket = new ServerSocket(0))
-        {
-            return socket.getLocalPort();
-        }
     }
 
     /** 扫描并终止仍在使用本配置目录的浏览器进程树（启动前自愈，避免残留实例锁住配置目录）。 */
@@ -665,7 +971,7 @@ public class DouyinBrowserVideoClient
             ProcessBuilder builder = new ProcessBuilder("powershell", "-NoProfile", "-NonInteractive",
                     "-Command",
                     "$m = $env:LX_BROWSER_PROFILE; Get-CimInstance Win32_Process "
-                            + "| Where-Object { $_.Name -eq 'msedge.exe' -and $_.CommandLine -like ('*' + $m + '*') } "
+                            + "| Where-Object { $_.Name -in @('msedge.exe', 'chrome.exe') -and $_.CommandLine -like ('*' + $m + '*') } "
                             + "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }");
             builder.environment().put("LX_BROWSER_PROFILE", profile.toString());
             Process process = builder.start();
@@ -705,8 +1011,13 @@ public class DouyinBrowserVideoClient
 
     private Tab createTab() throws IOException, InterruptedException
     {
+        return createTab(debugPort);
+    }
+
+    private Tab createTab(int port) throws IOException, InterruptedException
+    {
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://127.0.0.1:" + debugPort + "/json/new?about:blank"))
+                .uri(URI.create("http://127.0.0.1:" + port + "/json/new?about:blank"))
                 .timeout(Duration.ofSeconds(10)).method("PUT", HttpRequest.BodyPublishers.noBody())
                 .build();
         String body;
@@ -756,6 +1067,11 @@ public class DouyinBrowserVideoClient
 
     private void closeTabQuietly(String tabId)
     {
+        closeTabQuietly(tabId, debugPort);
+    }
+
+    private void closeTabQuietly(String tabId, int port)
+    {
         if (tabId == null || tabId.isBlank())
         {
             return;
@@ -763,7 +1079,7 @@ public class DouyinBrowserVideoClient
         try
         {
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("http://127.0.0.1:" + debugPort + "/json/close/" + tabId))
+                    .uri(URI.create("http://127.0.0.1:" + port + "/json/close/" + tabId))
                     .timeout(Duration.ofSeconds(5)).GET().build();
             HttpHolder.CLIENT.send(request, HttpResponse.BodyHandlers.discarding());
         }
@@ -793,7 +1109,7 @@ public class DouyinBrowserVideoClient
 
     // ==================== CDP 会话 ====================
 
-    /** 单个标签页的 CDP 会话：发送命令、收集网络响应。 */
+    /** 浏览器或标签页的 CDP 会话：发送命令、收集网络响应。 */
     private static final class CdpSession implements WebSocket.Listener, AutoCloseable
     {
         private final WebSocket webSocket;
@@ -810,14 +1126,23 @@ public class DouyinBrowserVideoClient
 
         private final List<String> captureMarkers = new ArrayList<>();
 
+        private volatile String commentAwemeId;
+
+        private final Map<Long, String> commentRequests = new ConcurrentHashMap<>();
+
         private final AtomicInteger sequence = new AtomicInteger();
 
         CdpSession(String webSocketUrl, ObjectMapper objectMapper) throws Exception
         {
+            this(webSocketUrl, objectMapper, 10);
+        }
+
+        CdpSession(String webSocketUrl, ObjectMapper objectMapper, long timeoutSeconds) throws Exception
+        {
             this.objectMapper = objectMapper;
-            this.webSocket = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
-                    .newWebSocketBuilder().connectTimeout(Duration.ofSeconds(10))
-                    .buildAsync(URI.create(webSocketUrl), this).get(10, TimeUnit.SECONDS);
+            Duration timeout = Duration.ofSeconds(timeoutSeconds);
+            this.webSocket = HttpHolder.CLIENT.newWebSocketBuilder().connectTimeout(timeout)
+                    .buildAsync(URI.create(webSocketUrl), this).get(timeoutSeconds, TimeUnit.SECONDS);
         }
 
         @Override
@@ -862,6 +1187,16 @@ public class DouyinBrowserVideoClient
                     String responseType = params.path("type").asText();
                     // fetch() 发出的请求（如搜索结果流）类型为 Fetch，与 XHR 一并截获
                     boolean isAjax = "XHR".equals(responseType) || "Fetch".equals(responseType);
+                    if (isAjax && commentAwemeId != null && url.startsWith(COMMENT_API))
+                    {
+                        var video = COMMENT_AWEME.matcher(url);
+                        var cursor = COMMENT_CURSOR.matcher(url);
+                        if (video.find() && commentAwemeId.equals(video.group(1)) && cursor.find())
+                        {
+                            commentRequests.put(Long.parseLong(cursor.group(1)), params.path("requestId").asText());
+                        }
+                        return;
+                    }
                     if (url.contains(DETAIL_API_MARKER) && isAjax)
                     {
                         detailRequestIds.add(params.path("requestId").asText());
@@ -909,6 +1244,11 @@ public class DouyinBrowserVideoClient
         /** 发送 CDP 命令并等待应答，返回应答的 result 节点。 */
         JsonNode sendCommand(String method, Map<String, Object> params) throws Exception
         {
+            return sendCommand(method, params, 10);
+        }
+
+        JsonNode sendCommand(String method, Map<String, Object> params, long timeoutSeconds) throws Exception
+        {
             int id = sequence.incrementAndGet();
             ObjectNode message = objectMapper.createObjectNode();
             message.put("id", id);
@@ -920,7 +1260,7 @@ public class DouyinBrowserVideoClient
             CompletableFuture<String> future = new CompletableFuture<>();
             pending.put(id, future);
             webSocket.sendText(objectMapper.writeValueAsString(message), true);
-            String response = future.get(10, TimeUnit.SECONDS);
+            String response = future.get(timeoutSeconds, TimeUnit.SECONDS);
             JsonNode node = objectMapper.readTree(response);
             if (node.has("error"))
             {
@@ -963,7 +1303,7 @@ public class DouyinBrowserVideoClient
         /**
          * 按请求等待并收集响应体：先等到 minResponses 个响应，再按需滚动加载（翻页）。
          */
-        void waitCaptures(CaptureRequest request) throws Exception
+        List<CapturedBody> waitCaptures(CaptureRequest request) throws Exception
         {
             long startedAt = System.currentTimeMillis();
             long deadline = startedAt + request.getTimeoutMs();
@@ -1000,7 +1340,7 @@ public class DouyinBrowserVideoClient
             }
             // 少量富余时间让最后一个响应完成加载
             sleepQuietly(800);
-            resolveCapturedBodies();
+            return resolveCapturedBodies();
         }
 
         private int capturedCount()
@@ -1020,35 +1360,108 @@ public class DouyinBrowserVideoClient
             }
         }
 
-        /** 将已记录的 requestId 解析为响应正文。 */
-        private void resolveCapturedBodies() throws Exception
+        JsonNode awaitCommentPage(long cursor, long deadline) throws Exception
         {
-            List<CapturedBody> resolved = new ArrayList<>();
+            long nextScroll = 0;
+            while (!webSocket.isInputClosed() && System.nanoTime() < deadline)
+            {
+                String requestId = commentRequests.get(cursor);
+                if (requestId != null)
+                {
+                    String body = tryReadBody(requestId, 1);
+                    if (body != null)
+                    {
+                        JsonNode result = objectMapper.readTree(body);
+                        if (result.path("status_code").asInt(-1) == 0)
+                        {
+                            commentRequests.remove(cursor, requestId);
+                            return result;
+                        }
+                        commentRequests.remove(cursor, requestId);
+                        throw new ServiceException("抖音评论暂不可用，请稍后重试");
+                    }
+                }
+                else if (cursor > 0 && System.nanoTime() >= nextScroll)
+                {
+                    // 避免并行抓取推荐时，后台页的滚动监听被 Chromium 节流。
+                    sendCommand("Page.bringToFront", null, 2);
+                    JsonNode position = sendCommand("Runtime.evaluate",
+                            Map.of("expression", SCROLL_COMMENTS, "returnByValue", true), 2);
+                    if ("login-required".equals(position.path("result").path("value").asText()))
+                    {
+                        throw new ServiceException("抖音要求登录后才能查看更多评论");
+                    }
+                    nextScroll = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1250);
+                }
+                Thread.sleep(100);
+            }
+            throw new ServiceException("未收到抖音评论，请稍后重试");
+        }
+
+        List<CapturedBody> waitForVerifiedResponse(long timeoutMs, Predicate<String> resultReceived)
+                throws InterruptedException
+        {
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+            Set<String> inspected = new HashSet<>();
+            while (!webSocket.isInputClosed() && System.nanoTime() < deadline)
+            {
+                for (CapturedBody entry : List.copyOf(capturedBodies))
+                {
+                    if (inspected.contains(entry.body()))
+                    {
+                        continue;
+                    }
+                    String body = tryReadBody(entry.body(), 2);
+                    if (body != null)
+                    {
+                        inspected.add(entry.body());
+                        if (resultReceived.test(body))
+                        {
+                            return List.of(new CapturedBody(entry.marker(), body));
+                        }
+                    }
+                }
+                Thread.sleep(400);
+            }
+            return List.of();
+        }
+
+        /** 将已记录的 requestId 解析为响应正文。 */
+        private List<CapturedBody> resolveCapturedBodies()
+        {
+            List<CapturedBody> requests;
             synchronized (capturedBodies)
             {
-                for (CapturedBody entry : capturedBodies)
-                {
-                    // body 字段暂存 requestId，这里替换为真实正文
-                    String body = tryReadBody(entry.body());
-                    resolved.add(new CapturedBody(entry.marker(), body != null ? body : ""));
-                }
-                capturedBodies.clear();
-                capturedBodies.addAll(resolved);
+                requests = List.copyOf(capturedBodies);
             }
+            // 接收事件和命令应答共用回调线程，等待应答时必须释放事件列表锁。
+            List<CapturedBody> resolved = new ArrayList<>(requests.size());
+            for (CapturedBody entry : requests)
+            {
+                String body = tryReadBody(entry.body());
+                resolved.add(new CapturedBody(entry.marker(), body != null ? body : ""));
+            }
+            return resolved;
         }
 
         /** 读取响应正文；响应可能尚未加载完成，做有限重试。 */
         private String tryReadBody(String requestId)
         {
+            return tryReadBody(requestId, 10);
+        }
+
+        private String tryReadBody(String requestId, long timeoutSeconds)
+        {
             for (int attempt = 0; attempt < 4; attempt++)
             {
                 try
                 {
-                    JsonNode result = sendCommand("Network.getResponseBody", Map.of("requestId", requestId));
+                    JsonNode result = sendCommand("Network.getResponseBody", Map.of("requestId", requestId), timeoutSeconds);
                     String body = result.path("body").asText("");
                     if (!body.isBlank())
                     {
-                        return body;
+                        return result.path("base64Encoded").asBoolean()
+                                ? new String(Base64.getDecoder().decode(body), StandardCharsets.UTF_8) : body;
                     }
                 }
                 catch (Exception exception)
@@ -1060,14 +1473,6 @@ public class DouyinBrowserVideoClient
             return null;
         }
 
-        List<CapturedBody> getCapturedBodies()
-        {
-            synchronized (capturedBodies)
-            {
-                return new ArrayList<>(capturedBodies);
-            }
-        }
-
         /**
          * 等待视频信息接口响应并解析；超时后回退到页面 DOM 提取（“粘贴链接解析”旧流程）。
          */
@@ -1076,15 +1481,17 @@ public class DouyinBrowserVideoClient
             long deadline = System.currentTimeMillis() + FETCH_TIMEOUT_MS;
             while (System.currentTimeMillis() < deadline)
             {
+                List<String> requests;
                 synchronized (detailRequestIds)
                 {
-                    for (String requestId : new ArrayList<>(detailRequestIds))
+                    requests = List.copyOf(detailRequestIds);
+                }
+                for (String requestId : requests)
+                {
+                    String body = tryReadBody(requestId);
+                    if (body != null && body.contains("aweme_detail"))
                     {
-                        String body = tryReadBody(requestId);
-                        if (body != null && body.contains("aweme_detail"))
-                        {
-                            return parseDetail(body);
-                        }
+                        return parseDetail(body);
                     }
                 }
                 Thread.sleep(500);

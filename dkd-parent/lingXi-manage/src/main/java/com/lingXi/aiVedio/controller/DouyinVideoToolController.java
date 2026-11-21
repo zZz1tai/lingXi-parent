@@ -80,11 +80,12 @@ public class DouyinVideoToolController extends BaseController
      */
     @PreAuthorize("@ss.hasPermi('aivideo:project:list')")
     @GetMapping("/page/{awemeId}")
-    public AjaxResult videoPage(@PathVariable("awemeId") String awemeId)
+    public AjaxResult videoPage(@PathVariable("awemeId") String awemeId,
+            @RequestParam(value = "includeComments", defaultValue = "true") boolean includeComments)
     {
         try
         {
-            return success(toolService.videoPage(awemeId));
+            return success(toolService.videoPage(awemeId, includeComments));
         }
         catch (ServiceException exception)
         {
@@ -198,6 +199,20 @@ public class DouyinVideoToolController extends BaseController
         try
         {
             return success(toolService.search(keyword, page));
+        }
+        catch (ServiceException exception)
+        {
+            return error(exception.getMessage());
+        }
+    }
+
+    @PreAuthorize("@ss.hasPermi('aivideo:project:list')")
+    @PostMapping("/search/verify")
+    public AjaxResult verifySearch(@RequestParam("keyword") String keyword)
+    {
+        try
+        {
+            return success(toolService.searchAfterUserVerification(keyword));
         }
         catch (ServiceException exception)
         {

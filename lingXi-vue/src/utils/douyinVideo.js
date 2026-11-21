@@ -63,14 +63,17 @@ export function formatRelativeTime(secondsTs, nowMs = Date.now()) {
  * @param {{offsetMs?: number}[]} list 弹幕列表
  * @param {number} pointer 已发射到的位置（下标）
  * @param {number} currentMs 当前播放时刻（毫秒）
+ * @param {number} earliestMs 最早允许发射的时刻（毫秒）
  * @returns {{due: object[], nextPointer: number}} 本次应发射的弹幕与新的下标位置
  */
-export function collectDueDanmaku(list, pointer, currentMs) {
+export function collectDueDanmaku(list, pointer, currentMs, earliestMs = -Infinity) {
   const safeList = Array.isArray(list) ? list : []
   let p = Math.min(Math.max(Number(pointer) || 0, 0), safeList.length)
   const due = []
   while (p < safeList.length && (Number(safeList[p].offsetMs) || 0) <= (Number(currentMs) || 0)) {
-    due.push(safeList[p])
+    if ((Number(safeList[p].offsetMs) || 0) >= earliestMs) {
+      due.push(safeList[p])
+    }
     p += 1
   }
   return { due, nextPointer: p }

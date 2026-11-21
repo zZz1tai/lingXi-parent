@@ -136,7 +136,16 @@ public class AiVideoRemoteAssetDownloader
     /** 在实际连接的 DNS 解析点校验公网地址；同模块的视频流代理等出站组件复用。 */
     public static InetAddress[] resolvePublicAddresses(String host) throws UnknownHostException
     {
-        InetAddress[] addresses = InetAddress.getAllByName(host);
+        return requirePublicAddresses(InetAddress.getAllByName(host));
+    }
+
+    /** 校验将直接用于连接的一组 DNS 结果。 */
+    public static InetAddress[] requirePublicAddresses(InetAddress[] addresses) throws UnknownHostException
+    {
+        if (addresses.length == 0)
+        {
+            throw new UnknownHostException("远程文件域名无可用的公网地址");
+        }
         for (InetAddress address : addresses)
         {
             if (!isPublicAddress(address))
