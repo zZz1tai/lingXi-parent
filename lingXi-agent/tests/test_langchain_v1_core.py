@@ -29,6 +29,7 @@ from app.agents import middleware as middleware_module
 from app.agents.state import AgentContext, checkpoint_thread_id
 from app.api import dependencies
 from app.api.v1 import chat as chat_api
+from app.api.v1 import novel as novel_api
 from app.schemas.request import (
     ActionResumeRequest,
     ChatRequest,
@@ -38,7 +39,7 @@ from app.schemas.request import (
 )
 
 
-class LangChainV1ContractTests(unittest.TestCase):
+class LangChainV1ContractTests(unittest.IsolatedAsyncioTestCase):
     def test_builder_exposes_the_v1_create_agent_factory(self) -> None:
         self.assertTrue(
             hasattr(builder, "create_agent"),
@@ -49,21 +50,21 @@ class LangChainV1ContractTests(unittest.TestCase):
             "the deprecated langgraph.prebuilt factory must not remain",
         )
 
-    def test_thread_id_is_not_derived_from_user_id(self) -> None:
+    async def test_thread_id_is_not_derived_from_user_id(self) -> None:
         request = ChatRequest(
             message="继续刚才的话题",
             thread_id="conversation-42",
             user_id="user-7",
         )
 
-        config = chat_api._build_agent_config(
+        config = await chat_api._build_agent_config(
             request,
             request_id="request-1",
         )
 
         expected = "lingxi:" + hashlib.sha256(
             json.dumps(
-                ["user-7", "conversation-42"],
+                ["chat", "user-7", "conversation-42"],
                 ensure_ascii=False,
                 separators=(",", ":"),
             ).encode("utf-8")
@@ -71,12 +72,12 @@ class LangChainV1ContractTests(unittest.TestCase):
         self.assertEqual(config["configurable"]["thread_id"], expected)
         self.assertNotEqual(request.thread_id, request.user_id)
 
-    def test_checkpoint_namespace_has_no_delimiter_collisions(self) -> None:
-        first = chat_api._build_agent_config(
+    async def test_checkpoint_namespace_has_no_delimiter_collisions(self) -> None:
+        first = await chat_api._build_agent_config(
             ChatRequest(message="a", user_id="a:b", thread_id="c"),
             request_id="request-1",
         )
-        second = chat_api._build_agent_config(
+        second = await chat_api._build_agent_config(
             ChatRequest(message="a", user_id="a", thread_id="b:c"),
             request_id="request-2",
         )
@@ -252,6 +253,64 @@ class CheckpointMemoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resumed_human, ["remember alpha", "continue"])
         self.assertEqual(isolated_human, ["new conversation"])
 
+    async def test_chat_and_novel_isolate_write_resume_and_delete(self) -> None:
+        identity = {"user_id": "user-1", "thread_id": "same-session"}
+        for legacy_owner in (None, "chat", "novel", "mixed"):
+            for deleted in ("chat", "novel"):
+                with (
+                    self.subTest(legacy_owner=legacy_owner, deleted=deleted),
+                    patch.object(dependencies, "get_checkpointer", return_value=create_in_memory_checkpointer()),
+                    patch.object(dependencies, "_runtime_tools", return_value=[]),
+                    patch.object(dependencies, "get_novel_tools", return_value=[]),
+                ):
+                    model = FakeListChatModel(responses=["收到"])
+                    graphs = {"chat": dependencies.get_agent(model=model),
+                              "novel": dependencies.get_novel_agent(model=model)}
+                    context = AgentContext(checkpointed=True, **identity)
+                    expected = {"chat": [], "novel": []}
+                    if legacy_owner:
+                        old_id = checkpoint_thread_id(**identity, business=None)
+                        sources = ("chat", "novel") if legacy_owner == "mixed" else (legacy_owner,)
+                        for source in sources:
+                            await graphs[source].ainvoke(
+                                {"messages": [HumanMessage(content="旧消息")]},
+                                config={"configurable": {"thread_id": old_id}}, context=context,
+                            )
+                        if legacy_owner != "mixed":
+                            expected[legacy_owner].append("旧消息")
+
+                    async def config(domain):
+                        if domain == "chat":
+                            return await chat_api._build_agent_config(
+                                ChatRequest(message="聊天", **identity), request_id="chat-request"
+                            )
+                        return await novel_api._build_novel_agent_config(
+                            novel_api.NovelWriteRequest(message="写作", **identity), request_id="novel-request"
+                        )
+
+                    for domain in ("chat", "novel", "chat", "novel"):
+                        message = f"{domain}-{len(expected[domain])}"
+                        result = await graphs[domain].ainvoke(
+                            {"messages": [HumanMessage(content=message)]},
+                            config=await config(domain), context=context,
+                        )
+                        expected[domain].append(message)
+                        self.assertEqual([m.content for m in result["messages"]
+                                          if isinstance(m, HumanMessage)], expected[domain])
+
+                    delete = chat_api.delete_chat_thread if deleted == "chat" else novel_api.delete_novel_thread
+                    await delete(DeleteChatThreadRequest(**identity), request_id="delete-request")
+                    expected[deleted].clear()
+                    for domain, graph in graphs.items():
+                        state = await graph.aget_state(await config(domain))
+                        self.assertEqual([m.content for m in state.values.get("messages", [])
+                                          if isinstance(m, HumanMessage)], expected[domain])
+
+                    if legacy_owner == "mixed":
+                        old_state = await graphs["chat"].aget_state({"configurable": {"thread_id": old_id}})
+                        self.assertEqual(sum(isinstance(m, HumanMessage)
+                                             for m in old_state.values["messages"]), 2)
+
     async def test_uncheckpointed_agent_does_not_accumulate_one_shot_state(self) -> None:
         model = FakeListChatModel(responses=["first", "second"])
         agent = builder.build_search_agent(
@@ -281,7 +340,7 @@ class CheckpointMemoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second_human, ["second one-shot"])
 
     def test_ephemeral_and_checkpointed_agents_are_cached_separately(self) -> None:
-        saver = SimpleNamespace(adelete_thread=AsyncMock())
+        saver = SimpleNamespace(aget_tuple=AsyncMock(return_value=None), adelete_thread=AsyncMock())
         checkpointed_agent = object()
         ephemeral_agent = object()
         dependencies.configure_agent_runtime(saver)
@@ -313,6 +372,40 @@ class CheckpointMemoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(build_agent.call_args_list[0].kwargs["checkpointer"], saver)
         self.assertIsNone(build_agent.call_args_list[1].kwargs["checkpointer"])
 
+    def test_request_graph_cache_separates_models_tools_memory_and_backends(self) -> None:
+        self.addCleanup(dependencies.reset_singletons)
+        dependencies.configure_agent_runtime(create_in_memory_checkpointer())
+        model = FakeListChatModel(responses=["收到"])
+        other = FakeListChatModel(responses=["收到"])
+        with patch.object(dependencies, "_MODEL_CACHE_LIMIT", 12):
+            factories = (dependencies.get_agent, dependencies.get_novel_agent, dependencies.get_novel_idea_agent)
+            graphs = [factory(model=model) for factory in factories]
+            self.assertEqual(len({id(graph) for graph in graphs}), len(factories))
+            for factory, graph in zip(factories, graphs):
+                self.assertIs(factory(model=model), graph)
+                self.assertIsNot(factory(model=other), graph)
+                self.assertIsNot(factory(model=model, checkpointed=False), graph)
+            with patch.object(dependencies.settings, "weather_enabled", not dependencies.settings.weather_enabled):
+                self.assertIsNot(dependencies.get_agent(model=model), graphs[0])
+            saver = create_in_memory_checkpointer()
+            dependencies.configure_agent_runtime(saver)
+            for factory, graph in zip(factories, graphs):
+                refreshed = factory(model=model)
+                self.assertIsNot(refreshed, graph)
+                self.assertIs(refreshed.checkpointer, saver)
+
+    def test_request_graph_cache_evicts_least_recently_used_graph(self) -> None:
+        self.addCleanup(dependencies.reset_singletons)
+        dependencies.configure_agent_runtime(create_in_memory_checkpointer())
+        first, second, third = [FakeListChatModel(responses=["收到"]) for _ in range(3)]
+        with patch.object(dependencies, "_MODEL_CACHE_LIMIT", 2):
+            hot = dependencies.get_agent(model=first)
+            cold = dependencies.get_agent(model=second)
+            self.assertIs(dependencies.get_agent(model=first), hot)
+            dependencies.get_agent(model=third)
+            self.assertIs(dependencies.get_agent(model=first), hot)
+            self.assertIsNot(dependencies.get_agent(model=second), cold)
+
     async def test_one_shot_chat_selects_the_ephemeral_agent(self) -> None:
         class FakeAgent:
             async def ainvoke(self, _input, **_kwargs):
@@ -335,7 +428,7 @@ class CheckpointMemoryTests(unittest.IsolatedAsyncioTestCase):
         get_agent.assert_called_once_with(checkpointed=False)
 
     async def test_delete_thread_uses_the_same_private_namespace(self) -> None:
-        saver = SimpleNamespace(adelete_thread=AsyncMock())
+        saver = SimpleNamespace(aget_tuple=AsyncMock(return_value=None), adelete_thread=AsyncMock())
         dependencies.configure_agent_runtime(saver)
         try:
             await dependencies.delete_agent_thread(

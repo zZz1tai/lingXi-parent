@@ -148,8 +148,7 @@ import {
   Delete, Download, EditPen, MagicStick, Promotion, RefreshRight, User, VideoPause
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getChatHistory } from '@/api/ai'
-import { streamNovelWrite } from '@/api/novel/novel'
+import { getNovelHistory, streamNovelWrite } from '@/api/novel/novel'
 import { renderNovelMarkdown } from '../novelMarkdown'
 import {
   buildPolishMessage,
@@ -193,8 +192,7 @@ function workSessionId(work) {
   return sessionId
 }
 
-// 服务端仅在首次发送创作消息时创建会话（ensureNovelSession），
-// 未创建前历史必然为空，直接跳过拉取，避免无谓的“会话不存在”告警。
+// 服务端在首次发送创作消息时创建会话，未创建时跳过历史查询。
 function isServerSessionCreated(work) {
   return localStorage.getItem(`novel_session_created_${work.workId}`) === '1'
 }
@@ -220,7 +218,7 @@ watch(
   if (!work) return
   if (!isServerSessionCreated(work)) return
   try {
-    const result = await getChatHistory(workSessionId(work))
+    const result = await getNovelHistory(workSessionId(work))
     const history = result?.data || result?.rows || []
     messages.value = (Array.isArray(history) ? history : []).map(item => ({
       id: `${item.id || Date.now()}_${Math.random().toString(36).slice(2, 6)}`,

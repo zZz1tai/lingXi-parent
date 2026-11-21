@@ -2204,6 +2204,7 @@ CREATE TABLE tb_model_history
 (
     id           BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
     session_id   VARCHAR(128)               NOT NULL COMMENT '会话唯一标识',
+    business_type VARCHAR(8) NOT NULL DEFAULT 'chat' COMMENT '会话业务 chat/novel',
     user_id      VARCHAR(64)                NOT NULL COMMENT '用户唯一标识',
     user_name    VARCHAR(128)               NOT NULL COMMENT '用户名字',
     message_type ENUM ('user', 'assistant') NOT NULL DEFAULT 'user' COMMENT '消息类型',
@@ -2233,8 +2234,11 @@ DROP TABLE IF EXISTS `tb_chat_session`;
 CREATE TABLE tb_chat_session
 (
     id           BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
-    session_id   VARCHAR(128) NOT NULL UNIQUE COMMENT '会话唯一标识',
+    session_id   VARCHAR(128) NOT NULL COMMENT '会话唯一标识',
+    business_type VARCHAR(8) NOT NULL DEFAULT 'chat' COMMENT '会话业务 chat/novel',
     user_id      VARCHAR(64)  NOT NULL COMMENT '用户唯一标识',
+    scope_owner VARCHAR(64) GENERATED ALWAYS AS (CASE WHEN business_type='novel' THEN user_id ELSE '' END) STORED,
+    UNIQUE KEY uk_session_business (session_id, business_type, scope_owner),
     session_name VARCHAR(128) NOT NULL COMMENT '会话名称',
     status       VARCHAR(16)  DEFAULT 'ACTIVE' COMMENT '会话状态：ACTIVE 正常/DELETING 删除中（拒绝新消息）',
     created_at   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

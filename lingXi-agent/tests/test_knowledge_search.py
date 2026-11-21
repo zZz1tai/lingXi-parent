@@ -311,7 +311,7 @@ class KnowledgeRetrieverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(original, second[0]["data"])
         self.assertEqual(1, sum(event["type"] == "citation" for event in second))
         self.assertEqual("done", second[-1]["type"])
-        snapshot = await agent.aget_state(chat_api._build_agent_config(resumed, request_id="r-2"))
+        snapshot = await agent.aget_state(await chat_api._build_agent_config(resumed, request_id="r-2"))
         self.assertEqual(1, sum(isinstance(item, HumanMessage) for item in snapshot.values["messages"]))
 
 

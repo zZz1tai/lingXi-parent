@@ -29,7 +29,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <select id="selectModelHistoryList" parameterType="ModelHistory" resultMap="ModelHistoryResult">
         <include refid="selectModelHistoryVo"/>
-        <where>  
+        <where>business_type = 'chat'
             <if test="sessionId != null and sessionId != ''"> and session_id = #{sessionId}</if>
             <if test="userId != null and userId != ''"> and user_id = #{userId}</if>
             <if test="userName != null and userName != ''"> and user_name like concat('%', #{userName}, '%')</if>
@@ -40,12 +40,12 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     
     <select id="selectModelHistoryById" parameterType="Long" resultMap="ModelHistoryResult">
         <include refid="selectModelHistoryVo"/>
-        where id = #{id}
+        where business_type = 'chat' and id = #{id}
     </select>
 
     <select id="selectModelHistoryBySessionId" parameterType="String" resultMap="ModelHistoryResult">
         <include refid="selectModelHistoryVo"/>
-        where session_id = #{sessionId}
+        where business_type = 'chat' and session_id = #{sessionId}
         order by created_at asc
     </select>
 
@@ -101,27 +101,27 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="tokens != null">tokens = #{tokens},</if>
             <if test="updateTime != null">updated_at = #{updateTime},</if>
         </trim>
-        where id = #{id}
+        where business_type = 'chat' and id = #{id}
     </update>
 
     <delete id="deleteModelHistoryById" parameterType="Long">
-        delete from tb_model_history where id = #{id}
+        delete from tb_model_history where business_type = 'chat' and id = #{id}
     </delete>
 
     <delete id="deleteModelHistoryByIds" parameterType="Long[]">
-        delete from tb_model_history where id in 
+        delete from tb_model_history where business_type = 'chat' and id in
         <foreach item="id" collection="array" open="(" separator="," close=")">
             #{id}
         </foreach>
     </delete>
 
     <delete id="deleteModelHistoryBySessionId" parameterType="String">
-        delete from tb_model_history where session_id = #{sessionId}
+        delete from tb_model_history where business_type = 'chat' and session_id = #{sessionId}
     </delete>
     
     <select id="selectRecentModelHistoryBySessionId" resultMap="ModelHistoryResult">
         <include refid="selectModelHistoryVo"/>
-        where session_id = #{sessionId}
+        where business_type = 'chat' and session_id = #{sessionId}
         order by created_at desc
         limit #{limit}
     </select>
@@ -129,7 +129,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectSummaryHistory" resultMap="ModelHistoryResult">
         select id, session_id, user_id, content, message_type, status, error_code, created_at
         from tb_model_history
-        where session_id = #{sessionId} and user_id = #{userId}
+        where business_type = 'chat' and session_id = #{sessionId} and user_id = #{userId}
           and message_type in ('user', 'assistant')
           and (status is null or status = '' or status = 'SUCCEEDED'
                or (message_type = 'user' and status = 'ACCEPTED'))

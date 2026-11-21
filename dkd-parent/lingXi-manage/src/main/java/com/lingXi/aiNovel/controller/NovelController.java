@@ -15,7 +15,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.http.MediaType;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.lingXi.ai.client.AgentClient;
-import com.lingXi.ai.service.IChatSessionService;
+import com.lingXi.aiNovel.service.NovelSessionService;
+import org.springframework.web.bind.annotation.GetMapping;
 import com.lingXi.aiNovel.domain.dto.NovelWorkContextDTO;
 import com.lingXi.aiNovel.domain.dto.NovelIdeaDocVO;
 import com.lingXi.aiNovel.domain.dto.NovelIdeaRequestVO;
@@ -27,9 +28,6 @@ import com.lingXi.common.core.domain.AjaxResult;
 import com.lingXi.common.enums.BusinessType;
 import com.lingXi.common.exception.ServiceException;
 import com.lingXi.common.utils.SecurityUtils;
-import com.lingXi.manage.domain.ChatSession;
-import com.lingXi.manage.domain.ModelHistory;
-import com.lingXi.manage.service.IModelHistoryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
@@ -52,10 +50,7 @@ public class NovelController {
     private IAiNovelWorkService workService;
 
     @Autowired
-    private IChatSessionService chatSessionService;
-
-    @Autowired
-    private IModelHistoryService modelHistoryService;
+    private NovelSessionService novelSessions;
 
     /**
      * 流式调用小说创作智能体
@@ -90,13 +85,9 @@ public class NovelController {
             NovelWorkContextDTO workContext = workService.buildNovelWorkContext(
                     workId, request.getChapterId());
 
-            // 2. 确保会话记录存在，使 /api/ai/history 可查询小说创作记录。
-            ensureNovelSession(sessionId, userId, workContext.getWorkName());
+            long sessionKey = novelSessions.startTurn(
+                    sessionId, userId, workContext.getWorkName(), username, message);
 
-            // 3. 持久化用户消息。
-            saveUserMessage(sessionId, userId, username, message);
-
-            // 4. 调用创作智能体，仅在收到完整终止标记后保存一次助手回复。
             AtomicBoolean assistantSaved = new AtomicBoolean(false);
             return agentClient.streamNovelWrite(
                     message,
@@ -104,8 +95,11 @@ public class NovelController {
                     userId,
                     workContext,
                     request.getMemoryMode(),
-                    reply -> saveStreamReplyOnce(
-                            assistantSaved, sessionId, userId, username, reply));
+                    reply -> {
+                        if (reply != null && !reply.isBlank() && assistantSaved.compareAndSet(false, true)) {
+                            novelSessions.saveReply(sessionKey, username, reply);
+                        }
+                    });
         } catch (Exception e) {
             log.warn("小说创作流式调用失败，errorType={}",
                     e.getClass().getSimpleName());
@@ -282,12 +276,9 @@ public class NovelController {
             if (normalizedSessionId.isEmpty()) {
                 throw new ServiceException("会话ID不能为空");
             }
-            requireOwnedSession(normalizedSessionId, userId);
+            long sessionKey = novelSessions.requireSession(normalizedSessionId, userId);
             agentClient.deleteNovelThreadMemory(normalizedSessionId, userId);
-            int result = modelHistoryService.deleteModelHistoryBySessionId(
-                    normalizedSessionId);
-            chatSessionService.deleteChatSessionBySessionId(normalizedSessionId);
-            return AjaxResult.success(result > 0);
+            return AjaxResult.success(novelSessions.delete(sessionKey, normalizedSessionId, userId));
         } catch (Exception e) {
             log.warn("删除小说创作会话记忆失败，errorType={}",
                     e.getClass().getSimpleName());
@@ -297,70 +288,11 @@ public class NovelController {
         }
     }
 
-    /** 会话不存在时创建作品会话记录，名称取作品名。 */
-    private void ensureNovelSession(String sessionId, String userId, String workName) {
-        ChatSession existing = chatSessionService.selectChatSessionBySessionId(sessionId);
-        if (existing != null) {
-            return;
-        }
-        ChatSession session = new ChatSession();
-        session.setUserId(userId);
-        session.setSessionId(sessionId);
-        session.setSessionName(workName == null || workName.trim().isEmpty()
-                ? "小说创作"
-                : workName.trim());
-        chatSessionService.insertChatSession(session);
-    }
-
-    /** 保存用户消息到对话历史。 */
-    private void saveUserMessage(
-            String sessionId, String userId, String userName, String content) {
-        ModelHistory history = new ModelHistory();
-        history.setSessionId(sessionId);
-        history.setUserId(userId);
-        history.setUserName(userName);
-        history.setContent(content);
-        history.setMessageType("user");
-        history.setModelName("novel-agent");
-        if (modelHistoryService.insertModelHistory(history) != 1) {
-            throw new IllegalStateException("用户消息持久化失败");
-        }
-    }
-
-    /** 保存流式助手回复（仅保存一次，避免重复）。 */
-    private void saveStreamReplyOnce(
-            AtomicBoolean assistantSaved,
-            String sessionId,
-            String userId,
-            String userName,
-            String content) {
-        if (content == null || content.trim().isEmpty()) {
-            return;
-        }
-        if (assistantSaved.compareAndSet(false, true)) {
-            ModelHistory history = new ModelHistory();
-            history.setSessionId(sessionId);
-            history.setUserId(userId);
-            history.setUserName(userName);
-            history.setContent(content);
-            history.setMessageType("assistant");
-            history.setModelName("novel-agent");
-            if (modelHistoryService.insertModelHistory(history) != 1) {
-                throw new IllegalStateException("助手回复持久化失败");
-            }
-        } else {
-            log.warn("忽略重复的小说创作回复，sessionIdLength={}",
-                    sessionId == null ? 0 : sessionId.length());
-        }
-    }
-
-    /** 校验会话归属权，确保当前用户拥有指定会话。 */
-    private void requireOwnedSession(String sessionId, String userId) {
-        ChatSession session = chatSessionService.selectChatSessionBySessionId(sessionId);
-        if (session == null || session.getUserId() == null
-                || !session.getUserId().equals(userId)) {
-            throw new ServiceException("会话不存在或无权访问");
-        }
+    @Operation(summary = "读取当前用户的小说创作历史")
+    @PreAuthorize("@ss.hasPermi('novel:work:edit')")
+    @GetMapping("/history")
+    public AjaxResult history(@RequestParam String sessionId) {
+        return AjaxResult.success(novelSessions.history(sessionId.trim(), currentUserId()));
     }
 
     private static String currentUserId() {

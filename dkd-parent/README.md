@@ -8,7 +8,7 @@
 
 必需：JDK 17（需有 `javac`）、Maven、MySQL 8、Redis。版本声明以 `pom.xml` 和 CI 为准。测试不需要启动 MySQL/Redis，首次下载 Maven 依赖需要网络。
 
-1. 在全新数据库服务器导入 `sql/lingxi_all.sql`（创建 `dkd`，含表重建语句）。已有数据库须备份后对照结构差异编写升级 SQL，禁止重新导入总脚本。
+1. 在全新数据库服务器导入 `sql/lingxi_all.sql`（创建 `dkd`，含表重建语句）。已有数据库须备份后对照结构差异编写升级 SQL，禁止重新导入总脚本。普通聊天与小说会话分域前的数据库，停写并备份后执行[会话分域升级脚本](sql/upgrades/20261121_session_business.sql)，再启动新版服务。 已有库若仍用 TEXT 存储对话正文或快照，核对后使用[字段扩容脚本](sql/upgrades/history_text_capacity.sql)。小说菜单仍在旧目录或普通角色缺少祖先菜单授权时，使用[小说菜单升级脚本](sql/upgrades/novel_menu_hierarchy.sql)。
 2. 配置数据库账号密码、Redis 和可写上传目录；不要提交本机配置。Java 本身不会读取 Python 的 `.env`，只有根启动脚本会导入指定变量。
 3. 在本目录执行：
 

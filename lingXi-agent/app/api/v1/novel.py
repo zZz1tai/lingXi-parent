@@ -40,6 +40,7 @@ from app.api.dependencies import (
     create_llm,
     create_novel_agent_context,
     delete_agent_thread,
+    resolve_checkpoint_thread,
     get_novel_agent,
     get_novel_idea_agent,
     get_request_id,
@@ -101,19 +102,19 @@ class NovelMemoryDeleteError(AgentError):
         )
 
 
-def _build_novel_agent_config(
+async def _build_novel_agent_config(
     request: NovelWriteRequest | NovelIdeaRequest,
     *,
     request_id: str,
 ) -> dict[str, Any]:
-    """构建递归限制和会话检查点命名空间（创作/构思共用）。
-
-    构思会话与创作会话同样按 (user_id, thread_id) 哈希隔离，
-    因此同一用户可同时进行构思追问与正文创作而互不干扰。
-    """
+    """在小说业务域内按用户及会话恢复创作或构思检查点。"""
 
     user_namespace = request.user_id or "anonymous"
-    internal_thread_id = checkpoint_thread_id(user_namespace, request.thread_id)
+    internal_thread_id = (
+        await resolve_checkpoint_thread(user_namespace, request.thread_id, "novel")
+        if isinstance(request, NovelIdeaRequest) or request.memory_mode == "conversation"
+        else checkpoint_thread_id(user_namespace, request.thread_id, "novel")
+    )
     return {
         "recursion_limit": get_recursion_limit(request.max_iterations),
         "configurable": {"thread_id": internal_thread_id},
@@ -185,7 +186,7 @@ async def _stream_novel_events(
         agent_stream = agent.astream(
             {"messages": [{"role": "user", "content": message}]},
             config=with_trace(
-                _build_novel_agent_config(request, request_id=request_id),
+                await _build_novel_agent_config(request, request_id=request_id),
                 "generate-novel-stream",
                 user_id=request.user_id,
                 thread_id=request.thread_id,
@@ -407,7 +408,7 @@ async def _stream_idea_events(
         agent_stream = agent.astream(
             {"messages": [{"role": "user", "content": request.message}]},
             config=with_trace(
-                _build_novel_agent_config(request, request_id=request_id),
+                await _build_novel_agent_config(request, request_id=request_id),
                 "generate-novel-idea-stream",
                 user_id=request.user_id,
                 thread_id=request.thread_id,
@@ -1229,6 +1230,7 @@ async def novel_context_analyze(
 )
 async def novel_synopsis_stream(
     request: NovelSynopsisRequest,
+    http_request: Request,
     request_id: str = Depends(get_request_id),
 ) -> StreamingResponse:
     """SSE 流式拟写梗概：与 /synopsis/generate 同构，仅改为逐 token 输出。
@@ -1238,6 +1240,7 @@ async def novel_synopsis_stream(
     """
 
     async def event_source() -> AsyncIterator[str]:
+        model_stream = None
         try:
             llm = create_llm(request.llm_config, profile="novel-synopsis")
             messages = [
@@ -1252,7 +1255,9 @@ async def novel_synopsis_stream(
                 ),
             ]
             full_parts: list[str] = []
-            async for chunk in llm.astream(messages):
+            emitted_characters = 0
+            model_stream = llm.astream(messages)
+            async for chunk in model_stream:
                 raw_content = getattr(chunk, "content", "")
                 if isinstance(raw_content, str):
                     text = raw_content
@@ -1263,6 +1268,7 @@ async def novel_synopsis_stream(
                     )
                 if not text:
                     continue
+                emitted_characters = _add_stream_text(emitted_characters, text)
                 full_parts.append(text)
                 yield _format_sse_event(StreamEvent(type="token", content=text))
             synopsis = "".join(full_parts).strip()
@@ -1275,6 +1281,10 @@ async def novel_synopsis_stream(
                 len(request.work_name),
                 len(synopsis),
             )
+        except _StreamBudgetExceeded:
+            yield _format_sse_event(
+                StreamEvent(type="error", content="Stream output limit exceeded")
+            )
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Novel synopsis stream failed | request_id=%s | error_type=%s",
@@ -1284,9 +1294,13 @@ async def novel_synopsis_stream(
             yield _format_sse_event(
                 StreamEvent(type="error", content="AI 拟写梗概失败，请稍后重试")
             )
+        finally:
+            await _aclose_source(model_stream)
 
     return StreamingResponse(
-        event_source(),
+        _with_heartbeats(
+            event_source(), http_request=http_request, request_id=request_id, thread_id=None
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -1303,6 +1317,7 @@ async def delete_novel_thread(
 ) -> BaseResponse:
     try:
         await delete_agent_thread(
+            business="novel",
             user_id=request.user_id,
             thread_id=request.thread_id,
         )

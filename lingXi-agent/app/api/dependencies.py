@@ -6,8 +6,9 @@ import hashlib
 import json
 import os
 from collections import OrderedDict
+from collections.abc import Callable
 from threading import RLock
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
@@ -47,10 +48,6 @@ from app.utils.exceptions import (
 from app.utils.logger import logger
 
 _llm_instance: BaseChatModel | None = None
-_agent_instance: CompiledStateGraph | None = None
-_ephemeral_agent_instance: CompiledStateGraph | None = None
-_novel_agent_instance: CompiledStateGraph | None = None
-_novel_idea_agent_instance: CompiledStateGraph | None = None
 _checkpointer_instance: BaseCheckpointSaver | None = None
 _store_instance: BaseStore | None = None
 _knowledge_retriever_instance: KnowledgeRetriever | None = None
@@ -60,6 +57,11 @@ _memory_service_instance: LongTermMemoryService | None = None
 _model_cache: OrderedDict[str, BaseChatModel] = OrderedDict()
 _model_cache_lock = RLock()
 _MODEL_CACHE_LIMIT = max(1, min(int(os.getenv("AGENT_MODEL_CACHE_SIZE", "8")), 32))
+
+
+# 模型实例由配置 LRU 分配；保留强引用，避免对象地址被新的模型复用。
+_GraphKey = tuple[int, Callable[..., CompiledStateGraph], bool, tuple[bool, ...]]
+_graph_cache: OrderedDict[_GraphKey, tuple[BaseChatModel, CompiledStateGraph]] = OrderedDict()
 
 
 def _secret_value(value: str | SecretStr) -> str:
@@ -223,7 +225,10 @@ def create_llm(
             )
             _model_cache[cache_key] = model
             while len(_model_cache) > _MODEL_CACHE_LIMIT:
-                _model_cache.popitem(last=False)
+                _, evicted = _model_cache.popitem(last=False)
+                for key in list(_graph_cache):
+                    if key[0] == id(evicted):
+                        del _graph_cache[key]
             return model
     except Exception as exc:
         if isinstance(exc, InputValidationError) and config is None:
@@ -278,18 +283,15 @@ def configure_agent_runtime(
 ) -> None:
     """在服务前注入生命周期拥有的持久化内存、Store 和知识后端。"""
 
-    global _checkpointer_instance, _store_instance, _agent_instance
-    global _ephemeral_agent_instance, _novel_agent_instance
-    global _knowledge_retriever_instance, _agent_tool_client_instance
-    global _memory_service_instance
-    _checkpointer_instance = checkpointer
-    _store_instance = store
-    _knowledge_retriever_instance = knowledge_retriever
-    _agent_tool_client_instance = agent_tool_client
-    _memory_service_instance = memory_service
-    _agent_instance = None
-    _ephemeral_agent_instance = None
-    _novel_agent_instance = None
+    global _checkpointer_instance, _store_instance
+    global _knowledge_retriever_instance, _agent_tool_client_instance, _memory_service_instance
+    with _model_cache_lock:
+        _checkpointer_instance = checkpointer
+        _store_instance = store
+        _knowledge_retriever_instance = knowledge_retriever
+        _agent_tool_client_instance = agent_tool_client
+        _memory_service_instance = memory_service
+        _graph_cache.clear()
 
 
 def get_checkpointer() -> BaseCheckpointSaver:
@@ -310,42 +312,44 @@ def get_memory_service() -> LongTermMemoryService | None:
     return _memory_service_instance
 
 
+def _cached_graph(
+    builder: Callable[..., CompiledStateGraph],
+    tools_factory: Callable[[], list[Any]],
+    model: BaseChatModel | None,
+    checkpointed: bool,
+) -> CompiledStateGraph:
+    # 构图与后端切换使用同一把锁；推理在锁外执行。
+    with _model_cache_lock:
+        if model is None:
+            model = get_llm(profile="agent-default")
+        tool_flags = (
+            (settings.weather_enabled, settings.agent_write_actions_enabled)
+            if builder is build_search_agent else ()
+        )
+        key = (id(model), builder, checkpointed, tool_flags)
+        cached = _graph_cache.get(key)
+        if cached is not None:
+            _graph_cache.move_to_end(key)
+            return cached[1]
+
+        graph = builder(
+            model=model,
+            tools=tools_factory(),
+            checkpointer=get_checkpointer() if checkpointed else None,
+            store=_store_instance,
+        )
+        _graph_cache[key] = (model, graph)
+        if len(_graph_cache) > _MODEL_CACHE_LIMIT:
+            _graph_cache.popitem(last=False)
+        return graph
+
+
 def get_agent(
     *,
     checkpointed: bool = True,
     model: BaseChatModel | None = None,
 ) -> CompiledStateGraph:
-    """返回使用请求模型的图，如果不存在则返回传统默认值。"""
-
-    if model is not None:
-        return build_search_agent(
-            model=model,
-            tools=_runtime_tools(),
-            checkpointer=get_checkpointer() if checkpointed else None,
-            store=_store_instance,
-        )
-
-    global _agent_instance, _ephemeral_agent_instance
-    if checkpointed:
-        if _agent_instance is None:
-            _agent_instance = build_search_agent(
-                model=get_llm(profile="agent-default"),
-                tools=_runtime_tools(),
-                checkpointer=get_checkpointer(),
-                store=_store_instance,
-            )
-            logger.info("Checkpointed search agent initialized and cached")
-        return _agent_instance
-
-    if _ephemeral_agent_instance is None:
-        _ephemeral_agent_instance = build_search_agent(
-            model=get_llm(profile="agent-default"),
-            tools=_runtime_tools(),
-            checkpointer=None,
-            store=_store_instance,
-        )
-        logger.info("Ephemeral search agent initialized and cached")
-    return _ephemeral_agent_instance
+    return _cached_graph(build_search_agent, _runtime_tools, model, checkpointed)
 
 
 def _runtime_tools() -> list[Any]:
@@ -363,12 +367,32 @@ def _runtime_tools() -> list[Any]:
     return tools
 
 
-async def delete_agent_thread(*, user_id: str, thread_id: str) -> None:
-    """永久删除一个用户的检查点对话。"""
+async def resolve_checkpoint_thread(
+    user_id: str, thread_id: str, business: Literal["chat", "novel"],
+) -> str:
+    """只续接归属明确的旧检查点，保留来源混合或未知的原件。"""
+    scoped = checkpoint_thread_id(user_id, thread_id, business)
+    legacy = checkpoint_thread_id(user_id, thread_id, None)
+    saved = await get_checkpointer().aget_tuple({"configurable": {"thread_id": legacy}})
+    if saved is None:
+        return scoped
+    owners = {
+        "lingxi-search-agent": "chat",
+        "lingxi-novel-agent": "novel",
+        "lingxi-novel-idea-agent": "novel",
+    }
+    names = {saved.metadata.get("lc_agent_name")}
+    messages = saved.checkpoint.get("channel_values", {}).get("messages", [])
+    names.update(message.name for message in messages if getattr(message, "type", None) == "ai")
+    domains = {owners[name] for name in names if name in owners}
+    return legacy if domains == {business} else scoped
 
-    await get_checkpointer().adelete_thread(
-        checkpoint_thread_id(user_id, thread_id)
-    )
+
+async def delete_agent_thread(
+    *, user_id: str, thread_id: str, business: Literal["chat", "novel"] = "chat",
+) -> None:
+    internal_id = await resolve_checkpoint_thread(user_id, thread_id, business)
+    await get_checkpointer().adelete_thread(internal_id)
 
 
 def create_agent_context(
@@ -420,34 +444,7 @@ def get_novel_agent(
     checkpointed: bool = True,
     model: BaseChatModel | None = None,
 ) -> CompiledStateGraph:
-    """返回小说创作 Agent，默认缓存共享图并携带持久检查点。"""
-
-    if model is not None:
-        return build_novel_agent(
-            model=model,
-            tools=get_novel_tools(),
-            checkpointer=get_checkpointer() if checkpointed else None,
-            store=_store_instance,
-        )
-
-    global _novel_agent_instance
-    if checkpointed:
-        if _novel_agent_instance is None:
-            _novel_agent_instance = build_novel_agent(
-                model=get_llm(profile="agent-default"),
-                tools=get_novel_tools(),
-                checkpointer=get_checkpointer(),
-                store=_store_instance,
-            )
-            logger.info("Checkpointed novel agent initialized and cached")
-        return _novel_agent_instance
-
-    return build_novel_agent(
-        model=get_llm(profile="agent-default"),
-        tools=get_novel_tools(),
-        checkpointer=None,
-        store=_store_instance,
-    )
+    return _cached_graph(build_novel_agent, get_novel_tools, model, checkpointed)
 
 
 def get_novel_idea_agent(
@@ -455,34 +452,7 @@ def get_novel_idea_agent(
     checkpointed: bool = True,
     model: BaseChatModel | None = None,
 ) -> CompiledStateGraph:
-    """返回小说构思 Agent，默认缓存共享图并携带持久检查点。"""
-
-    if model is not None:
-        return build_novel_idea_agent(
-            model=model,
-            tools=get_novel_tools(),
-            checkpointer=get_checkpointer() if checkpointed else None,
-            store=_store_instance,
-        )
-
-    global _novel_idea_agent_instance
-    if checkpointed:
-        if _novel_idea_agent_instance is None:
-            _novel_idea_agent_instance = build_novel_idea_agent(
-                model=get_llm(profile="agent-default"),
-                tools=get_novel_tools(),
-                checkpointer=get_checkpointer(),
-                store=_store_instance,
-            )
-            logger.info("Checkpointed novel idea agent initialized and cached")
-        return _novel_idea_agent_instance
-
-    return build_novel_idea_agent(
-        model=get_llm(profile="agent-default"),
-        tools=get_novel_tools(),
-        checkpointer=None,
-        store=_store_instance,
-    )
+    return _cached_graph(build_novel_idea_agent, get_novel_tools, model, checkpointed)
 
 
 def create_novel_agent_context(
@@ -528,21 +498,15 @@ def get_request_id() -> str:
 def reset_singletons() -> None:
     """重置用于测试和应用程序关闭的进程本地缓存。"""
 
-    global _llm_instance, _agent_instance, _ephemeral_agent_instance
-    global _novel_agent_instance, _novel_idea_agent_instance
-    global _checkpointer_instance, _store_instance
-    global _knowledge_retriever_instance, _agent_tool_client_instance
-    global _memory_service_instance
-    _llm_instance = None
-    _agent_instance = None
-    _ephemeral_agent_instance = None
-    _novel_agent_instance = None
-    _novel_idea_agent_instance = None
-    _checkpointer_instance = None
-    _store_instance = None
-    _knowledge_retriever_instance = None
-    _agent_tool_client_instance = None
-    _memory_service_instance = None
+    global _llm_instance, _checkpointer_instance, _store_instance
+    global _knowledge_retriever_instance, _agent_tool_client_instance, _memory_service_instance
     with _model_cache_lock:
+        _llm_instance = None
+        _checkpointer_instance = None
+        _store_instance = None
+        _knowledge_retriever_instance = None
+        _agent_tool_client_instance = None
+        _memory_service_instance = None
         _model_cache.clear()
+        _graph_cache.clear()
     logger.info("LangChain runtime singletons reset")

@@ -57,11 +57,16 @@ class AgentContext:
     model: BaseChatModel | None = field(default=None, repr=False, compare=False)
 
 
-def checkpoint_thread_id(user_id: str, thread_id: str) -> str:
+def checkpoint_thread_id(
+    user_id: str, thread_id: str, business: Literal["chat", "novel"] | None = "chat",
+) -> str:
     """构建明确且不包含个人身份信息的检查点命名空间。"""
 
+    parts = [user_id or "anonymous", thread_id]
+    if business is not None:
+        parts.insert(0, business)
     payload = json.dumps(
-        [user_id or "anonymous", thread_id],
+        parts,
         ensure_ascii=False,
         separators=(",", ":"),
     )

@@ -81,8 +81,9 @@ app/
 `*.cn-beijing.maas.aliyuncs.com` 形式显式配置。
 
 对话请求应同时传递 `user_id` 和 `thread_id`（兼容别名 `session_id`）。
-前者用于用户隔离，后者才是会话标识；服务端会生成无歧义的 checkpoint
-命名空间，禁止不同用户或会话共享短期记忆。SSE 使用 LangChain v1 的
+普通聊天与小说使用独立的检查点命名空间，均按用户和会话隔离。升级后，服务端通过旧检查点中的 Agent 名称识别其归属，所属业务可原地续接和删除。对于包含两类 Agent 消息或无法识别归属的旧快照，两侧分别建立新检查点，保留原件。
+
+SSE 使用 LangChain v1 的
 `messages`、`updates`、`custom` 多模式流，并发送心跳、`done` 和最终
 `[DONE]` 标记；`AGENT_STREAM_MAX_SECONDS` 与
 `AGENT_STREAM_MAX_TEXT_CHARS` 分别限制总时长和累计文本输出。

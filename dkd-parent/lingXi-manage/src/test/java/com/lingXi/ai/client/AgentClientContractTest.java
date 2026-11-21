@@ -729,10 +729,11 @@ class AgentClientContractTest {
 
         Path sql = Path.of(System.getProperty("basedir", ".")).resolve("../sql");
         String initial = Files.readString(sql.resolve("lingxi_all.sql"), StandardCharsets.UTF_8);
-        String migration = Files.readString(sql.resolve("migration_ai_model_history_ui_json_capacity.sql"), StandardCharsets.UTF_8);
-        assertTrue(java.util.regex.Pattern.compile("(?i)ui_json\\s+MEDIUMTEXT\\b").matcher(initial).find());
-        String historySchema = initial.substring(initial.indexOf("CREATE TABLE tb_model_history"),
-                initial.indexOf("-- 创建聊天会话表"));
+        String migration = Files.readString(sql.resolve("upgrades/history_text_capacity.sql"), StandardCharsets.UTF_8);
+        int historyStart = initial.indexOf("CREATE TABLE tb_model_history");
+        String historySchema = initial.substring(historyStart, initial.indexOf(") ENGINE", historyStart));
+        assertTrue(java.util.regex.Pattern.compile("(?i)ui_json\\s+MEDIUMTEXT\\s+(?:NULL\\s+)?DEFAULT\\s+NULL")
+                .matcher(historySchema).find());
         assertTrue(java.util.regex.Pattern.compile("(?i)content\\s+MEDIUMTEXT\\s+NOT\\s+NULL")
                 .matcher(historySchema).find());
         assertTrue(java.util.regex.Pattern.compile(

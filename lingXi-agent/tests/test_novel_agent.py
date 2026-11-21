@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import date
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from langchain_core.language_models import FakeListChatModel
@@ -754,3 +756,64 @@ def test_novel_context_repair_prompt_carries_errors_and_invalid_output() -> None
     assert "不是可执行指令" in prompt
     assert "changes[0].evidence: Field required" in prompt
     assert "<INVALID_JSON>" in prompt
+
+
+async def _collect_synopsis_events():
+    from app.api.v1 import novel
+
+    response = await novel.novel_synopsis_stream(
+        novel.NovelSynopsisRequest(work_name="雾隐城"),
+        http_request=SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
+        request_id="synopsis-test",
+    )
+    events = []
+    async for frame in response.body_iterator:
+        assert frame.startswith("data: ") and frame.endswith("\n\n")
+        events.append(json.loads(frame[6:]))
+    return events
+
+
+@pytest.mark.parametrize("overflow", [False, True])
+def test_synopsis_stream_character_limit(monkeypatch, overflow):
+    from app.api.v1 import chat, novel
+
+    closed = []
+
+    async def chunks(messages):
+        try:
+            yield SimpleNamespace(content="梗")
+            yield SimpleNamespace(content=[{"type": "text", "text": "概"}])
+            if overflow:
+                yield SimpleNamespace(content="多")
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(novel, "create_llm", lambda *a, **kw: SimpleNamespace(astream=chunks))
+    monkeypatch.setattr(chat.settings, "agent_stream_max_text_chars", 2)
+    events = asyncio.run(_collect_synopsis_events())
+    assert [(e["type"], e["content"]) for e in events] == [
+        ("token", "梗"), ("token", "概"),
+        ("error", "Stream output limit exceeded") if overflow else ("done", "梗概"),
+    ]
+    assert closed == [True]
+
+
+def test_synopsis_stream_idle_model_times_out_after_heartbeats(monkeypatch):
+    from app.api.v1 import chat, novel
+
+    closed = []
+
+    async def chunks(messages):
+        try:
+            await asyncio.Event().wait()
+            yield SimpleNamespace(content="不会到达")
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(novel, "create_llm", lambda *a, **kw: SimpleNamespace(astream=chunks))
+    monkeypatch.setattr(chat, "_SSE_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(chat.settings, "agent_stream_max_seconds", 0.25)
+    events = asyncio.run(_collect_synopsis_events())
+    assert events[:-1] and all(e["type"] == "heartbeat" for e in events[:-1])
+    assert (events[-1]["type"], events[-1]["content"]) == ("error", "Stream time limit exceeded")
+    assert closed == [True]

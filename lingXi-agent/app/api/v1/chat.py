@@ -28,6 +28,7 @@ from app.api.dependencies import (
     create_agent_context,
     create_llm,
     delete_agent_thread,
+    resolve_checkpoint_thread,
     get_agent,
     get_memory_service,
     get_request_id,
@@ -319,7 +320,7 @@ def _public_thread_id(
     return request.thread_id or request_id
 
 
-def _build_agent_config(
+async def _build_agent_config(
     request: ChatRequest | ActionResumeRequest,
     *,
     request_id: str,
@@ -328,7 +329,11 @@ def _build_agent_config(
 
     public_thread_id = _public_thread_id(request, request_id)
     user_namespace = request.user_id or "anonymous"
-    internal_thread_id = checkpoint_thread_id(user_namespace, public_thread_id)
+    internal_thread_id = (
+        await resolve_checkpoint_thread(user_namespace, public_thread_id, "chat")
+        if request.thread_id is not None
+        else checkpoint_thread_id(user_namespace, public_thread_id, "chat")
+    )
     return {
         "recursion_limit": get_recursion_limit(request.max_iterations),
         "configurable": {"thread_id": internal_thread_id},
@@ -688,7 +693,7 @@ async def chat_invoke(
         result = await agent.ainvoke(
             _build_agent_input(request),
             config=with_trace(
-                _build_agent_config(request, request_id=request_id),
+                await _build_agent_config(request, request_id=request_id),
                 "generate-chat-response",
                 user_id=request.user_id or "",
                 thread_id=public_thread_id,
@@ -1265,13 +1270,12 @@ async def _stream_agent_events(
             if context.model is not None
             else get_agent(checkpointed=request.thread_id is not None)
         )
+        graph_config = await _build_agent_config(request, request_id=request_id)
         agent_input: dict[str, Any] | Command
         if resume:
             assert isinstance(request, ActionResumeRequest)
             # 与恢复执行使用同一用户隔离的命名空间；证据保持生成时的历史快照语义。
-            snapshot = await agent.aget_state(
-                _build_agent_config(request, request_id=request_id)
-            )
+            snapshot = await agent.aget_state(graph_config)
             if not snapshot.next:
                 raise ValueError("当前会话没有待恢复的操作")
             for citation in _current_turn_knowledge_citations(snapshot.values.get("messages")):
@@ -1289,7 +1293,7 @@ async def _stream_agent_events(
         agent_stream = agent.astream(
             agent_input,
             config=with_trace(
-                _build_agent_config(request, request_id=request_id),
+                graph_config,
                 "generate-chat-response-stream",
                 user_id=request.user_id or "",
                 thread_id=public_thread_id,
@@ -1559,7 +1563,7 @@ async def _with_heartbeats(
     *,
     http_request: Request,
     request_id: str,
-    thread_id: str,
+    thread_id: str | None,
 ) -> AsyncGenerator[str, None]:
     """在断开连接时取消Agent工作，并保持空闲SSE连接活跃。"""
 

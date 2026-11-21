@@ -9,6 +9,10 @@ import { streamSse } from '@/api/ai'
 
 // ── 作品 ──────────────────────────────────────────────
 
+export function getNovelHistory(sessionId) {
+  return request({ url: '/novel/history', method: 'get', params: { sessionId } })
+}
+
 export function listNovelWork(query) {
   return request({
     url: '/novel/work/list',

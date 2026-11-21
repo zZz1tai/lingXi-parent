@@ -20,7 +20,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <select id="selectChatSessionList" parameterType="ChatSession" resultMap="ChatSessionResult">
         <include refid="selectChatSessionVo"/>
-        <where>  
+        <where>business_type = 'chat'
             <if test="sessionId != null and sessionId != ''"> and session_id = #{sessionId}</if>
             <if test="userId != null and userId != ''"> and user_id = #{userId}</if>
             <if test="sessionName != null and sessionName != ''"> and session_name like concat('%', #{sessionName}, '%')</if>
@@ -30,18 +30,18 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     
     <select id="selectChatSessionByUserId" parameterType="String" resultMap="ChatSessionResult">
         <include refid="selectChatSessionVo"/>
-        where user_id = #{userId}
+        where business_type = 'chat' and user_id = #{userId}
         order by created_at desc
     </select>
     
     <select id="selectChatSessionById" parameterType="Long" resultMap="ChatSessionResult">
         <include refid="selectChatSessionVo"/>
-        where id = #{id}
+        where business_type = 'chat' and id = #{id}
     </select>
     
     <select id="selectChatSessionBySessionId" parameterType="String" resultMap="ChatSessionResult">
         <include refid="selectChatSessionVo"/>
-        where session_id = #{sessionId}
+        where business_type = 'chat' and session_id = #{sessionId}
     </select>
 
     <insert id="insertChatSession" parameterType="ChatSession" useGeneratedKeys="true" keyProperty="id">
@@ -68,38 +68,38 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="sessionName != null">session_name = #{sessionName},</if>
             <if test="updateTime != null">updated_at = #{updateTime},</if>
         </trim>
-        where id = #{id}
+        where business_type = 'chat' and id = #{id}
     </update>
 
     <delete id="deleteChatSessionById" parameterType="Long">
-        delete from tb_chat_session where id = #{id}
+        delete from tb_chat_session where business_type = 'chat' and id = #{id}
     </delete>
 
     <delete id="deleteChatSessionBySessionId" parameterType="String">
-        delete from tb_chat_session where session_id = #{sessionId}
+        delete from tb_chat_session where business_type = 'chat' and session_id = #{sessionId}
     </delete>
 
     <update id="markChatSessionDeleting" parameterType="String">
         update tb_chat_session
         set status = 'DELETING', updated_at = now()
-        where session_id = #{sessionId} and status = 'ACTIVE'
+        where business_type = 'chat' and session_id = #{sessionId} and status = 'ACTIVE'
     </update>
 
     <update id="restoreChatSessionActive" parameterType="String">
         update tb_chat_session
         set status = 'ACTIVE', updated_at = now()
-        where session_id = #{sessionId} and status = 'DELETING'
+        where business_type = 'chat' and session_id = #{sessionId} and status = 'DELETING'
     </update>
 
     <delete id="deleteChatSessionByIds" parameterType="Long[]">
-        delete from tb_chat_session where id in 
+        delete from tb_chat_session where business_type = 'chat' and id in
         <foreach item="id" collection="array" open="(" separator="," close=")">
             #{id}
         </foreach>
     </delete>
     
     <select id="checkSessionNameUnique" parameterType="ChatSession" resultType="Integer">
-        select count(*) from tb_chat_session where user_id = #{userId} and session_name = #{sessionName}
+        select count(*) from tb_chat_session where business_type = 'chat' and user_id = #{userId} and session_name = #{sessionName}
         <if test="id != null"> and id &lt;&gt; #{id}</if>
     </select>
 </mapper>
