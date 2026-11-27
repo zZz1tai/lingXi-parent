@@ -1,0 +1,25 @@
+{
+  "python": {
+    "version": "3.12.10",
+    "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+    "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
+  },
+  "java": {
+    "version": "17.0.21.1+2",
+    "url": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.21.1%2B2/OpenJDK17U-jre_x64_windows_hotspot_17.0.21.1_2.zip",
+    "sha256": "739d8f2fd286dc2736d55cc8c9260980baefd275ad48cda242335bb0f08e0795",
+    "folder": "jdk-17.0.21.1+2-jre"
+  },
+  "mysql": {
+    "version": "8.0.46",
+    "url": "https://cdn.mysql.com/Downloads/MySQL-8.0/mysql-8.0.46-winx64.zip",
+    "sha256": "28e9eda019d88eff4478d811ea2110b83f02a3966be157fe91cc55def3ab0d4d",
+    "folder": "mysql-8.0.46-winx64"
+  },
+  "redis": {
+    "version": "7.2.12",
+    "url": "https://github.com/redis-windows/redis-windows/releases/download/7.2.12/Redis-7.2.12-Windows-x64-msys2.zip",
+    "sha256": "4884630d3f40eab51ca4464718ce426595b8107d8e7439e9bba196fc91456912",
+    "folder": "Redis-7.2.12-Windows-x64-msys2"
+  }
+}

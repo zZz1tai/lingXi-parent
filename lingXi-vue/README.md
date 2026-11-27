@@ -22,7 +22,8 @@ npm run dev
 - `npm test`：运行纯逻辑测试；依赖安装完成后不需要数据库或模型。
 - `npm run build:prod`：仅在需要发布 Web 产物时执行，输出 `dist/`；修改前端后不要求构建验证。
 - 生产 Web 服务器需配置 SPA 回退，并把 `/prod-api` 反向代理到 Java（去掉该前缀）；SSE 代理关闭缓冲并设置合适超时。
-- `npm run build:exe`：Windows Tauri/NSIS 打包，需要另行准备 Rust、MSVC C++ 构建工具、WebView2。前端构建由 Tauri 配置驱动；不属于浏览器开发前置条件。
+- `npm run build:exe`：先打包私有 Java/Python/MySQL/Redis 运行环境，再生成 Windows Tauri/NSIS 完整安装包。构建机需要 Rust、MSVC、JDK/Maven、Python 3.12 x64；普通用户无需安装开发环境或部署数据库。下载、数据目录、端口、自动更新及 GitHub Release 流程统一见 [根 README 的完整桌面版说明](../README.md#windows-完整桌面版无需手工部署)。
+- `npm run build:desktop`：只生成桌面前端资源，固定连接私有业务接口 `127.0.0.1:18080`；不单独生成可完整运行的 EXE。开发时仍用根 `start.ps1` 启动服务。
 
 ## 目录
 

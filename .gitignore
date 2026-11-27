@@ -42,6 +42,8 @@ tmp/
 
 # 安装包
 *.exe
+lingXi-vue/src-tauri/runtime/
+desktop/.cache/
 
 # OS
 .DS_Store

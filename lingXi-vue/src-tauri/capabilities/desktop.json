@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "主窗口允许检查并安装经过签名验证的桌面更新。",
+  "windows": ["main"],
+  "permissions": ["core:default", "updater:default"]
+}

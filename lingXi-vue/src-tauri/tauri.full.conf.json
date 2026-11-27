@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": { "runtime/": "runtime/" },
+    "windows": {
+      "webviewInstallMode": { "type": "offlineInstaller" }
+    }
+  }
+}

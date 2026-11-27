@@ -44,7 +44,8 @@ import TreeSelect from '@/components/TreeSelect'
 // 字典标签组件
 import DictTag from '@/components/DictTag'
 
-const app = createApp(App)
+// 桌面端先显示启动页，本机服务就绪后再安装路由，避免登录恢复抢先请求后端。
+const app = createApp(App, { onDesktopReady: () => app.use(router) })
 
 // 全局方法挂载
 app.config.globalProperties.useDict = useDict
@@ -66,7 +67,7 @@ app.component('ImagePreview', ImagePreview)
 app.component('RightToolbar', RightToolbar)
 app.component('Editor', Editor)
 
-app.use(router)
+if (!window.__TAURI_INTERNALS__) app.use(router)
 app.use(store)
 app.use(plugins)
 app.use(elementIcons)

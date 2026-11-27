@@ -1,6 +1,6 @@
 [package]
 name = "lingxi-ai-platform"
-version = "1.0.1"
+version = "3.8.7"
 description = "LingXi Intelligent Application Platform"
 authors = ["LingXi"]
 edition = "2021"
@@ -11,4 +11,5 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
+tauri-plugin-single-instance = "2"
 serde_json = "1"

@@ -6,6 +6,26 @@
 
 当前版本：**3.8.7**（前后端版本号保持一致）。
 
+## Windows 完整桌面版（无需手工部署）
+
+普通用户从 [GitHub Releases](https://github.com/zZz1tai/lingXi-parent/releases/latest) 下载 `LingXiAIPlatform_*_x64-setup.exe`，安装后打开应用即可。安装包内置前端、Java 17 运行环境、Python 3.12 与依赖、MySQL 8、Redis 及 WebView2 离线安装器；用户无需安装 Git、Node、Maven、Python 或数据库。
+
+每台电脑独立保存数据，程序启动时自动启动私有服务，首次运行仅初始化自己的空数据库。服务只监听 `127.0.0.1`：业务接口 `18080`、Agent `15000`、MySQL `13306`、Redis `16379`，不复用或终止电脑上已有的服务。端口冲突时桌面启动页会明确提示。
+
+数据目录为 `%LOCALAPPDATA%\com.lingxi.terminal\server`，包含 `mysql/` 数据库、`uploads/` 上传文件、`secrets.json` 本机随机凭据、`database.json` 结构标记和 `logs/` 日志。**升级时保留该目录；备份时先关闭应用，再整体备份该目录。不要只复制数据库而遗漏凭据。** 安装目录仅保存可替换的程序文件。默认系统账号来自初始化脚本，首次登录后请修改密码。
+
+应用在启动完成后、每隔六小时以及网络恢复时检查 GitHub 更新；用户确认后下载、验证签名、关闭本机服务并安装更新。下载失败不停止正在运行的服务。包含数据库结构变化的后续版本必须先提供经过验证的迁移；目前遇到不兼容结构会停止启动并保留原库，绝不重新导入初始化脚本。
+
+AI 推理仍需要联网并在模型管理中配置供应商 API Key；上传和生成资产需要 OSS。可选 Agent 配置可写入数据目录的 `agent-settings.json`（JSON 对象，例如 `OUTBOUND_ALLOWED_HOSTS`），重启应用后生效；该文件不随安装包分发，也不要提交凭据。出站白名单保持启用。以下开发部署步骤仅供源码开发、服务器部署使用。
+
+### 维护者打包与发布
+
+构建机准备本 README 的开发依赖，以及 Rust/MSVC 桌面构建工具；Python 必须为 3.12 x64。在 `lingXi-vue` 执行 `npm ci`、`npm run build:exe`。打包脚本下载 `desktop/runtime-lock.json` 中固定版本的便携运行环境并验证 SHA-256，构建 Java，收集 Python wheels；不安装系统软件，不复制开发机 `.env`、虚拟环境或知识库。第三方运行环境自带的许可证随资源保留。
+
+推荐从 GitHub Actions 手动运行 **Desktop Release**，或在同步更新前后端、Tauri/Cargo 版本后推送 `desktop-v<版本>` 标签。流水线先执行离线测试、Java 测试、完整服务首次启动/再次启动及数据保留检查，再生成带签名的 NSIS 安装包、`.sig` 和 `latest.json`，产物齐全后发布 Release。更新签名私钥存放在仓库 Actions Secret `TAURI_SIGNING_PRIVATE_KEY`；如使用密码，同时配置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。公钥位于 `tauri.conf.json`。私钥应另行安全备份，已发布后不要随意更换公钥。
+
+本地离线测试：`python -m unittest discover -s desktop -p 'test_*.py' -v`；准备好完整资源后运行 `python desktop/smoke.py lingXi-vue/src-tauri/runtime`。自检只创建临时数据库目录，不访问现有开发库。发布流水线中的前端构建用于生成用户请求的 EXE，不作为日常前端改动的验证要求。
+
 ## 系统组成
 
 ```text

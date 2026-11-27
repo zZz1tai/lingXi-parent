@@ -1,0 +1,319 @@
+"""桌面版私有服务管理器：只使用安装包内的运行环境，不连接现有数据库。"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import json
+import os
+from pathlib import Path
+import secrets
+import socket
+import subprocess
+import sys
+import threading
+import time
+import urllib.request
+
+
+PORTS = {"mysql": 13306, "redis": 16379, "agent": 15000, "java": 18080}
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def write_json(path: Path, value: dict) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+
+
+def ensure_ports_available() -> None:
+    # 不复用或终止其它程序，防止误连用户原有的数据库。
+    for name, port in PORTS.items():
+        with socket.socket() as probe:
+            if os.name == "nt":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                raise RuntimeError(f"{name} 所需的本地端口 {port} 已被占用，请关闭占用程序后重新打开。") from None
+
+
+def private_directory(directory: Path) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        directory.chmod(0o700)
+        return
+    identity = subprocess.check_output(
+        ["whoami", "/user", "/fo", "csv", "/nh"], creationflags=NO_WINDOW, text=True
+    )
+    sid = next(csv.reader([identity.strip()]))[1]
+    subprocess.run(
+        ["icacls", str(directory), "/inheritance:r", "/grant:r",
+         f"*{sid}:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, creationflags=NO_WINDOW,
+    )
+
+
+def load_secrets(directory: Path) -> dict:
+    path = directory / "secrets.json"
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    # 已有数据但丢失凭据时不能生成新密钥覆盖现场。
+    if (directory / "mysql").exists():
+        raise RuntimeError("本机数据库凭据缺失，请恢复 secrets.json 备份；程序不会重建已有数据库。")
+    value = {name: secrets.token_hex(32) for name in ("root", "database", "redis", "agent", "token")}
+    write_json(path, value)
+    return value
+
+
+def verify_schema(previous: dict | None, current_hash: str) -> bool:
+    if previous is None:
+        return True
+    if previous.get("schema_sha256") != current_hash:
+        raise RuntimeError("本版本数据库结构与本机数据不兼容，需要经过验证的数据迁移版本；已保留原数据库。")
+    return False
+
+
+class Services:
+    def __init__(self, runtime: Path, data: Path):
+        self.runtime = runtime.resolve()
+        self.data = data.resolve()
+        self.children: dict[str, subprocess.Popen] = {}
+        self.logs = []
+        self.stop = threading.Event()
+        self.secrets: dict = {}
+        self.mysql_ready = False
+        self.ready = False
+
+    def status(self, phase: str, message: str) -> None:
+        write_json(self.data / "status.json", {"phase": phase, "message": message})
+
+    def start(self, name: str, args: list, *, cwd: Path | None = None, env: dict | None = None):
+        log = (self.data / "logs" / f"{name}.log").open("ab")
+        self.logs.append(log)
+        child = subprocess.Popen(
+            [str(arg) for arg in args], cwd=cwd or self.data, env=env,
+            stdin=subprocess.DEVNULL, stdout=log, stderr=log, creationflags=NO_WINDOW,
+        )
+        self.children[name] = child
+        return child
+
+    def wait_for(self, name: str, probe, timeout: int = 120) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.stop.is_set():
+                raise RuntimeError("启动已取消。")
+            if self.children[name].poll() is not None:
+                raise RuntimeError(f"{name} 服务启动失败，请查看 {self.data / 'logs' / (name + '.log')}。")
+            try:
+                if probe():
+                    return
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+            self.stop.wait(1)
+        raise RuntimeError(f"等待 {name} 就绪超时，请查看 {self.data / 'logs'}。")
+
+    def mysql(self, sql: str, *, authenticated: bool = True, timeout: int = 120) -> str:
+        args = [str(self.runtime / "mysql/bin/mysql.exe")]
+        if authenticated:
+            args.append(f"--defaults-extra-file={self.data / 'mysql-client.cnf'}")
+        else:
+            args += ["--no-defaults", "--user=root", "--skip-password"]
+        args += ["--protocol=TCP", "--host=127.0.0.1", f"--port={PORTS['mysql']}",
+                 "--default-character-set=utf8mb4", "--batch", "--skip-column-names"]
+        result = subprocess.run(args, input=sql.encode("utf-8"), capture_output=True,
+                                timeout=timeout, creationflags=NO_WINDOW)
+        if result.returncode:
+            # SQL 错误可能回显含凭据的语句，不能写入日志或 UI。
+            raise RuntimeError("本机数据库操作失败；未覆盖已有数据。")
+        return result.stdout.decode("utf-8", errors="replace").strip()
+
+    def mysql_probe(self) -> bool:
+        try:
+            return self.mysql("SELECT 1;", timeout=3) == "1"
+        except RuntimeError:
+            try:
+                return self.mysql("SELECT 1;", authenticated=False, timeout=3) == "1"
+            except RuntimeError:
+                return False
+
+    @staticmethod
+    def http_ready(port: int, route: str, *, java: bool = False) -> bool:
+        # 环回请求不经过用户的 HTTP 代理。
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(f"http://127.0.0.1:{port}{route}", timeout=2) as response:
+            body = json.load(response)
+            return body.get("code") == 200 if java else response.status == 200
+
+    def bootstrap_mysql(self, schema_hash: str, first: bool) -> None:
+        cfg = self.data / "mysql-client.cnf"
+        cfg.write_text(f"[client]\nuser=root\npassword={self.secrets['root']}\n", encoding="utf-8")
+        mysql_data = self.data / "mysql"
+        if not mysql_data.exists():
+            self.status("starting", "首次运行：正在初始化本机数据库…")
+            result = subprocess.run(
+                [str(self.runtime / "mysql/bin/mysqld.exe"), "--no-defaults", "--initialize-insecure",
+                 f"--basedir={self.runtime / 'mysql'}", f"--datadir={mysql_data}"],
+                capture_output=True, timeout=180, creationflags=NO_WINDOW,
+            )
+            if result.returncode:
+                raise RuntimeError("本机数据库初始化失败，请检查磁盘空间和运行权限；已保留现场数据。")
+        self.start("mysql", [self.runtime / "mysql/bin/mysqld.exe", "--no-defaults",
+                             f"--basedir={self.runtime / 'mysql'}", f"--datadir={mysql_data}",
+                             "--bind-address=127.0.0.1", f"--port={PORTS['mysql']}", "--mysqlx=OFF",
+                             "--local-infile=OFF", "--character-set-server=utf8mb4",
+                             "--collation-server=utf8mb4_unicode_ci", "--console"])
+        self.wait_for("mysql", self.mysql_probe)
+        try:
+            self.mysql("SELECT 1;")
+        except RuntimeError:
+            self.mysql(f"ALTER USER 'root'@'localhost' IDENTIFIED BY '{self.secrets['root']}';",
+                       authenticated=False)
+        self.mysql_ready = True
+        if first:
+            count = self.mysql("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='dkd';")
+            if count != "0":
+                raise RuntimeError("发现未完成初始化或缺少版本标记的本机数据库。为保护数据，已停止初始化，请备份后恢复。")
+            self.mysql((self.runtime / "schema.sql").read_text(encoding="utf-8-sig"), timeout=180)
+            for host in ("localhost", "127.0.0.1"):
+                self.mysql(f"CREATE USER IF NOT EXISTS 'lingxi'@'{host}' IDENTIFIED BY '{self.secrets['database']}';"
+                           f"GRANT ALL ON dkd.* TO 'lingxi'@'{host}';")
+            write_json(self.data / "database.json", {"schema_sha256": schema_hash})
+
+    def run(self) -> None:
+        private_directory(self.data)
+        (self.data / "logs").mkdir(exist_ok=True)
+        self.status("starting", "正在检查本机运行环境…")
+        ensure_ports_available()
+        self.secrets = load_secrets(self.data)
+        schema_hash = hashlib.sha256((self.runtime / "schema.sql").read_bytes()).hexdigest()
+        marker = self.data / "database.json"
+        previous = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else None
+        first = verify_schema(previous, schema_hash)
+        self.bootstrap_mysql(schema_hash, first)
+
+        self.status("starting", "正在启动本机缓存服务…")
+        redis_data = self.data / "redis"
+        redis_data.mkdir(exist_ok=True)
+        redis_config = self.data / "redis.conf"
+        redis_config.write_text(
+            f'bind 127.0.0.1\nport {PORTS["redis"]}\nprotected-mode yes\n'
+            f'requirepass {self.secrets["redis"]}\ndir "{redis_data.as_posix()}"\n'
+            'save ""\nappendonly no\n', encoding="utf-8",
+        )
+        self.start("redis", [self.runtime / "redis/redis-server.exe", redis_config.as_posix()])
+        self.wait_for("redis", self.redis_probe)
+
+        self.status("starting", "正在启动 AI 服务…")
+        # 安装包不复制开发机 .env；本机可选配置保存在数据目录。
+        agent_env = os.environ.copy()
+        custom = self.data / "agent-settings.json"
+        if custom.exists():
+            agent_env.update({str(k): str(v) for k, v in json.loads(custom.read_text(encoding="utf-8")).items()})
+        agent_env.update(AGENT_SERVICE_API_KEY=self.secrets["agent"], HOST="127.0.0.1",
+                         PORT=str(PORTS["agent"]), DEBUG="false", PYTHONUTF8="1",
+                         AGENT_TOOL_BASE_URL=f'http://127.0.0.1:{PORTS["java"]}')
+        self.start("agent", [self.runtime / "python/python.exe", "-m", "app.run"],
+                   cwd=self.runtime / "agent", env=agent_env)
+        self.wait_for("agent", lambda: self.http_ready(PORTS["agent"], "/readyz"), timeout=180)
+
+        self.status("starting", "正在启动业务服务，首次运行可能需要几分钟…")
+        java_env = os.environ.copy()
+        # 敏感值通过环境传递，不出现在进程命令行中。
+        java_env.update(DB_PASSWORD=self.secrets["database"], REDIS_PASSWORD=self.secrets["redis"],
+                        AGENT_SERVICE_API_KEY=self.secrets["agent"], TOKEN_SECRET=self.secrets["token"],
+                        RUOYI_PROFILE=str(self.data / "uploads"))
+        config = {
+            "server.address": "127.0.0.1", "server.port": PORTS["java"],
+            "spring.data.redis.host": "127.0.0.1", "spring.data.redis.port": PORTS["redis"],
+            "spring.datasource.druid.master.url": (
+                f'jdbc:mysql://127.0.0.1:{PORTS["mysql"]}/dkd?useUnicode=true&characterEncoding=utf8'
+                '&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=GMT%2B8&allowMultiQueries=true'),
+            "spring.datasource.druid.master.username": "lingxi",
+            "spring.datasource.druid.stat-view-servlet.enabled": False,
+            "agent.base-url": f'http://127.0.0.1:{PORTS["agent"]}',
+            "video.base-url": f'http://127.0.0.1:{PORTS["agent"]}',
+            "spring.devtools.restart.enabled": False,
+            "logging.file.name": str(self.data / "logs/business.log"),
+        }
+        # JSON 在命令行属性之后、application.yml 之前生效，覆盖开发机连接地址。
+        java_env["SPRING_APPLICATION_JSON"] = json.dumps(config)
+        self.start("java", [self.runtime / "java/bin/java.exe", "-Xms128m", "-Xmx1024m",
+                            "-jar", self.runtime / "backend/lingXi-admin.jar"], env=java_env)
+        self.wait_for("java", lambda: self.http_ready(PORTS["java"], "/captchaImage", java=True), timeout=240)
+        self.ready = True
+        self.status("ready", "本机服务已就绪")
+        while not self.stop.wait(2):
+            for name, child in self.children.items():
+                if child.poll() is not None:
+                    raise RuntimeError(f"{name} 服务意外退出，请重新打开应用；日志位于 {self.data / 'logs'}。")
+
+    def redis_probe(self) -> bool:
+        # RESP 鉴权检查，不把密码交给 redis-cli 的进程参数。
+        password = self.secrets["redis"].encode("ascii")
+        with socket.create_connection(("127.0.0.1", PORTS["redis"]), timeout=2) as connection:
+            connection.sendall(b"*2\r\n$4\r\nAUTH\r\n$" + str(len(password)).encode() + b"\r\n" + password + b"\r\n")
+            return connection.recv(1024).startswith(b"+OK")
+
+    def shutdown(self) -> None:
+        self.stop.set()
+        # 先停止业务进程，最后正常关闭 MySQL，保证数据库刷盘完成。
+        for name in ("java", "agent", "redis"):
+            child = self.children.get(name)
+            if child and child.poll() is None:
+                child.terminate()
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait(timeout=5)
+        mysql = self.children.get("mysql")
+        if mysql and mysql.poll() is None:
+            if self.mysql_ready:
+                try:
+                    self.mysql("SHUTDOWN;", timeout=30)
+                except (RuntimeError, subprocess.SubprocessError):
+                    pass
+            try:
+                mysql.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                mysql.kill()
+                mysql.wait(timeout=5)
+        for log in self.logs:
+            log.close()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--runtime", required=True, type=Path)
+    parser.add_argument("--data", required=True, type=Path)
+    parser.add_argument("--smoke-test", action="store_true")
+    args = parser.parse_args()
+    services = Services(args.runtime, args.data)
+
+    # 桌面进程退出（包括崩溃）会关闭管道，管理器随即清理所有私有服务。
+    def watch_parent():
+        sys.stdin.buffer.readline()
+        services.stop.set()
+
+    threading.Thread(target=watch_parent, daemon=True).start()
+    if args.smoke_test:
+        def finish_smoke():
+            while not services.stop.wait(1):
+                if services.ready:
+                    services.stop.set()
+        threading.Thread(target=finish_smoke, daemon=True).start()
+    try:
+        services.run()
+        return 0
+    except Exception as error:
+        services.data.mkdir(parents=True, exist_ok=True)
+        services.status("error", str(error) if isinstance(error, RuntimeError) else "本机服务启动失败，请检查数据目录和运行日志。")
+        return 1
+    finally:
+        services.shutdown()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

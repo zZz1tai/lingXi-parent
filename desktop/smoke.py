@@ -1,0 +1,58 @@
+"""安装包资源的端到端自检；两次启动验证数据库不会重复初始化。"""
+
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+
+from launcher import Services, load_secrets
+
+
+runtime = Path(sys.argv[1]).resolve()
+with tempfile.TemporaryDirectory(prefix="lingxi-desktop-") as temporary:
+    data = Path(temporary) / "独立数据目录 with spaces"
+    for attempt in range(2):
+        child = subprocess.Popen(
+            [str(runtime / "python/python.exe"), str(runtime / "launcher.py"),
+             "--runtime", str(runtime), "--data", str(data)],
+            stdin=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 600
+            state = {"phase": "starting", "message": "尚无状态文件"}
+            while time.monotonic() < deadline:
+                status_file = data / "status.json"
+                if status_file.exists():
+                    state = json.loads(status_file.read_text(encoding="utf-8"))
+                if state["phase"] in ("ready", "error") or child.poll() is not None:
+                    break
+                time.sleep(1)
+            if child.returncode or state["phase"] != "ready":
+                # 不输出数据库凭据和配置文件。业务日志供 CI 排障。
+                for name in ("mysql.log", "agent.log", "java.log"):
+                    log = data / "logs" / name
+                    if log.exists():
+                        print(log.read_text(encoding="utf-8", errors="replace")[-18000:])
+                raise RuntimeError(f"第 {attempt + 1} 次桌面启动失败：{state['message']}")
+            database = Services(runtime, data)
+            database.secrets = load_secrets(data)
+            if attempt == 0:
+                database.mysql("CREATE TABLE dkd.desktop_smoke (value VARCHAR(64)); INSERT INTO dkd.desktop_smoke VALUES ('data-survives-relaunch');")
+            else:
+                assert database.mysql("SELECT value FROM dkd.desktop_smoke;") == "data-survives-relaunch"
+                database.mysql("DROP TABLE dkd.desktop_smoke;")
+        finally:
+            if child.poll() is None:
+                child.stdin.close()
+                child.wait(timeout=90)
+        # 数据库内部写入持久记录，再次启动后必须存在。
+        credentials = load_secrets(data)
+        if attempt == 0:
+            original = credentials
+            marker = (data / "database.json").read_bytes()
+        else:
+            assert credentials == original
+            assert (data / "database.json").read_bytes() == marker
+    print("完整桌面资源首次启动、再次启动、中文空格路径和正常关闭检查通过。")
