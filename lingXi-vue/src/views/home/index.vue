@@ -1,6 +1,7 @@
 <template>
   <div class="home-wrapper">
   <div class="app-container home">
+    <header class="overview-header"><div><p>业务概览</p><h1>工作台</h1><span>销售、设备与任务进度，集中查看。</span></div><router-link to="/settings">工作空间设置 <span aria-hidden="true">↗</span></router-link></header>
     <!-- 第一行：左侧主数据 + 右侧排行榜（同高） -->
     <el-row
       :gutter="24"
@@ -66,6 +67,13 @@ const chatCollapsed = ref(true)
 </script>
 
 <style scoped lang="scss">
+.overview-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: .25rem 0 2rem; }
+.overview-header p { margin: 0 0 .55rem; color: var(--lx-primary); font-size: .75rem; font-weight: 650; }
+.overview-header h1 { margin: 0; font-size: 1.85rem; letter-spacing: -.04em; font-weight: 650; }
+.overview-header span { display: inline-block; margin-top: .65rem; color: var(--lx-muted); font-size: .8rem; }
+.overview-header a { color: var(--lx-muted); font-size: .8rem; white-space: nowrap; }
+@media(max-width: 640px) { .overview-header a { display: none; } }
+
 .home-wrapper {
   position: relative;
 }
@@ -127,20 +135,7 @@ const chatCollapsed = ref(true)
     transition: all 0.28s ease;
 
     &:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 16px 36px rgba(16, 42, 67, 0.1);
-    }
-
-    /* 顶部渐变强调线 */
-    &::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 3px;
-      background: linear-gradient(90deg, var(--lx-primary), #38b2ac);
-      border-radius: 14px 14px 0 0;
+      box-shadow: var(--lx-shadow-sm);
     }
 
     .title,

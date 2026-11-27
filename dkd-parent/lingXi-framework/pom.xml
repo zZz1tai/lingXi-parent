@@ -5,7 +5,7 @@
     <parent>
         <artifactId>lingXi-parent</artifactId>
         <groupId>com.dkd</groupId>
-        <version>3.8.7</version>
+        <version>3.8.8</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 

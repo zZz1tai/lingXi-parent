@@ -6,14 +6,14 @@
 
     <groupId>com.dkd</groupId>
     <artifactId>lingXi-parent</artifactId>
-    <version>3.8.7</version>
+    <version>3.8.8</version>
 
     <name>lingXi-parent</name>
     <url>http://www.ruoyi.vip</url>
     <description>灵犀智能应用平台</description>
 
     <properties>
-        <dkd.version>3.8.7</dkd.version>
+        <dkd.version>3.8.8</dkd.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <java.version>17</java.version>

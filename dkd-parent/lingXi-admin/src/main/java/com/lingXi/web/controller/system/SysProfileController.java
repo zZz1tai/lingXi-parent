@@ -38,6 +38,12 @@ public class SysProfileController extends BaseController
     @Autowired
     private TokenService tokenService;
 
+    @Autowired(required = false)
+    private com.lingXi.system.storage.DesktopStorageService desktopStorage;
+
+    @Autowired
+    private org.dromara.x.file.storage.core.FileStorageService fileStorageService;
+
     /**
      * 个人信息
      */
@@ -121,7 +127,15 @@ public class SysProfileController extends BaseController
         if (!file.isEmpty())
         {
             LoginUser loginUser = getLoginUser();
-            String avatar = FileUploadUtils.upload(RuoYiConfig.getAvatarPath(), file, MimeTypeUtils.IMAGE_EXTENSION);
+            String avatar;
+            if (desktopStorage != null)
+            {
+                FileUploadUtils.assertAllowed(file, MimeTypeUtils.IMAGE_EXTENSION);
+                var stored = fileStorageService.of(file).setPath("avatar/").upload();
+                if (stored == null || stored.getUrl() == null) return error("头像保存失败，请检查本地存储目录");
+                avatar = stored.getUrl();
+            }
+            else avatar = FileUploadUtils.upload(RuoYiConfig.getAvatarPath(), file, MimeTypeUtils.IMAGE_EXTENSION);
             if (userService.updateUserAvatar(loginUser.getUsername(), avatar))
             {
                 AjaxResult ajax = AjaxResult.success();

@@ -1,9 +1,9 @@
 <template>
   <div class="register">
     <section class="register-brand" aria-label="灵犀智能应用平台介绍">
-      <span>LINGXI · OPERATIONS</span>
+      <span>LINGXI · WORKSPACE</span>
       <h1>创建你的灵犀账户</h1>
-      <p>一个账户连接终端、渠道、商品与任务，让团队从第一天起就在同一套数据中协作。</p>
+      <p>用一个账户连接智能对话、内容创作和日常业务，让想法自然进入工作。</p>
     </section>
     <el-form ref="registerRef" :model="registerForm" :rules="registerRules" class="register-form">
       <span class="form-eyebrow">开始使用</span>
@@ -137,10 +137,10 @@ getCode();
   padding: clamp(32px, 8vw, 128px);
   background: radial-gradient(circle at 15% 90%, rgba(20,184,166,.28), transparent 34%), #0b2539;
 }
-.register-brand { max-width: 540px; color: #fff; }
-.register-brand span, .form-eyebrow { color: #5eead4; font-size: 12px; font-weight: 700; letter-spacing: .16em; }
+.register-brand { max-width: 540px; color: var(--lx-navy); }
+.register-brand span, .form-eyebrow { color: var(--lx-primary); font-size: 12px; font-weight: 700; letter-spacing: .16em; }
 .register-brand h1 { margin: 24px 0 18px; font-size: clamp(38px, 4vw, 58px); letter-spacing: -.04em; }
-.register-brand p { color: #b9cbd8; font-size: 16px; line-height: 1.9; }
+.register-brand p { color: var(--lx-muted); font-size: 16px; line-height: 1.9; }
 
 .title {
   margin: 8px 0 28px;

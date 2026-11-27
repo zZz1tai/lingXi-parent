@@ -1,5 +1,6 @@
 <template>
   <section class="app-main">
+    <page-heading />
     <router-view v-slot="{ Component, route }">
       <transition name="fade-transform" mode="out-in">
         <keep-alive :include="tagsViewStore.cachedViews">
@@ -14,6 +15,7 @@
 <script setup>
 import iframeToggle from "./IframeToggle/index"
 import useTagsViewStore from '@/store/modules/tagsView'
+import PageHeading from './PageHeading.vue'
 
 const tagsViewStore = useTagsViewStore()
 

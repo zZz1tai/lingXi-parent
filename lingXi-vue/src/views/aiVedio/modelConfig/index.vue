@@ -1,7 +1,7 @@
 <template>
-  <div v-loading="loading" class="model-config-page">
+  <div v-loading="loading" class="model-config-page" :class="{ 'is-embedded': embedded }">
     <div class="config-shell">
-      <header class="config-header">
+      <header v-if="!embedded" class="config-header">
         <div>
           <button class="back-link" type="button" @click="router.push('/aiVedio/project')">
             <el-icon><ArrowLeft /></el-icon>
@@ -17,7 +17,7 @@
         </div>
       </header>
 
-      <section class="pipeline" aria-label="AI 视频生产管线">
+      <section v-if="!embedded" class="pipeline" aria-label="AI 视频生产管线">
         <article class="pipeline-node text-node">
           <span class="node-index">01</span>
           <el-icon><Document /></el-icon>
@@ -180,6 +180,7 @@
 import { ArrowLeft, Check, Connection, Document, Lock, Picture, Refresh, VideoCamera } from '@element-plus/icons-vue'
 import { getAiVideoModelConfig, updateAiVideoModelConfig } from '@/api/aiVedio/modelConfig'
 
+defineProps({ embedded: Boolean })
 const { proxy } = getCurrentInstance()
 const router = useRouter()
 const formRef = ref()

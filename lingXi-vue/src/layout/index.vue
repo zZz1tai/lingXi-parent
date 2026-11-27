@@ -4,11 +4,10 @@
     <sidebar v-if="!sidebar.hide" class="sidebar-container" />
     <div :class="{ hasTagsView: needTagsView, sidebarHide: sidebar.hide }" class="main-container">
       <div :class="{ 'fixed-header': fixedHeader }">
-        <navbar @setLayout="setLayout" />
+        <navbar />
         <tags-view v-if="needTagsView" />
       </div>
       <app-main />
-      <settings ref="settingRef" />
     </div>
   </div>
 </template>
@@ -16,7 +15,7 @@
 <script setup>
 import { useWindowSize } from '@vueuse/core'
 import Sidebar from './components/Sidebar/index.vue'
-import { AppMain, Navbar, Settings, TagsView } from './components'
+import { AppMain, Navbar, TagsView } from './components'
 import defaultSettings from '@/settings'
 
 import useAppStore from '@/store/modules/app'
@@ -56,10 +55,6 @@ function handleClickOutside() {
   useAppStore().closeSideBar({ withoutAnimation: false })
 }
 
-const settingRef = ref(null);
-function setLayout() {
-  settingRef.value.openSetting();
-}
 </script>
 
 <style lang="scss" scoped>

@@ -8,7 +8,7 @@
         :class="isActive(tag) ? 'active' : ''"
         :to="{ path: tag.path, query: tag.query, fullPath: tag.fullPath }"
         class="tags-view-item"
-        :style="activeStyle(tag)"
+
         @click.middle="!isAffix(tag) ? closeSelectedTag(tag) : ''"
         @contextmenu.prevent="openMenu(tag, $event)"
       >
@@ -81,13 +81,6 @@ onMounted(() => {
 
 function isActive(r) {
   return r.path === route.path
-}
-function activeStyle(tag) {
-  if (!isActive(tag)) return {};
-  return {
-    "background-color": theme.value,
-    "border-color": theme.value
-  };
 }
 function isAffix(tag) {
   return tag.meta && tag.meta.affix
@@ -246,8 +239,8 @@ function handleScroll() {
   height: 34px;
   width: 100%;
   background: #fff;
-  border-bottom: 1px solid #d8dce5;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.12), 0 0 3px 0 rgba(0, 0, 0, 0.04);
+  border-bottom: 1px solid var(--lx-border-soft);
+  box-shadow: none;
   .tags-view-wrapper {
     .tags-view-item {
       display: inline-block;
@@ -255,8 +248,9 @@ function handleScroll() {
       cursor: pointer;
       height: 26px;
       line-height: 26px;
-      border: 1px solid #d8dce5;
-      color: #495060;
+      border: 1px solid transparent;
+      border-radius: 5px;
+      color: var(--lx-muted);
       background: #fff;
       padding: 0 8px;
       font-size: 12px;
@@ -269,12 +263,13 @@ function handleScroll() {
         margin-right: 15px;
       }
       &.active {
-        background-color: #42b983;
-        color: #fff;
-        border-color: #42b983;
+        background-color: var(--lx-primary-soft);
+        color: var(--lx-primary);
+        border-color: transparent;
+        font-weight: 650;
         &::before {
           content: "";
-          background: #fff;
+          background: var(--lx-primary);
           display: inline-block;
           width: 8px;
           height: 8px;
@@ -296,7 +291,8 @@ function handleScroll() {
     font-size: 12px;
     font-weight: 400;
     color: #333;
-    box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.3);
+    box-shadow: var(--lx-shadow-md);
+    border: 1px solid var(--lx-border-soft);
     li {
       margin: 0;
       padding: 7px 16px;

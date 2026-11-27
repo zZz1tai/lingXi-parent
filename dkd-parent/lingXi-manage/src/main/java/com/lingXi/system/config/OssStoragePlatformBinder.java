@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import com.lingXi.common.utils.StringUtils;
 import com.lingXi.system.service.ISysConfigService;
@@ -23,6 +24,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * {@link SystemSecurityConfigService} 再次调用以热刷新。</p>
  */
 @Component
+@ConditionalOnProperty(name = "lingxi.desktop.enabled", havingValue = "false", matchIfMissing = true)
 public class OssStoragePlatformBinder implements ApplicationRunner
 {
     private static final Logger log = LoggerFactory.getLogger(OssStoragePlatformBinder.class);

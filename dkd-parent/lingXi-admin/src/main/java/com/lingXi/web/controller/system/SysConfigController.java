@@ -3,6 +3,7 @@ package com.lingXi.web.controller.system;
 import java.util.List;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -38,6 +39,9 @@ public class SysConfigController extends BaseController
     @Autowired
     private ISysConfigService configService;
 
+    @Value("${lingxi.desktop.enabled:false}")
+    private boolean desktop;
+
     /**
      * 判断是否为敏感配置键（AI视频模型配置或系统安全配置）。
      */
@@ -54,6 +58,7 @@ public class SysConfigController extends BaseController
     @GetMapping("/list")
     public TableDataInfo list(SysConfig config)
     {
+        config.getParams().put("hideDesktopManaged", desktop);
         startPage();
         List<SysConfig> list = configService.selectConfigList(config);
         maskSensitiveConfigs(list);
@@ -65,6 +70,7 @@ public class SysConfigController extends BaseController
     @PostMapping("/export")
     public void export(HttpServletResponse response, SysConfig config)
     {
+        config.getParams().put("hideDesktopManaged", desktop);
         List<SysConfig> list = configService.selectConfigList(config);
         maskSensitiveConfigs(list);
         ExcelUtil<SysConfig> util = new ExcelUtil<SysConfig>(SysConfig.class);

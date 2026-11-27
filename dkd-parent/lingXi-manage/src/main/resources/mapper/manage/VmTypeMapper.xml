@@ -22,7 +22,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <include refid="selectVmTypeVo"/>
         <where>  
             <if test="name != null  and name != ''"> and name like concat('%', #{name}, '%')</if>
-            <if test="model != null  and model != ''"> and model = #{model}</if>
+            <if test="model != null  and model != ''"> and model like concat('%', #{model}, '%')</if>
         </where>
     </select>
     

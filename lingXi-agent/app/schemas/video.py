@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from app.schemas.image_input import ImageInput
+
 from enum import Enum
 from typing import Annotated, Optional
 
@@ -86,7 +88,7 @@ class GenerateImageRequest(BaseModel):
         default=None,
         description="Project-requested image aspect ratio; Python applies asset rules",
     )
-    reference_image_urls: Optional[list[HttpUrlText]] = Field(
+    reference_image_urls: Optional[list[ImageInput]] = Field(
         default=None,
         max_length=5,
         description=(
@@ -167,11 +169,11 @@ class SubmitVideoRequest(BaseModel):
             "limit immediately before submission."
         ),
     )
-    image_url: Optional[HttpUrlText] = Field(
+    image_url: Optional[ImageInput] = Field(
         default=None,
         description="Optional public URL of the keyframe image",
     )
-    character_reference_image_urls: list[HttpUrlText] = Field(
+    character_reference_image_urls: list[ImageInput] = Field(
         default_factory=list,
         max_length=4,
         description=(
@@ -179,7 +181,7 @@ class SubmitVideoRequest(BaseModel):
             "multi-reference video generation must forward these without reordering."
         ),
     )
-    scene_reference_image_url: Optional[HttpUrlText] = Field(
+    scene_reference_image_url: Optional[ImageInput] = Field(
         default=None,
         description="Bound scene reference image URL",
     )

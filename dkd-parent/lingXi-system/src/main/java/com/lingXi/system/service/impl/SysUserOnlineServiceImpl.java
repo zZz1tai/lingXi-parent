@@ -24,7 +24,7 @@ public class SysUserOnlineServiceImpl implements ISysUserOnlineService
     @Override
     public SysUserOnline selectOnlineByIpaddr(String ipaddr, LoginUser user)
     {
-        if (StringUtils.equals(ipaddr, user.getIpaddr()))
+        if (StringUtils.containsIgnoreCase(user.getIpaddr(), ipaddr))
         {
             return loginUserToUserOnline(user);
         }
@@ -41,7 +41,7 @@ public class SysUserOnlineServiceImpl implements ISysUserOnlineService
     @Override
     public SysUserOnline selectOnlineByUserName(String userName, LoginUser user)
     {
-        if (StringUtils.equals(userName, user.getUsername()))
+        if (StringUtils.containsIgnoreCase(user.getUsername(), userName))
         {
             return loginUserToUserOnline(user);
         }
@@ -59,7 +59,7 @@ public class SysUserOnlineServiceImpl implements ISysUserOnlineService
     @Override
     public SysUserOnline selectOnlineByInfo(String ipaddr, String userName, LoginUser user)
     {
-        if (StringUtils.equals(ipaddr, user.getIpaddr()) && StringUtils.equals(userName, user.getUsername()))
+        if (StringUtils.containsIgnoreCase(user.getIpaddr(), ipaddr) && StringUtils.containsIgnoreCase(user.getUsername(), userName))
         {
             return loginUserToUserOnline(user);
         }

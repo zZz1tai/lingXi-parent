@@ -47,17 +47,17 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectTaskList" parameterType="Task" resultMap="TaskResult">
         <include refid="selectTaskVo"/>
         <where>  
-            <if test="taskCode != null  and taskCode != ''"> and task_code = #{taskCode}</if>
+            <if test="taskCode != null  and taskCode != ''"> and task_code like concat('%', #{taskCode}, '%')</if>
             <if test="taskStatus != null "> and task_status = #{taskStatus}</if>
             <if test="createType != null "> and create_type = #{createType}</if>
-            <if test="innerCode != null  and innerCode != ''"> and inner_code = #{innerCode}</if>
+            <if test="innerCode != null  and innerCode != ''"> and inner_code like concat('%', #{innerCode}, '%')</if>
             <if test="userId != null "> and user_id = #{userId}</if>
             <if test="userName != null  and userName != ''"> and user_name like concat('%', #{userName}, '%')</if>
             <if test="regionId != null "> and region_id = #{regionId}</if>
-            <if test="desc != null  and desc != ''"> and `desc` = #{desc}</if>
+            <if test="desc != null  and desc != ''"> and `desc` like concat('%', #{desc}, '%')</if>
             <if test="productTypeId != null "> and product_type_id = #{productTypeId}</if>
             <if test="assignorId != null "> and assignor_id = #{assignorId}</if>
-            <if test="addr != null  and addr != ''"> and addr = #{addr}</if>
+            <if test="addr != null  and addr != ''"> and addr like concat('%', #{addr}, '%')</if>
         </where>
     </select>
     
@@ -79,17 +79,17 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectTaskVoList" resultMap="TaskVoResult">
         <include refid="selectTaskVo"/>
         <where>
-            <if test="taskCode != null  and taskCode != ''"> and task_code = #{taskCode}</if>
+            <if test="taskCode != null  and taskCode != ''"> and task_code like concat('%', #{taskCode}, '%')</if>
             <if test="taskStatus != null "> and task_status = #{taskStatus}</if>
             <if test="createType != null "> and create_type = #{createType}</if>
-            <if test="innerCode != null  and innerCode != ''"> and inner_code = #{innerCode}</if>
+            <if test="innerCode != null  and innerCode != ''"> and inner_code like concat('%', #{innerCode}, '%')</if>
             <if test="userId != null "> and user_id = #{userId}</if>
             <if test="userName != null  and userName != ''"> and user_name like concat('%', #{userName}, '%')</if>
             <if test="regionId != null "> and region_id = #{regionId}</if>
-            <if test="desc != null  and desc != ''"> and `desc` = #{desc}</if>
+            <if test="desc != null  and desc != ''"> and `desc` like concat('%', #{desc}, '%')</if>
             <if test="productTypeId != null "> and product_type_id = #{productTypeId}</if>
             <if test="assignorId != null "> and assignor_id = #{assignorId}</if>
-            <if test="addr != null  and addr != ''"> and addr = #{addr}</if>
+            <if test="addr != null  and addr != ''"> and addr like concat('%', #{addr}, '%')</if>
              <if test="params.isRepair!=null and params.isRepair=='true'">
              and product_type_id in(1,3,4)
              </if>

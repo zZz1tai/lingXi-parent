@@ -34,7 +34,7 @@ public class AiChatAttachmentController {
         this.chatSessionService = chatSessionService;
     }
 
-    @Operation(summary = "上传会话附件到私有OSS")
+    @Operation(summary = "上传私有会话附件")
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public AjaxResult upload(@Validated @ModelAttribute AiChatAttachmentUploadVO request) {
         String userId = currentUserId();

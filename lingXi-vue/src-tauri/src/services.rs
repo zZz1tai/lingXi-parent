@@ -80,3 +80,24 @@ pub async fn stop_desktop_services(app: tauri::AppHandle) -> Result<(), String> 
     tauri::async_runtime::spawn_blocking(move || app.state::<LocalServices>().stop())
         .await.map_err(|_| "关闭本机服务失败".to_string())?
 }
+
+/// 使用 Windows 自带目录选择器；不执行来自页面的脚本或命令。
+#[tauri::command]
+pub async fn choose_storage_directory() -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let output = Command::new("powershell.exe")
+                .args(["-NoProfile", "-STA", "-Command",
+                    "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); Add-Type -AssemblyName System.Windows.Forms; $picker = New-Object System.Windows.Forms.FolderBrowserDialog; $picker.Description = '选择文件保存目录'; $picker.ShowNewFolderButton = $true; try { if ($picker.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($picker.SelectedPath) } } finally { $picker.Dispose() }"])
+                .creation_flags(0x08000000).output()
+                .map_err(|_| "无法打开目录选择器，请直接填写目录路径".to_string())?;
+            if !output.status.success() { return Err("无法打开目录选择器，请直接填写目录路径".to_string()); }
+            let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            Ok(if selected.is_empty() { None } else { Some(selected) })
+        }
+        #[cfg(not(windows))]
+        { Err("请直接填写目录路径".to_string()) }
+    }).await.map_err(|_| "目录选择器异常退出".to_string())?
+}

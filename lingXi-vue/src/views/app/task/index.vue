@@ -605,7 +605,7 @@ onMounted(() => {
 <style scoped lang="scss">
 .app-task-index {
   padding: 24px;
-  background: linear-gradient(135deg, #f5f7fa 0%, #e4e7ed 100%);
+  background: var(--lx-canvas);
   min-height: 100vh;
 }
 
@@ -624,18 +624,18 @@ onMounted(() => {
       margin: 0 0 8px 0;
       font-size: 28px;
       font-weight: 600;
-      color: #303133;
+      color: var(--lx-navy);
       
       .title-icon {
         font-size: 32px;
-        color: #409eff;
+        color: var(--lx-primary);
       }
     }
     
     .page-subtitle {
       margin: 0;
       font-size: 14px;
-      color: #909399;
+      color: var(--lx-muted);
     }
   }
   
@@ -707,10 +707,10 @@ onMounted(() => {
       margin-bottom: 20px;
       font-size: 16px;
       font-weight: 600;
-      color: #303133;
+      color: var(--lx-navy);
       
       .el-icon {
-        color: #409eff;
+        color: var(--lx-primary);
       }
     }
     
@@ -730,7 +730,7 @@ onMounted(() => {
           
           :deep(.el-form-item__label) {
             font-weight: 500;
-            color: #606266;
+            color: var(--lx-text);
           }
           
           &.date-range {
@@ -753,7 +753,7 @@ onMounted(() => {
           .reset-btn {
             padding: 10px 24px;
             border-radius: 8px;
-            color: #606266;
+            color: var(--lx-text);
             border-color: #dcdfe6;
           }
         }
@@ -783,7 +783,7 @@ onMounted(() => {
             }
             
             &.dot-primary {
-              background: #409eff;
+              background: var(--lx-primary);
             }
             
             &.dot-success {
@@ -813,19 +813,19 @@ onMounted(() => {
         gap: 12px;
         font-size: 18px;
         font-weight: 600;
-        color: #303133;
+        color: var(--lx-navy);
         
         .el-icon {
-          color: #409eff;
+          color: var(--lx-primary);
         }
       }
       
       .table-actions {
         .el-button {
-          color: #409eff;
+          color: var(--lx-primary);
           
           &:hover {
-            background: #f5f7fa;
+            background: var(--lx-canvas);
           }
         }
       }
@@ -857,7 +857,7 @@ onMounted(() => {
         gap: 8px;
         
         .el-icon {
-          color: #909399;
+          color: var(--lx-muted);
         }
       }
       
@@ -902,12 +902,12 @@ onMounted(() => {
           }
           
           .time-label {
-            color: #909399;
+            color: var(--lx-muted);
             min-width: 40px;
           }
           
           .time-value {
-            color: #606266;
+            color: var(--lx-text);
             flex: 1;
           }
         }
@@ -942,7 +942,7 @@ onMounted(() => {
       .custom-pagination {
         :deep(.el-pagination__total),
         :deep(.el-pagination__jump) {
-          color: #606266;
+          color: var(--lx-text);
         }
         
         :deep(.el-pagination__sizes) {
@@ -965,7 +965,7 @@ onMounted(() => {
       
       .el-dialog__title {
         font-weight: 600;
-        color: #303133;
+        color: var(--lx-navy);
       }
     }
     
@@ -990,7 +990,7 @@ onMounted(() => {
     .cancel-form {
       :deep(.el-form-item__label) {
         font-weight: 500;
-        color: #606266;
+        color: var(--lx-text);
       }
       
       .reason-textarea {
@@ -1000,7 +1000,7 @@ onMounted(() => {
           transition: all 0.3s;
           
           &:focus {
-            border-color: #409eff;
+            border-color: var(--lx-primary);
             box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.1);
           }
         }
@@ -1016,7 +1016,7 @@ onMounted(() => {
     .cancel-btn {
       padding: 10px 24px;
       border-radius: 8px;
-      color: #606266;
+      color: var(--lx-text);
       border-color: #dcdfe6;
     }
     

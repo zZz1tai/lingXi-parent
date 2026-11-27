@@ -16,7 +16,7 @@ fn main() {
             app.manage(services::LocalServices::start(app)?);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![services::desktop_status, services::stop_desktop_services])
+        .invoke_handler(tauri::generate_handler![services::desktop_status, services::stop_desktop_services, services::choose_storage_directory])
         .build(tauri::generate_context!())
         .expect("error while running LingXi Terminal");
     app.run(|app, event| {

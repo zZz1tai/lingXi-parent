@@ -74,40 +74,41 @@ function statusClass(chapter) {
 </script>
 
 <style scoped>
-.chapter-rail { display: flex; min-height: calc(100dvh - 128px); flex-direction: column; padding: 18px; border: 1px solid #273241; border-radius: 18px 10px 10px 18px; background: rgb(18 25 34 / 92%); box-shadow: inset 0 1px rgb(255 255 255 / 4%), 0 24px 70px rgb(0 0 0 / 24%); }
-.back-button { display: flex; align-items: center; gap: 8px; padding: 7px 4px 14px; border: 0; color: #8e9aaa; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
-.back-button:hover { color: #f0a15d; }
-.project-heading { display: flex; align-items: center; gap: 12px; padding: 16px 0 20px; border-top: 1px solid #202a36; border-bottom: 1px solid #202a36; }
-.project-mark { display: grid; width: 46px; height: 52px; flex: 0 0 auto; place-items: center; border-radius: 7px 15px 7px 7px; color: #f5eee8; background: radial-gradient(circle at 75% 80%, rgb(229 144 74 / 28%), transparent 44%), #283240; font-size: 20px; font-weight: 750; }
-.project-heading div { min-width: 0; }
-.project-heading small { color: #e5904a; font-size: 9px; font-weight: 700; letter-spacing: .08em; }
-.project-heading h2 { overflow: hidden; margin: 3px 0 0; color: #edf1f5; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
-.add-chapter-button { width: 100%; margin-top: 18px; border-color: #59422f; color: #efaa6d; background: rgb(229 144 74 / 7%); }
-.add-chapter-button:hover, .add-chapter-button:focus { border-color: #e5904a; color: #17120e; background: #e5904a; }
-.chapter-heading { padding: 20px 2px 13px; }
-.chapter-heading > div { display: flex; align-items: baseline; justify-content: space-between; }
-.chapter-heading span { color: #dce2e9; font-size: 14px; font-weight: 700; }
-.chapter-heading strong { color: #e5904a; font-size: 18px; }
-.chapter-heading small { color: #687587; font-size: 10px; }
-.chapter-list { display: grid; max-height: calc(100dvh - 390px); align-content: start; gap: 6px; padding-right: 3px; overflow-y: auto; }
-.chapter-list button { display: grid; grid-template-columns: 35px minmax(0, 1fr) 8px; align-items: center; gap: 10px; padding: 11px 10px; border: 1px solid transparent; border-radius: 9px; color: #dbe1e8; background: transparent; font: inherit; text-align: left; cursor: pointer; }
-.chapter-list button:hover { background: #18212b; }
-.chapter-list button.active { border-color: #4d3b2d; background: linear-gradient(90deg, rgb(229 144 74 / 13%), #18202a); box-shadow: inset 3px 0 #e5904a; }
-.chapter-no { color: #e5904a; font-family: Consolas, monospace; font-size: 13px; font-weight: 700; }
-.chapter-copy { display: grid; min-width: 0; gap: 3px; }
-.chapter-copy strong, .chapter-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chapter-copy strong { font-size: 12px; }
-.chapter-copy small { color: #748193; font-size: 9px; }
-.chapter-list i { width: 6px; height: 6px; border-radius: 50%; background: #677383; }
-.chapter-list i.is-ready { background: #77a68c; }
-.chapter-list i.is-running { background: #e5904a; box-shadow: 0 0 0 4px rgb(229 144 74 / 10%); }
-.chapter-list i.is-error { background: #d56d6d; }
-.chapter-skeleton { display: grid; gap: 8px; }
-.chapter-skeleton span { height: 58px; border-radius: 9px; background: linear-gradient(90deg, #17202a 25%, #202a36 37%, #17202a 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; }
-.rail-state { display: grid; place-items: center; gap: 6px; padding: 36px 12px; color: #aab3bf; text-align: center; }
-.rail-state span { color: #6f7b8c; font-size: 11px; line-height: 1.55; }
-.error-state strong { color: #e59a9a; }
-@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
-@media (max-width: 900px) { .chapter-rail { min-height: auto; border-radius: 15px; } .chapter-list { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 280px; } }
-@media (max-width: 620px) { .chapter-list { grid-template-columns: 1fr; max-height: 260px; } }
+.chapter-rail { display:flex; min-height:calc(100dvh - 128px); flex-direction:column; padding:18px; border:1px solid var(--lx-border); border-radius:18px 10px 10px 18px; background:var(--lx-surface); box-shadow:inset 0 1px rgb(255 255 255 / 4%), var(--lx-shadow-sm); }
+.back-button { display:flex; align-items:center; gap:8px; padding:7px 4px 14px; border:0; color:#8e9aaa; background:transparent; font:inherit; font-size:12px; cursor:pointer; }
+.back-button:hover { color:var(--lx-primary-hover); }
+.project-heading { display:flex; align-items:center; gap:12px; padding:16px 0 20px; border-top:1px solid var(--lx-border-soft); border-bottom:1px solid var(--lx-border-soft); }
+.project-mark { display:grid; width:46px; height:52px; flex:0 0 auto; place-items:center; border-radius:7px 15px 7px 7px; color:var(--lx-primary); background:radial-gradient(circle at 75% 80%, rgb(15 118 110 / 28%), transparent 44%), var(--lx-canvas); font-size:20px; font-weight:750; }
+.project-heading div { min-width:0; }
+.project-heading small { color:var(--lx-primary); font-size:11px; font-weight:700; letter-spacing:.08em; }
+.project-heading h2 { overflow:hidden; margin:3px 0 0; color:var(--lx-text); font-size:15px; text-overflow:ellipsis; white-space:nowrap; }
+.add-chapter-button { width:100%; margin-top:18px; border-color:var(--lx-primary); color:var(--lx-primary); background:rgb(15 118 110 / 7%); }
+.add-chapter-button:hover, .add-chapter-button:focus { border-color:var(--lx-primary); color:var(--lx-text); background:var(--lx-primary); }
+.chapter-heading { padding:20px 2px 13px; }
+.chapter-heading > div { display:flex; align-items:baseline; justify-content:space-between; }
+.chapter-heading span { color:var(--lx-text); font-size:14px; font-weight:700; }
+.chapter-heading strong { color:var(--lx-primary); font-size:18px; }
+.chapter-heading small { color:#687587; font-size:12px; }
+.chapter-list { display:grid; max-height:calc(100dvh - 390px); align-content:start; gap:6px; padding-right:3px; overflow-y:auto; }
+.chapter-list button { display:grid; grid-template-columns:35px minmax(0, 1fr) 8px; align-items:center; gap:10px; padding:11px 10px; border:1px solid transparent; border-radius:9px; color:var(--lx-text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
+.chapter-list button:hover { background:var(--lx-canvas); }
+.chapter-list button.active { border-color:var(--lx-primary); background:linear-gradient(90deg, rgb(15 118 110 / 13%), var(--lx-canvas)); box-shadow:inset 3px 0 var(--lx-primary); }
+.chapter-no { color:var(--lx-primary); font-family:Consolas, monospace; font-size:13px; font-weight:700; }
+.chapter-copy { display:grid; min-width:0; gap:3px; }
+.chapter-copy strong, .chapter-copy small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chapter-copy strong { font-size:12px; }
+.chapter-copy small { color:#748193; font-size:11px; }
+.chapter-list i { width:6px; height:6px; border-radius:50%; background:#677383; }
+.chapter-list i.is-ready { background:#77a68c; }
+.chapter-list i.is-running { background:var(--lx-primary); box-shadow:0 0 0 4px rgb(15 118 110 / 10%); }
+.chapter-list i.is-error { background:#d56d6d; }
+.chapter-skeleton { display:grid; gap:8px; }
+.chapter-skeleton span { height:58px; border-radius:9px; background:linear-gradient(90deg, var(--lx-canvas) 25%, var(--lx-border-soft) 37%, var(--lx-canvas) 63%); background-size:400% 100%; animation:shimmer 1.4s ease infinite; }
+.rail-state { display:grid; place-items:center; gap:6px; padding:36px 12px; color:#aab3bf; text-align:center; }
+.rail-state span { color:#6f7b8c; font-size:12px; line-height:1.55; }
+.error-state strong { color:#e59a9a; }
+@keyframes shimmer { 0% { background-position:100% 0; } 100% { background-position:0 0; } }
+@media (max-width: 900px) { .chapter-rail { min-height:auto; border-radius:15px; } .chapter-list { grid-template-columns:repeat(2, minmax(0, 1fr)); max-height:280px; } }
+@media (max-width: 620px) { .chapter-list { grid-template-columns:1fr; max-height:260px; } }
+.chapter-list button.active { background: var(--lx-primary-soft); border-color: var(--lx-border); }
 </style>

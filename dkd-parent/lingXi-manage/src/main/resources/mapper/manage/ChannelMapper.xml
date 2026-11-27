@@ -37,10 +37,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectChannelList" parameterType="Channel" resultMap="ChannelResult">
         <include refid="selectChannelVo"/>
         <where>  
-            <if test="channelCode != null  and channelCode != ''"> and channel_code = #{channelCode}</if>
+            <if test="channelCode != null  and channelCode != ''"> and channel_code like concat('%', #{channelCode}, '%')</if>
             <if test="skuId != null "> and sku_id = #{skuId}</if>
             <if test="vmId != null "> and vm_id = #{vmId}</if>
-            <if test="innerCode != null  and innerCode != ''"> and inner_code = #{innerCode}</if>
+            <if test="innerCode != null  and innerCode != ''"> and inner_code like concat('%', #{innerCode}, '%')</if>
             <if test="maxCapacity != null "> and max_capacity = #{maxCapacity}</if>
             <if test="currentCapacity != null "> and current_capacity = #{currentCapacity}</if>
             <if test="lastSupplyTime != null "> and last_supply_time = #{lastSupplyTime}</if>

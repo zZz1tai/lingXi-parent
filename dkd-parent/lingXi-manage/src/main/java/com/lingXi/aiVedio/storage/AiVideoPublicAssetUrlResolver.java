@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import com.lingXi.aiVedio.config.AiVideoStorageProperties;
 import com.lingXi.common.exception.ServiceException;
+import com.lingXi.system.storage.DesktopStorageService;
 
 /** 将本地资源路径转换为视频生成供应商可访问的公网 URL。 */
 @Component
@@ -11,6 +12,9 @@ public class AiVideoPublicAssetUrlResolver
 {
     @Autowired
     private AiVideoStorageProperties properties;
+
+    @Autowired(required = false)
+    private DesktopStorageService desktopStorage;
 
     /**
      * 将本地资源路径解析为公网可访问的完整URL。
@@ -21,6 +25,8 @@ public class AiVideoPublicAssetUrlResolver
      */
     public String resolve(String assetPath)
     {
+        if (desktopStorage != null && desktopStorage.isLocalUrl(assetPath))
+            return desktopStorage.modelImage(assetPath);
         if (assetPath == null || assetPath.trim().isEmpty())
         {
             throw new ServiceException("关键帧图片尚未转存完成");

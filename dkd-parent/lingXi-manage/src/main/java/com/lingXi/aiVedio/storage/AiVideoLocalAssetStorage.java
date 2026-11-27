@@ -18,6 +18,7 @@ import org.dromara.x.file.storage.core.FileInfo;
 import org.dromara.x.file.storage.core.FileStorageService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import com.lingXi.system.storage.DesktopStorageService;
 
 /** 将模型临时下载地址转存到当前默认文件存储平台（生产环境为阿里云 OSS）。 */
 @Component
@@ -31,6 +32,9 @@ public class AiVideoLocalAssetStorage
 
     @Autowired
     private FileStorageService fileStorageService;
+
+    @Autowired(required = false)
+    private DesktopStorageService desktopStorage;
 
     @Autowired
     private AiVideoRemoteAssetDownloader remoteAssetDownloader;
@@ -207,6 +211,8 @@ public class AiVideoLocalAssetStorage
      */
     public boolean delete(String resourcePath)
     {
+        if (desktopStorage != null && desktopStorage.isLocalUrl(resourcePath))
+            return desktopStorage.deleteUrl(resourcePath);
         return resourcePath == null || resourcePath.trim().isEmpty()
                 || fileStorageService.delete(resourcePath.trim());
     }

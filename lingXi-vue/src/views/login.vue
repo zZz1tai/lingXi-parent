@@ -1,10 +1,10 @@
 <template>
   <div class="login">
     <section class="login-brand" aria-label="灵犀智能应用平台介绍">
-      <span class="brand-mark">LINGXI · OPERATIONS</span>
-      <h1>让终端、销售与任务<br>始终保持同一节奏</h1>
-      <p>面向渠道运营团队的一体化数据工作台，快速掌握设备状态、销售趋势和执行进度。</p>
-      <div class="brand-metrics"><span><strong>实时</strong>业务洞察</span><span><strong>统一</strong>终端管理</span><span><strong>智能</strong>任务协同</span></div>
+      <span class="brand-mark">LINGXI · WORKSPACE</span>
+      <h1>你的灵感与业务，<br>在这里有序展开</h1>
+      <p>从智能对话、小说与视频创作，到日常业务管理，让思路与工作自然连接。</p>
+      <div class="brand-metrics"><span>智能对话</span><span>内容创作</span><span>业务协同</span></div>
     </section>
     <el-form ref="loginRef" :model="loginForm" :rules="loginRules" class="login-form">
       <span class="form-eyebrow">欢迎回来</span>
@@ -27,7 +27,7 @@
           <template #prefix><svg-icon icon-class="validCode" class="el-input__icon input-icon" /></template>
         </el-input>
         <div class="login-code">
-          <img :src="codeUrl" @click="getCode" class="login-code-img" />
+          <img :src="codeUrl" @click="getCode" @keydown.enter="getCode" tabindex="0" role="button" alt="验证码，点击刷新" class="login-code-img" />
         </div>
       </el-form-item>
       <el-checkbox v-model="loginForm.rememberMe" style="margin:0px 0px 25px 0px;">记住密码</el-checkbox>
@@ -153,20 +153,19 @@ getCookie();
   align-items: center;
   height: 100%;
   padding: clamp(32px, 7vw, 112px);
-  background: #0b2539;
+  background: #eff5f4;
   overflow: hidden;
   position: relative;
   &::before, &::after { content: ""; position: absolute; border-radius: 50%; filter: blur(2px); pointer-events: none; }
   &::before { width: 560px; height: 560px; left: -180px; bottom: -260px; background: radial-gradient(circle, rgba(20,184,166,.28), transparent 68%); }
   &::after { width: 640px; height: 640px; right: -260px; top: -300px; background: radial-gradient(circle, rgba(56,189,248,.16), transparent 68%); }
 }
-.login-brand { position: relative; z-index: 1; max-width: 620px; color: #fff; }
-.brand-mark, .form-eyebrow { color: #5eead4; font-size: 12px; font-weight: 700; letter-spacing: .16em; }
+.login-brand { position: relative; z-index: 1; max-width: 620px; color: var(--lx-navy); }
+.brand-mark, .form-eyebrow { color: var(--lx-primary); font-size: 12px; font-weight: 700; letter-spacing: .16em; }
 .login-brand h1 { margin: 24px 0; font-size: clamp(36px, 4vw, 60px); line-height: 1.16; letter-spacing: -.045em; text-wrap: balance; }
-.login-brand p { max-width: 540px; color: #b9cbd8; font-size: 16px; line-height: 1.9; }
-.brand-metrics { display: flex; gap: 34px; margin-top: 44px; color: #9fb5c5; }
+.login-brand p { max-width: 540px; color: var(--lx-muted); font-size: 16px; line-height: 1.9; }
+.brand-metrics { display: flex; gap: 34px; margin-top: 44px; color: var(--lx-muted); }
 .brand-metrics span { display: flex; flex-direction: column; gap: 6px; }
-.brand-metrics strong { color: #fff; font-size: 20px; }
 
 .title {
   margin: 8px 0 6px;
@@ -183,7 +182,8 @@ getCookie();
   background: #ffffff;
   width: min(440px, 100%);
   padding: 42px 42px 28px;
-  box-shadow: 0 30px 80px rgba(0, 13, 28, .3);
+  box-shadow: 0 16px 56px rgba(30, 66, 60, .07);
+  border: 1px solid rgba(15, 118, 110, .08);
 
   .el-input {
     height: 40px;
@@ -224,7 +224,7 @@ getCookie();
   bottom: 0;
   width: 100%;
   text-align: center;
-  color: #9fb5c5;
+  color: var(--lx-muted);
   font-family: Arial;
   font-size: 12px;
   letter-spacing: 1px;

@@ -62,8 +62,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectOrderList" parameterType="Order" resultMap="OrderResult">
         <include refid="selectOrderVo"/>
         <where>
-            <if test="orderNo != null  and orderNo != ''"> and order_no = #{orderNo}</if>
-            <if test="innerCode != null  and innerCode != ''"> and inner_code = #{innerCode}</if>
+            <if test="orderNo != null  and orderNo != ''"> and order_no like concat('%', #{orderNo}, '%')</if>
+            <if test="innerCode != null  and innerCode != ''"> and inner_code like concat('%', #{innerCode}, '%')</if>
             <if test="params.beginTime != null and params.beginTime != ''"><!-- 开始时间检索 -->
                 AND date_format(create_time,'%y%m%d') &gt;= date_format(#{params.beginTime},'%y%m%d')
             </if>

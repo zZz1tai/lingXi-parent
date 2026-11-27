@@ -1,7 +1,7 @@
 <template>
-  <div v-loading="loading" class="security-config-page">
+  <div v-loading="loading" class="security-config-page" :class="{ 'is-embedded': embedded }">
     <div class="config-shell">
-      <header class="config-header">
+      <header v-if="!embedded" class="config-header">
         <div>
           <button class="back-link" type="button" @click="router.push('/system/config')">
             <el-icon><ArrowLeft /></el-icon>
@@ -19,8 +19,8 @@
 
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent>
 
-        <!-- 阿里云 OSS -->
-        <section class="workspace-panel">
+        <!-- 浏览器版可配置云存储；桌面版使用本机文件。 -->
+        <section v-if="!isDesktop" class="workspace-panel">
           <div class="panel-heading">
             <div class="heading-icon oss-icon"><Upload /></div>
             <div>
@@ -115,7 +115,7 @@
         </section>
 
         <!-- Agent -->
-        <section class="workspace-panel">
+        <section v-if="!isDesktop" class="workspace-panel">
           <div class="panel-heading">
             <div class="heading-icon agent-icon"><Connection /></div>
             <div>
@@ -206,7 +206,7 @@
         </div>
         <div class="action-buttons">
           <el-button :icon="Refresh" :disabled="saving" @click="loadConfig">重新加载</el-button>
-          <el-button type="primary" :icon="Check" :loading="saving" @click="saveConfig">保存安全配置</el-button>
+          <el-button type="primary" :icon="Check" :loading="saving" @click="saveConfig">保存服务设置</el-button>
         </div>
       </footer>
     </div>
@@ -215,8 +215,10 @@
 
 <script setup name="SystemSecurityConfig">
 import { ArrowLeft, Check, Connection, Lock, Picture, Refresh, Search, Upload } from '@element-plus/icons-vue'
+import { isDesktop } from '@/store/modules/desktop'
 import { getSystemSecurityConfig, updateSystemSecurityConfig } from '@/api/system/securityConfig'
 
+defineProps({ embedded: Boolean })
 const { proxy } = getCurrentInstance()
 const router = useRouter()
 const formRef = ref()
@@ -355,16 +357,16 @@ async function saveConfig() {
   if (!valid) return
   saving.value = true
   try {
-    const payload = {
+    const payload = isDesktop ? {} : {
       ossEndpoint: form.ossEndpoint,
       ossBucketName: form.ossBucketName,
       ossDomain: form.ossDomain,
       ossBasePath: form.ossBasePath
     }
     // Only include secrets that are being edited
-    if (ossAccessKeyEditing.value) payload.ossAccessKey = form.ossAccessKey.trim()
-    if (ossSecretKeyEditing.value) payload.ossSecretKey = form.ossSecretKey.trim()
-    if (agentApiKeyEditing.value) payload.agentServiceApiKey = form.agentServiceApiKey.trim()
+    if (!isDesktop && ossAccessKeyEditing.value) payload.ossAccessKey = form.ossAccessKey.trim()
+    if (!isDesktop && ossSecretKeyEditing.value) payload.ossSecretKey = form.ossSecretKey.trim()
+    if (!isDesktop && agentApiKeyEditing.value) payload.agentServiceApiKey = form.agentServiceApiKey.trim()
     if (tavilyApiKeyEditing.value) payload.searchTavilyApiKey = form.searchTavilyApiKey.trim()
     const response = await updateSystemSecurityConfig(payload)
     applyConfig(response.data)

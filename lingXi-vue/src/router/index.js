@@ -27,6 +27,12 @@ import Layout from '@/layout'
 // 公共路由
 export const constantRoutes = [
   {
+    path: '/settings',
+    component: Layout,
+    children: [{ path: '', name: 'SettingsCenter', component: () => import('@/views/settings/index.vue'),
+      meta: { title: '设置', icon: 'system', noCache: true } }]
+  },
+  {
     path: '/redirect',
     component: Layout,
     hidden: true,
@@ -78,7 +84,7 @@ export const constantRoutes = [
     children: [
       {
         path: 'profile',
-        component: () => import('@/views/system/user/profile/index'),
+        redirect: { path: '/settings', query: { section: 'account' } },
         name: 'Profile',
         meta: { title: '个人中心', icon: 'user' }
       }
@@ -177,7 +183,7 @@ export const dynamicRoutes = [
     children: [
       {
         path: 'index',
-        component: () => import('@/views/aiVedio/modelConfig/index'),
+        redirect: { path: '/settings', query: { section: 'models' } },
         name: 'AiVedioModelConfig',
         meta: { title: 'AI模型配置', activeMenu: '/aiVedio/project' }
       }
@@ -219,7 +225,7 @@ export const dynamicRoutes = [
     children: [
       {
         path: 'index',
-        component: () => import('@/views/system/securityConfig/index'),
+        redirect: { path: '/settings', query: { section: 'services' } },
         name: 'SystemSecurityConfig',
         meta: { title: '系统安全配置', activeMenu: '/system/config' }
       }

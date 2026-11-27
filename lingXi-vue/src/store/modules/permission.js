@@ -1,4 +1,5 @@
 import auth from '@/plugins/auth'
+import { settingsTarget } from '@/utils/settingsNavigation'
 import router, { constantRoutes, dynamicRoutes } from '@/router'
 import { getRouters } from '@/api/menu'
 import Layout from '@/layout/index'
@@ -56,6 +57,14 @@ const usePermissionStore = defineStore(
 // 遍历后台传来的路由字符串，转换为组件对象
 function filterAsyncRouter(asyncRouterMap, lastRouter = false, type = false) {
   return asyncRouterMap.filter(route => {
+    const target = settingsTarget(route.component)
+    if (target) {
+      route.hidden = true
+      route.redirect = target
+      delete route.component
+      delete route.children
+      return true
+    }
     if (type && route.children) {
       route.children = filterChildren(route.children)
     }

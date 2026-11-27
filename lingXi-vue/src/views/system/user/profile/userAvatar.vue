@@ -126,7 +126,7 @@ function uploadImg() {
     formData.append("avatarfile", data, options.filename);
     uploadAvatar(formData).then(response => {
       open.value = false;
-      options.img = import.meta.env.VITE_APP_BASE_API + response.imgUrl;
+      options.img = /^https?:\/\//i.test(response.imgUrl) ? response.imgUrl : import.meta.env.VITE_APP_BASE_API + response.imgUrl;
       userStore.avatar = options.img;
       proxy.$modal.msgSuccess("修改成功");
       visible.value = false;

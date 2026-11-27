@@ -295,3 +295,7 @@ Java 侧编译：
 cd ../dkd-parent
 mvn -pl lingXi-manage -am -DskipTests compile
 ```
+
+### 桌面图片输入
+
+桌面版由 Java 从受控的本地文件目录读取参考图，以 `data:image/...;base64,...` 传入 OCR、聊天和图片/视频生成接口；Python 不读取业务文件目录。图片数据限制为 20MB，远程 HTTP 图片 URL 保持兼容；供应商出站主机白名单仍由 `OUTBOUND_ALLOWED_HOSTS` 限制。文件最终由 Java 存回本机，浏览器部署可继续使用 OSS。

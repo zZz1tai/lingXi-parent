@@ -45,6 +45,9 @@ public class CommonController
     @Autowired
     private FileStorageService fileStorageService;//注入实列
 
+    @Autowired(required = false)
+    private com.lingXi.system.storage.DesktopStorageService desktopStorage;
+
     /**
      * 通用下载请求
      * 
@@ -133,8 +136,19 @@ public class CommonController
             for (MultipartFile file : files)
             {
                 // 上传并返回新文件名称
-                String fileName = FileUploadUtils.upload(filePath, file);
-                String url = serverConfig.getUrl() + fileName;
+                String fileName;
+                String url;
+                if (desktopStorage != null)
+                {
+                    FileInfo stored = fileStorageService.of(file).setPath("upload/").upload();
+                    if (stored == null || stored.getUrl() == null) throw new IllegalStateException("本地文件保存失败");
+                    fileName = url = stored.getUrl();
+                }
+                else
+                {
+                    fileName = FileUploadUtils.upload(filePath, file);
+                    url = serverConfig.getUrl() + fileName;
+                }
                 urls.add(url);
                 fileNames.add(fileName);
                 newFileNames.add(FileUtils.getName(fileName));

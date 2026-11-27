@@ -2073,7 +2073,7 @@ dependencies = [
 
 [[package]]
 name = "lingxi-ai-platform"
-version = "3.8.7"
+version = "3.8.8"
 dependencies = [
  "serde_json",
  "tauri",

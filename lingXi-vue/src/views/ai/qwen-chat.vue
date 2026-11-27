@@ -14,7 +14,7 @@
               circle
               aria-label="管理回答偏好"
               title="管理回答偏好"
-              @click="openMemoryDialog"
+              @click="router.push('/settings?section=assistant')"
             >
               <el-icon><Collection /></el-icon>
             </el-button>
@@ -625,75 +625,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog
-      v-model="memoryDialogVisible"
-      title="回答偏好"
-      width="460px"
-      align-center
-    >
-      <div class="memory-dialog" v-loading="memoryLoading">
-        <p class="memory-intro">
-          这些偏好会跨对话生效。这里只保存选项值，不保存聊天原文、权限或实时业务数据。
-          已保存的偏好如需恢复默认，可将该项选为"保持默认"；全部重置请使用"清空偏好"。
-        </p>
-        <el-alert
-          v-if="!memoryEnabled && !memoryLoading"
-          title="长期偏好当前未启用"
-          description="管理员启用长期 Store 后即可使用。"
-          type="info"
-          :closable="false"
-          show-icon
-        />
-        <el-form v-else label-position="top" class="memory-form">
-          <el-form-item label="回答篇幅">
-            <el-select v-model="memoryForm.answer_length" placeholder="保持默认" clearable>
-              <el-option label="保持默认" value="" />
-              <el-option label="简短" value="short" />
-              <el-option label="均衡" value="balanced" />
-              <el-option label="详细" value="detailed" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="回答结构">
-            <el-select v-model="memoryForm.answer_structure" placeholder="保持默认" clearable>
-              <el-option label="保持默认" value="" />
-              <el-option label="结论优先" value="conclusion_first" />
-              <el-option label="自然组织" value="natural" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="数字格式">
-            <el-select v-model="memoryForm.number_format" placeholder="保持默认" clearable>
-              <el-option label="保持默认" value="" />
-              <el-option label="保留两位小数" value="two_decimals" />
-              <el-option label="按内容自适应" value="adaptive" />
-            </el-select>
-          </el-form-item>
-        </el-form>
-      </div>
-      <template #footer>
-        <span class="dialog-footer memory-footer">
-          <el-button
-            v-if="memoryEnabled"
-            type="danger"
-            plain
-            :disabled="memorySaving"
-            @click="clearMemories"
-          >
-            清空偏好
-          </el-button>
-          <span class="footer-spacer"></span>
-          <el-button @click="memoryDialogVisible = false">关闭</el-button>
-          <el-button
-            type="primary"
-            :loading="memorySaving"
-            :disabled="!memoryEnabled"
-            @click="saveMemories"
-          >
-            保存偏好
-          </el-button>
-        </span>
-      </template>
-    </el-dialog>
-
     <!-- AI 生成图片放大预览浮层：先显示低清缩略图，原图加载完成后淡入 -->
     <teleport to="body">
       <Transition name="media-viewer-fade">
@@ -777,15 +708,12 @@ import {
   Download
 } from '@element-plus/icons-vue';
 import {
-  clearLongTermMemories,
   createSession,
   deleteAiAttachment,
   deleteSessionById,
   generateSmartQuestions,
   getChatHistory,
-  getLongTermMemories,
   getSessions,
-  updateLongTermPreference,
   updateSession,
   uploadAiAttachment
 } from '@/api/ai';
@@ -925,6 +853,7 @@ const renderMarkdown = (content) => {
 };
 
 // 聊天相关状态
+const router = useRouter();
 const message = ref('');
 const history = ref([]);
 const historyLoading = ref(false);
@@ -960,16 +889,6 @@ let quickVideoPollGeneration = 0;
 const smartQuestions = ref([]);
 const smartQuestionsLoader = createLatestSingleFlight();
 const validQuestions = ref([]);
-const memoryDialogVisible = ref(false);
-const memoryLoading = ref(false);
-const memorySaving = ref(false);
-const memoryEnabled = ref(false);
-const memoryForm = ref({
-  answer_length: '',
-  answer_structure: '',
-  number_format: ''
-});
-
 // 计算是否有有效的快捷提问
 const hasValidQuestions = computed(() => {
   validQuestions.value = smartQuestions.value.filter(question => {
@@ -1653,83 +1572,6 @@ const handleActionDecision = async (item, decision) => {
   }
 };
 
-const loadMemories = async () => {
-  memoryLoading.value = true;
-  try {
-    const response = await getLongTermMemories();
-    const data = response.data || {};
-    memoryEnabled.value = Boolean(data.enabled);
-    memoryForm.value = {
-      answer_length: '',
-      answer_structure: '',
-      number_format: ''
-    };
-    for (const item of data.items || []) {
-      if (Object.prototype.hasOwnProperty.call(memoryForm.value, item.preference)) {
-        memoryForm.value[item.preference] = item.value;
-      }
-    }
-  } catch (err) {
-    memoryEnabled.value = false;
-    ElMessage.error('获取回答偏好失败：' + (err?.msg || err?.message || '未知错误'));
-  } finally {
-    memoryLoading.value = false;
-  }
-};
-
-const openMemoryDialog = async () => {
-  memoryDialogVisible.value = true;
-  await loadMemories();
-};
-
-const saveMemories = async () => {
-  const entries = Object.entries(memoryForm.value).filter(([, value]) => value);
-  if (!entries.length) {
-    ElMessage.info('请选择至少一项偏好');
-    return;
-  }
-  memorySaving.value = true;
-  try {
-    await Promise.all(
-      entries.map(([preference, value]) => updateLongTermPreference(preference, value))
-    );
-    ElMessage.success('回答偏好已保存');
-    await loadMemories();
-  } catch (err) {
-    ElMessage.error('保存回答偏好失败：' + (err?.msg || err?.message || '未知错误'));
-  } finally {
-    memorySaving.value = false;
-  }
-};
-
-const clearMemories = async () => {
-  try {
-    await ElMessageBox.confirm(
-      '清空后，新对话将不再应用这些回答偏好。',
-      '清空回答偏好',
-      {
-        confirmButtonText: '清空',
-        cancelButtonText: '取消',
-        type: 'warning'
-      }
-    );
-    memorySaving.value = true;
-    await clearLongTermMemories();
-    memoryForm.value = {
-      answer_length: '',
-      answer_structure: '',
-      number_format: ''
-    };
-    ElMessage.success('回答偏好已清空');
-  } catch (err) {
-    if (err !== 'cancel') {
-      ElMessage.error('清空回答偏好失败：' + (err?.msg || err?.message || '未知错误'));
-    }
-  } finally {
-    memorySaving.value = false;
-  }
-};
-
 // 发送消息
 const sendMessage = async () => {
   const content = message.value.trim();
@@ -2078,10 +1920,7 @@ onBeforeUnmount(() => {
 .input-draft-status { margin: 4px 12px; color: var(--el-text-color-secondary); font-size: 12px; }
 .ai-chat-page {
   height: 100dvh;
-  background:
-    radial-gradient(900px 480px at 88% -12%, rgba(15, 118, 110, 0.12), transparent 62%),
-    radial-gradient(760px 420px at -8% 112%, rgba(13, 148, 136, 0.09), transparent 60%),
-    var(--lx-canvas);
+  background: var(--lx-canvas);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2123,8 +1962,8 @@ onBeforeUnmount(() => {
         padding: 7px;
         border-radius: 12px;
         object-fit: contain;
-        background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
-        box-shadow: 0 6px 14px rgba(15, 118, 110, 0.22);
+        background: var(--lx-primary);
+        box-shadow: none;
       }
 
       .logo-text {
@@ -2153,7 +1992,7 @@ onBeforeUnmount(() => {
     height: 44px;
     margin: 0 6px 20px;
     border-radius: 12px;
-    background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+    background: var(--lx-primary);
     border: none;
     color: white;
     font-weight: 600;
@@ -2253,7 +2092,7 @@ onBeforeUnmount(() => {
         border-color: color-mix(in srgb, var(--seed-primary) 22%, var(--seed-surface));
 
         .session-icon {
-          background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+          background: var(--lx-primary);
           color: white;
           box-shadow: 0 4px 10px rgba(15, 118, 110, 0.25);
         }
@@ -2918,7 +2757,7 @@ onBeforeUnmount(() => {
   }
 
   .user-bubble {
-    background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+    background: var(--lx-primary);
     color: white;
     border-radius: 16px 16px 4px 16px;
     box-shadow: 0 4px 14px rgba(15, 118, 110, 0.18);
@@ -3189,7 +3028,7 @@ onBeforeUnmount(() => {
         padding: 0 18px;
         border: none;
         border-radius: 10px;
-        background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+        background: var(--lx-primary);
         color: white;
         font-size: 13.5px;
         font-weight: 600;
@@ -3218,41 +3057,6 @@ onBeforeUnmount(() => {
 
 .rename-dialog {
   padding: 8px 0;
-}
-
-.memory-dialog {
-  min-height: 220px;
-
-  .memory-intro {
-    margin: 0 0 18px;
-    color: #64748b;
-    font-size: 13px;
-    line-height: 1.65;
-  }
-
-  .memory-form {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2px 14px;
-
-    :deep(.el-form-item:last-child) {
-      grid-column: 1 / -1;
-    }
-
-    :deep(.el-select) {
-      width: 100%;
-    }
-  }
-}
-
-.memory-footer {
-  display: flex;
-  width: 100%;
-  align-items: center;
-
-  .footer-spacer {
-    flex: 1;
-  }
 }
 
 /* 动画 */
@@ -3345,7 +3149,7 @@ onBeforeUnmount(() => {
   flex: none;
   place-items: center;
   color: white;
-  background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+  background: var(--lx-primary);
   border-radius: 10px;
   box-shadow: 0 5px 14px rgba(15, 118, 110, 0.22);
   font-size: 17px;
@@ -3693,7 +3497,7 @@ onBeforeUnmount(() => {
 
 .quick-video-submit {
   min-width: 112px;
-  background: linear-gradient(135deg, var(--seed-primary), var(--seed-accent));
+  background: var(--lx-primary);
   border: none;
 }
 
@@ -3809,13 +3613,7 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr !important;
   }
 
-  .memory-dialog .memory-form {
-    grid-template-columns: 1fr;
 
-    :deep(.el-form-item:last-child) {
-      grid-column: auto;
-    }
-  }
 
   .quick-video-inline {
     margin-right: 4px;

@@ -93,7 +93,7 @@
                 v-hasPermi="['system:config:remove']"
              >刷新缓存</el-button>
           </el-col>
-          <el-col :span="1.5">
+          <el-col v-if="!embedded" :span="1.5">
              <el-button
                 type="warning"
                 plain
@@ -176,6 +176,7 @@
 <script setup name="Config">
 import { listConfig, getConfig, delConfig, addConfig, updateConfig, refreshCache } from "@/api/system/config";
 
+defineProps({ embedded: Boolean })
 const { proxy } = getCurrentInstance();
 const router = useRouter();
 const { sys_yes_no } = proxy.useDict("sys_yes_no");

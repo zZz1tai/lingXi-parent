@@ -41,6 +41,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectConfigList" parameterType="SysConfig" resultMap="SysConfigResult">
         <include refid="selectConfigVo"/>
         <where>
+            <if test="params.hideDesktopManaged == true">
+                AND config_key NOT LIKE 'security.oss.%'
+                AND config_key != 'security.agent.serviceApiKey'
+            </if>
 			<if test="configName != null and configName != ''">
 				AND config_name like concat('%', #{configName}, '%')
 			</if>

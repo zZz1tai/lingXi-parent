@@ -548,7 +548,7 @@ const handleUserAction = (command) => {
   }
 .shopping-page {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: var(--lx-canvas);
 }
 
 .shopping-header {
@@ -557,7 +557,8 @@ const handleUserAction = (command) => {
   align-items: center;
   padding: 16px 24px;
   background: white;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
+  border-bottom: 1px solid var(--lx-border-soft);
   margin-bottom: 24px;
 
   .page-title {
@@ -612,7 +613,8 @@ const handleUserAction = (command) => {
   background: white;
   padding: 20px;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
+  border-bottom: 1px solid var(--lx-border-soft);
   margin-bottom: 24px;
   display: flex;
   align-items: center;
@@ -659,7 +661,8 @@ const handleUserAction = (command) => {
   background: white;
   padding: 20px;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
+  border-bottom: 1px solid var(--lx-border-soft);
   margin-bottom: 24px;
 
   .loading-container {
@@ -796,7 +799,8 @@ const handleUserAction = (command) => {
   background: white;
   padding: 20px;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
+  border-bottom: 1px solid var(--lx-border-soft);
   margin-bottom: 24px;
 
   .section-header {

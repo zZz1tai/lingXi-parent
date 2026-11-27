@@ -89,7 +89,9 @@ jobs:
             Windows x64 完整桌面安装包，内含前端、Java 业务服务、Python AI 服务、MySQL、Redis 和 WebView2 离线安装器。
             安装后打开即可启动本机服务，无需另行部署数据库或安装开发环境。
             数据保存在 %LOCALAPPDATA%\com.lingxi.terminal\server；升级保留本机数据。
-            AI 推理仍需联网，并在模型管理中配置供应商 API Key；上传与生成资产需配置 OSS。
+            桌面文件直接保存在本机，无需 OSS；在统一设置中心修改文件目录、配置模型与检查更新。
+            本版修复区域搜索 SQL，统一文本模糊搜索，并更新全站界面。
+            AI 推理仍需联网，并在设置中心配置供应商 API Key。
             默认账号见根 README，首次登录后请修改密码。
           releaseDraft: true
           prerelease: false

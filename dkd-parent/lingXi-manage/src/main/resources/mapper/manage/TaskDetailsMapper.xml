@@ -23,7 +23,7 @@
         <include refid="selectTaskDetailsVo"/>
         <where>
             <if test="taskId != null ">and task_id = #{taskId}</if>
-            <if test="channelCode != null  and channelCode != ''">and channel_code = #{channelCode}</if>
+            <if test="channelCode != null  and channelCode != ''">and channel_code like concat('%', #{channelCode}, '%')</if>
             <if test="expectCapacity != null ">and expect_capacity = #{expectCapacity}</if>
             <if test="skuId != null ">and sku_id = #{skuId}</if>
             <if test="skuName != null  and skuName != ''">and sku_name like concat('%', #{skuName}, '%')</if>

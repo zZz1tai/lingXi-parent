@@ -30,6 +30,7 @@
 import { QuillEditor } from "@vueup/vue-quill";
 import "@vueup/vue-quill/dist/vue-quill.snow.css";
 import { getToken } from "@/utils/auth";
+import { isExternal } from '@/utils/validate'
 
 const { proxy } = getCurrentInstance();
 
@@ -156,7 +157,8 @@ function handleUploadSuccess(res, file) {
     // 获取光标位置
     let length = quill.selection.savedRange.index;
     // 插入图片，res.url为服务器返回的图片链接地址
-    quill.insertEmbed(length, "image", import.meta.env.VITE_APP_BASE_API + res.fileName);
+    const imageUrl = res.url || res.fileName
+    quill.insertEmbed(length, "image", isExternal(imageUrl) ? imageUrl : import.meta.env.VITE_APP_BASE_API + imageUrl);
     // 调整光标到最后
     quill.setSelection(length + 1);
   } else {

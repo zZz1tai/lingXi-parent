@@ -6,6 +6,8 @@ import json
 from enum import Enum
 from typing import Annotated, Any, Literal
 
+from app.schemas.image_input import ImageInput
+
 from pydantic import (
     AliasChoices,
     BaseModel,
@@ -131,12 +133,7 @@ class ChatAttachment(StrictRequestModel):
     )
     size: int = Field(..., ge=1, le=MAX_ATTACHMENT_BYTES)
     kind: Literal["image", "document"]
-    image_url: str | None = Field(
-        default=None,
-        min_length=8,
-        max_length=4096,
-        pattern=r"^https?://[^\s]+$",
-    )
+    image_url: ImageInput | None = None
     extracted_text: str | None = Field(
         default=None,
         min_length=1,
@@ -167,12 +164,7 @@ class ImageOcrRequest(StrictRequestModel):
         max_length=128,
         pattern=r"^image/[a-z0-9][a-z0-9.+-]*$",
     )
-    image_url: str = Field(
-        ...,
-        min_length=8,
-        max_length=4096,
-        pattern=r"^https?://[^\s]+$",
-    )
+    image_url: ImageInput
     llm_config: LLMConfig | None = None
 
 

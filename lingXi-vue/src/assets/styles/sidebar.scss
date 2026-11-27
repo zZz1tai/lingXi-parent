@@ -25,8 +25,8 @@
     left: 0;
     z-index: 1001;
     overflow: hidden;
-    border-right: 1px solid rgba(255,255,255,.06);
-    box-shadow: 10px 0 30px rgba(16,42,67,.08);
+    border-right: 1px solid var(--lx-border-soft);
+    box-shadow: none;
 
     // reset element-ui css
     .horizontal-collapse-transition {
@@ -262,4 +262,11 @@
       border-radius: 20px;
     }
   }
+}
+
+// 浅色导航与全站主色一致；深色导航保留用户的选择。
+#app .sidebar-container .theme-light {
+  .el-menu-item.is-active { color: var(--lx-primary) !important; background: var(--lx-primary-soft) !important; }
+  .el-menu-item:hover, .el-sub-menu__title:hover { background: var(--lx-canvas) !important; }
+  .nest-menu .el-menu-item, .nest-menu .el-sub-menu__title { background: transparent !important; }
 }

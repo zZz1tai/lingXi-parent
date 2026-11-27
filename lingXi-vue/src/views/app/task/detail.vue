@@ -139,7 +139,7 @@ watch(
 <style scoped>
 .app-task-detail {
   padding: 20px;
-  background-color: #f5f7fa;
+  background-color: var(--lx-canvas);
   min-height: 100vh;
 }
 

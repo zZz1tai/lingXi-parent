@@ -1,19 +1,19 @@
 // ============================================================
-// AI 小说创作工作台 · 牛皮纸风格样式系统
+// AI 小说创作工作台 · 编辑器样式系统
 // 所有类名前缀 nk-（novel kraft），避免与全局样式冲突
 // ============================================================
 
-$nk-kraft-1: #ecd9b0;
-$nk-kraft-2: #f4e8cd;
-$nk-kraft-3: #e2c99a;
-$nk-kraft-deep: #c9a265;
-$nk-kraft-dark: #a9854e;
-$nk-ink: #43301f;
-$nk-ink-soft: #6b5136;
-$nk-ink-faint: #9a815f;
-$nk-sienna: #a0562e;
-$nk-seal: #a83b2c;
-$nk-gold: #b9922c;
+$nk-kraft-1: #f7f9fa;
+$nk-kraft-2: #ffffff;
+$nk-kraft-3: #e8eef0;
+$nk-kraft-deep: #dce5e8;
+$nk-kraft-dark: #a7bac0;
+$nk-ink: #283d43;
+$nk-ink-soft: #61757d;
+$nk-ink-faint: #7e9299;
+$nk-sienna: #0f766e;
+$nk-seal: #ba4850;
+$nk-gold: #a6792c;
 
 :root {
   --nk-kraft-1: #{$nk-kraft-1};
@@ -21,63 +21,14 @@ $nk-gold: #b9922c;
   --nk-kraft-3: #{$nk-kraft-3};
   --nk-kraft-deep: #{$nk-kraft-deep};
   --nk-kraft-dark: #{$nk-kraft-dark};
-  --nk-ink: #{$nk-ink};
-  --nk-ink-soft: #{$nk-ink-soft};
+  --nk-ink: var(--lx-text);
+  --nk-ink-soft: var(--lx-muted);
   --nk-ink-faint: #{$nk-ink-faint};
-  --nk-sienna: #{$nk-sienna};
+  --nk-sienna: var(--lx-primary);
   --nk-seal: #{$nk-seal};
   --nk-gold: #{$nk-gold};
 }
 
-// ── 牛皮纸噪点纹理（SVG feTurbulence 内联） ──────────────
-@mixin nk-noise($opacity: 0.06, $blend: normal) {
-  position: relative;
-  &::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: $opacity;
-    mix-blend-mode: $blend;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
-    z-index: 0;
-  }
-  > * { position: relative; z-index: 1; }
-}
-
-@mixin nk-paper-grain($tone: light) {
-  @if $tone == deep {
-    background-color: $nk-kraft-3;
-  } @else {
-    background-color: $nk-kraft-1;
-  }
-  background-image:
-    radial-gradient(ellipse at 20% 15%, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 55%),
-    radial-gradient(ellipse at 80% 90%, rgba(160, 96, 46, 0.12) 0%, rgba(160, 96, 46, 0) 60%),
-    repeating-linear-gradient(0deg, rgba(160, 96, 46, 0.035) 0px, rgba(160, 96, 46, 0.035) 1px, transparent 1px, transparent 3px),
-    repeating-linear-gradient(90deg, rgba(160, 96, 46, 0.03) 0px, rgba(160, 96, 46, 0.03) 1px, transparent 1px, transparent 4px);
-}
-
-// ── 毛边纸缘（撕裂边） ──────────────────────────────────
-@mixin nk-deckled($side: bottom, $color: rgba(160, 96, 46, 0.28), $h: 10px) {
-  $clip: null;
-  @if $side == bottom {
-    $clip: polygon(0 0, 3% 22%, 6% 6%, 11% 30%, 16% 12%, 22% 34%, 27% 10%, 33% 28%, 39% 8%, 46% 32%, 52% 14%, 58% 30%, 64% 6%, 71% 26%, 77% 10%, 84% 32%, 90% 12%, 95% 28%, 100% 6%, 100% 100%, 0 100%);
-  } @else if $side == top {
-    $clip: polygon(0 100%, 3% 78%, 6% 94%, 11% 70%, 16% 88%, 22% 66%, 27% 90%, 33% 72%, 39% 92%, 46% 68%, 52% 86%, 58% 70%, 64% 94%, 71% 74%, 77% 90%, 84% 68%, 90% 88%, 95% 72%, 100% 94%, 100% 0, 0 0);
-  }
-  position: relative;
-  &::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    #{$side}: -#{$h};
-    height: #{$h};
-    background: $color;
-    clip-path: $clip;
-  }
-}
 
 // ════════════════════════════════════════════════════════
 // 页面容器
@@ -89,21 +40,9 @@ $nk-gold: #b9922c;
   flex-direction: column;
   overflow: hidden;
   color: var(--nk-ink);
-  font-family: 'STKaiti', 'KaiTi', 'FangSong', 'Songti SC', 'SimSun', serif;
-  @include nk-paper-grain();
-  @include nk-noise(0.055);
+  font-family: var(--el-font-family);
+  background: var(--lx-canvas);
 
-  // 桌面上一圈旧纸焦边
-  &::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 40;
-    box-shadow:
-      inset 0 0 90px rgba(90, 50, 20, 0.22),
-      inset 0 0 12px rgba(90, 50, 20, 0.18);
-  }
 }
 
 .nk-body {
@@ -132,7 +71,6 @@ $nk-gold: #b9922c;
     linear-gradient(180deg, rgba(90, 55, 26, 0.10), rgba(90, 55, 26, 0.16)),
     linear-gradient(90deg, #d9b57c, #e6c892 30%, #e0bd82 70%, #d2ab6e);
   border: 1px solid rgba(110, 72, 34, 0.45);
-  @include nk-noise(0.07);
 }
 
 .nk-rail-head {
@@ -407,7 +345,6 @@ $nk-gold: #b9922c;
   background:
     linear-gradient(180deg, rgba(90, 55, 26, 0.08), rgba(90, 55, 26, 0.14)),
     linear-gradient(90deg, #e0bd82, #ecd3a2 45%, #e3c087);
-  @include nk-noise(0.06);
 
   .nk-header-book {
     display: flex;
@@ -666,7 +603,6 @@ $nk-gold: #b9922c;
   background-image:
     radial-gradient(ellipse at 15% 10%, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 50%),
     radial-gradient(ellipse at 90% 95%, rgba(160, 96, 46, 0.1) 0%, rgba(160, 96, 46, 0) 55%);
-  @include nk-noise(0.05);
 }
 
 // 稿纸抬头
@@ -957,7 +893,7 @@ $nk-gold: #b9922c;
     flex-direction: row-reverse;
 
     .nk-msg-bubble {
-      background: linear-gradient(160deg, #ecd9b0, #dfc08e);
+      background: linear-gradient(160deg, #f7f9fa, #dfc08e);
       border: 1px solid rgba(160, 86, 46, 0.4);
       border-top-right-radius: 2px;
     }
@@ -1072,7 +1008,6 @@ $nk-gold: #b9922c;
   border: 1px solid rgba(110, 72, 34, 0.45);
   box-shadow: 0 6px 18px rgba(67, 48, 31, 0.26), inset 0 0 34px rgba(0, 0, 0, 0.08);
   background: linear-gradient(90deg, rgba(90, 55, 26, 0.08), rgba(90, 55, 26, 0.13)), linear-gradient(90deg, #e3c491, #efdcb4);
-  @include nk-noise(0.06);
 }
 
 .nk-drawer-tabs {
@@ -1387,7 +1322,7 @@ $nk-gold: #b9922c;
 .nk-dialog-paper {
   background:
     radial-gradient(ellipse at 20% 15%, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0) 55%),
-    linear-gradient(160deg, #f4e8cd, #e6cba0);
+    linear-gradient(160deg, #ffffff, #e6cba0);
   border-radius: 12px;
   border: 1px solid rgba(110, 72, 34, 0.5);
   box-shadow: 0 14px 40px rgba(67, 48, 31, 0.4);
@@ -1559,3 +1494,24 @@ $nk-gold: #b9922c;
     }
   }
 }
+
+// 工作区面板与全站一致，正文仍使用独立的阅读排版。
+.nk-page {
+  .nk-rail, .nk-stage, .nk-paper, .nk-chat, .nk-drawer {
+    background: var(--lx-surface); border-color: var(--lx-border); box-shadow: none;
+  }
+  .nk-rail { border-right: 1px solid var(--lx-border-soft); }
+  .nk-rail-new { background: var(--lx-primary); color: #fff; border: 0; border-radius: .5rem; box-shadow: none; transform: none; }
+  .nk-header { background: var(--lx-surface); border-color: var(--lx-border-soft); box-shadow: none; }
+  .nk-book { background: var(--lx-canvas); border: 1px solid transparent; border-radius: .6rem; box-shadow: none; }
+  .nk-book.is-active { background: var(--lx-primary-soft); border-color: var(--lx-primary); }
+  .nk-paper { border-radius: .75rem; }
+  .nk-clip { display: none; }
+  .nk-chat-input { background: var(--lx-surface); border-color: var(--lx-border); box-shadow: none; }
+  .nk-card, .nk-archive-card, .nk-idea-entry { background: var(--lx-surface); border-color: var(--lx-border); box-shadow: none; border-radius: .6rem; }
+  .nk-dialog-paper { background: var(--lx-surface); box-shadow: var(--lx-shadow-lg); }
+  .nk-btn { border-radius: .4rem; box-shadow: none; }
+}
+
+// 弹窗和抽屉挂载到 body，需独立继承工作空间表面。
+.nk-dialog-paper, .nk-drawer { background: var(--lx-surface); color: var(--lx-text); box-shadow: var(--lx-shadow-lg); }

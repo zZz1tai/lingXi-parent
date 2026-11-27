@@ -328,6 +328,9 @@ class Services:
                         AGENT_SERVICE_API_KEY=self.secrets["agent"], TOKEN_SECRET=self.secrets["token"],
                         RUOYI_PROFILE=str(self.data / "uploads"))
         config = {
+            "lingxi.desktop.enabled": True,
+            "lingxi.desktop.data-dir": str(self.data),
+            "lingxi.desktop.public-base-url": f'http://127.0.0.1:{PORTS["java"]}',
             "server.address": "127.0.0.1", "server.port": PORTS["java"],
             "spring.data.redis.host": "127.0.0.1", "spring.data.redis.port": PORTS["redis"],
             "spring.datasource.druid.master.url": (

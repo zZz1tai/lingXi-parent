@@ -32,7 +32,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectVendingMachineList" parameterType="VendingMachine" resultMap="VendingMachineResult">
         <include refid="selectVendingMachineVo"/>
         <where>  
-            <if test="innerCode != null  and innerCode != ''"> and inner_code = #{innerCode}</if>
+            <if test="innerCode != null  and innerCode != ''"> and inner_code like concat('%', #{innerCode}, '%')</if>
             <if test="nodeId != null "> and node_id = #{nodeId}</if>
             <if test="businessType != null "> and business_type = #{businessType}</if>
             <if test="regionId != null "> and region_id = #{regionId}</if>

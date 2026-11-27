@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.lingXi.common.exception.ServiceException;
@@ -51,8 +52,11 @@ public class SystemSecurityConfigService
     @Autowired
     private ISysConfigService sysConfigService;
 
-    @Autowired
+    @Autowired(required = false)
     private OssStoragePlatformBinder ossStoragePlatformBinder;
+
+    @Value("${lingxi.desktop.enabled:false}")
+    private boolean desktop;
 
     /**
      * 获取页面展示用的安全配置，敏感字段以掩码返回。
@@ -81,65 +85,65 @@ public class SystemSecurityConfigService
             throw new ServiceException("配置不能为空");
         }
 
-        // OSS AccessKey
-        String ossAccessKey = normalizeSecretKey(input.getOssAccessKey(), "OSS AccessKey", 8, 128);
-        String storedOssAccessKey = read(KEY_OSS_ACCESS_KEY);
-        if (ossAccessKey == null && StringUtils.isEmpty(storedOssAccessKey))
+        if (!desktop)
         {
-            throw new ServiceException("请填写 OSS AccessKey");
+            // OSS AccessKey
+            String ossAccessKey = normalizeSecretKey(input.getOssAccessKey(), "OSS AccessKey", 8, 128);
+            String storedOssAccessKey = read(KEY_OSS_ACCESS_KEY);
+            if (ossAccessKey == null && StringUtils.isEmpty(storedOssAccessKey))
+            {
+                throw new ServiceException("请填写 OSS AccessKey");
+            }
+
+            // OSS SecretKey
+            String ossSecretKey = normalizeSecretKey(input.getOssSecretKey(), "OSS SecretKey", 8, 128);
+            String storedOssSecretKey = read(KEY_OSS_SECRET_KEY);
+            if (ossSecretKey == null && StringUtils.isEmpty(storedOssSecretKey))
+            {
+                throw new ServiceException("请填写 OSS SecretKey");
+            }
+
+            // OSS Endpoint
+            String ossEndpoint = required(input.getOssEndpoint(), "OSS Endpoint").toLowerCase();
+            if (!VALID_OSS_ENDPOINTS.contains(ossEndpoint) && !ossEndpoint.endsWith(".aliyuncs.com"))
+            {
+                throw new ServiceException("OSS Endpoint 格式不正确，应为阿里云 OSS 标准 Endpoint");
+            }
+
+            // OSS BucketName
+            String ossBucketName = required(input.getOssBucketName(), "OSS BucketName");
+            if (ossBucketName.length() < 3 || ossBucketName.length() > 63)
+            {
+                throw new ServiceException("OSS BucketName 长度应在 3 到 63 个字符之间");
+            }
+            if (!ossBucketName.matches("^[a-z0-9][a-z0-9\\-]*[a-z0-9]$"))
+            {
+                throw new ServiceException("OSS BucketName 格式不正确，仅支持小写字母、数字和短横线");
+            }
+
+            // OSS Domain
+            String ossDomain = normalizeDomain(input.getOssDomain());
+
+            // OSS BasePath
+            String ossBasePath = input.getOssBasePath() != null ? input.getOssBasePath().trim() : "";
+
+            upsert(KEY_OSS_ACCESS_KEY, "阿里云OSS-AccessKey", ossAccessKey != null ? ossAccessKey : storedOssAccessKey, username);
+            upsert(KEY_OSS_SECRET_KEY, "阿里云OSS-SecretKey", ossSecretKey != null ? ossSecretKey : storedOssSecretKey, username);
+            upsert(KEY_OSS_ENDPOINT, "阿里云OSS-Endpoint", ossEndpoint, username);
+            upsert(KEY_OSS_BUCKET_NAME, "阿里云OSS-BucketName", ossBucketName, username);
+            upsert(KEY_OSS_DOMAIN, "阿里云OSS-访问域名", ossDomain, username);
+            upsert(KEY_OSS_BASE_PATH, "阿里云OSS-基础路径", ossBasePath, username);
         }
 
-        // OSS SecretKey
-        String ossSecretKey = normalizeSecretKey(input.getOssSecretKey(), "OSS SecretKey", 8, 128);
-        String storedOssSecretKey = read(KEY_OSS_SECRET_KEY);
-        if (ossSecretKey == null && StringUtils.isEmpty(storedOssSecretKey))
-        {
-            throw new ServiceException("请填写 OSS SecretKey");
-        }
-
-        // OSS Endpoint
-        String ossEndpoint = required(input.getOssEndpoint(), "OSS Endpoint").toLowerCase();
-        if (!VALID_OSS_ENDPOINTS.contains(ossEndpoint) && !ossEndpoint.endsWith(".aliyuncs.com"))
-        {
-            throw new ServiceException("OSS Endpoint 格式不正确，应为阿里云 OSS 标准 Endpoint");
-        }
-
-        // OSS BucketName
-        String ossBucketName = required(input.getOssBucketName(), "OSS BucketName");
-        if (ossBucketName.length() < 3 || ossBucketName.length() > 63)
-        {
-            throw new ServiceException("OSS BucketName 长度应在 3 到 63 个字符之间");
-        }
-        if (!ossBucketName.matches("^[a-z0-9][a-z0-9\\-]*[a-z0-9]$"))
-        {
-            throw new ServiceException("OSS BucketName 格式不正确，仅支持小写字母、数字和短横线");
-        }
-
-        // OSS Domain
-        String ossDomain = normalizeDomain(input.getOssDomain());
-
-        // OSS BasePath
-        String ossBasePath = input.getOssBasePath() != null ? input.getOssBasePath().trim() : "";
-
+        // 桌面服务密钥由本机管理器生成并同步，页面无需手工修改。
         // Agent Service API Key
         String agentApiKey = normalizeSecretKey(input.getAgentServiceApiKey(), "Agent API Key", 0, 256);
         // Agent API Key 允许为空（通过环境变量提供）
 
         // Tavily Search API Key
         String tavilyApiKey = normalizeSecretKey(input.getSearchTavilyApiKey(), "Tavily API Key", 8, 256);
-        if (tavilyApiKey == null && StringUtils.isEmpty(read(KEY_SEARCH_TAVILY_API_KEY)))
-        {
-            throw new ServiceException("请填写 Tavily API Key");
-        }
-
         // 持久化
-        upsert(KEY_OSS_ACCESS_KEY, "阿里云OSS-AccessKey", ossAccessKey != null ? ossAccessKey : storedOssAccessKey, username);
-        upsert(KEY_OSS_SECRET_KEY, "阿里云OSS-SecretKey", ossSecretKey != null ? ossSecretKey : storedOssSecretKey, username);
-        upsert(KEY_OSS_ENDPOINT, "阿里云OSS-Endpoint", ossEndpoint, username);
-        upsert(KEY_OSS_BUCKET_NAME, "阿里云OSS-BucketName", ossBucketName, username);
-        upsert(KEY_OSS_DOMAIN, "阿里云OSS-访问域名", ossDomain, username);
-        upsert(KEY_OSS_BASE_PATH, "阿里云OSS-基础路径", ossBasePath, username);
-        if (agentApiKey != null)
+        if (!desktop && agentApiKey != null)
         {
             upsert(KEY_AGENT_SERVICE_API_KEY, "Agent服务-API Key", agentApiKey, username);
         }
@@ -147,7 +151,7 @@ public class SystemSecurityConfigService
                 tavilyApiKey != null ? tavilyApiKey : read(KEY_SEARCH_TAVILY_API_KEY), username);
 
         // 配置持久化后热刷新存储平台（若 OSS 已配置完整则立即生效）
-        ossStoragePlatformBinder.bind();
+        if (ossStoragePlatformBinder != null) ossStoragePlatformBinder.bind();
 
         return getConfig();
     }
@@ -156,26 +160,30 @@ public class SystemSecurityConfigService
     {
         SystemSecurityConfig config = new SystemSecurityConfig();
 
-        // OSS AccessKey
-        String ossAccessKey = read(KEY_OSS_ACCESS_KEY);
-        config.setOssAccessKeyConfigured(StringUtils.isNotEmpty(ossAccessKey));
-        if (includeSecret) config.setOssAccessKey(ossAccessKey);
-        config.setOssAccessKeyMasked(maskSecret(ossAccessKey));
+        if (!desktop)
+        {
+            // OSS AccessKey
+            String ossAccessKey = read(KEY_OSS_ACCESS_KEY);
+            config.setOssAccessKeyConfigured(StringUtils.isNotEmpty(ossAccessKey));
+            if (includeSecret) config.setOssAccessKey(ossAccessKey);
+            config.setOssAccessKeyMasked(maskSecret(ossAccessKey));
 
-        // OSS SecretKey
-        String ossSecretKey = read(KEY_OSS_SECRET_KEY);
-        config.setOssSecretKeyConfigured(StringUtils.isNotEmpty(ossSecretKey));
-        if (includeSecret) config.setOssSecretKey(ossSecretKey);
-        config.setOssSecretKeyMasked(maskSecret(ossSecretKey));
+            // OSS SecretKey
+            String ossSecretKey = read(KEY_OSS_SECRET_KEY);
+            config.setOssSecretKeyConfigured(StringUtils.isNotEmpty(ossSecretKey));
+            if (includeSecret) config.setOssSecretKey(ossSecretKey);
+            config.setOssSecretKeyMasked(maskSecret(ossSecretKey));
 
-        // OSS 其他
-        config.setOssEndpoint(read(KEY_OSS_ENDPOINT));
-        config.setOssBucketName(read(KEY_OSS_BUCKET_NAME));
-        config.setOssDomain(read(KEY_OSS_DOMAIN));
-        config.setOssBasePath(read(KEY_OSS_BASE_PATH));
+            // OSS 其他
+            config.setOssEndpoint(read(KEY_OSS_ENDPOINT));
+            config.setOssBucketName(read(KEY_OSS_BUCKET_NAME));
+            config.setOssDomain(read(KEY_OSS_DOMAIN));
+            config.setOssBasePath(read(KEY_OSS_BASE_PATH));
+
+        }
 
         // Agent
-        String agentApiKey = read(KEY_AGENT_SERVICE_API_KEY);
+        String agentApiKey = desktop ? "" : read(KEY_AGENT_SERVICE_API_KEY);
         config.setAgentServiceApiKeyConfigured(StringUtils.isNotEmpty(agentApiKey));
         if (includeSecret) config.setAgentServiceApiKey(agentApiKey);
         config.setAgentServiceApiKeyMasked(maskSecret(agentApiKey));

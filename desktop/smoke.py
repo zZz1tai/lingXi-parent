@@ -9,6 +9,7 @@ import tempfile
 import time
 
 from launcher import Services, load_secrets
+from business_smoke import verify_region_queries
 
 
 runtime = Path(sys.argv[1]).resolve()
@@ -48,6 +49,7 @@ try:
             try:
                 database.mysql_home = database.mysql_path(data)
                 database.mysql_root = database.mysql_path(runtime / "mysql")
+                verify_region_queries(database)
                 if attempt == 0:
                     database.mysql("CREATE TABLE dkd.desktop_smoke (value VARCHAR(64)); INSERT INTO dkd.desktop_smoke VALUES ('data-survives-relaunch');")
                 else:
@@ -67,7 +69,7 @@ try:
         else:
             assert credentials == original
             assert (data / "database.json").read_bytes() == marker
-    print("完整桌面资源首次启动、再次启动、中文空格路径和正常关闭检查通过。")
+    print("完整桌面资源首次启动、再次启动、登录、区域筛选分页、本地上传、目录切换、旧文件与重启保留、签名校验和正常关闭检查通过。")
     passed = True
 finally:
     if passed and temporary.parent == Path(tempfile.gettempdir()).resolve() and temporary.name.startswith("lingxi-desktop-"):

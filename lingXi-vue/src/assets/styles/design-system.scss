@@ -1,7 +1,7 @@
 :root {
   /* ===== Seed Tokens (主题切换入口) ===== */
-  --seed-bg: #f4f7fa;
-  --seed-fg: #243b53;
+  --seed-bg: #f5f7f9;
+  --seed-fg: #283d43;
   --seed-primary: #0f766e;
   --seed-accent: #0d9488;
   --seed-surface: #ffffff;
@@ -12,11 +12,11 @@
   --lx-primary-hover: var(--seed-accent);
   --lx-primary-soft: color-mix(in srgb, var(--seed-primary) 8%, var(--seed-surface));
   --lx-primary-glow: color-mix(in srgb, var(--seed-primary) 15%, transparent);
-  --lx-navy: #102a43;
+  --lx-navy: #182f35;
   --lx-text: var(--seed-fg);
-  --lx-muted: #627d98;
-  --lx-border: #d9e2ec;
-  --lx-border-soft: #e8eef4;
+  --lx-muted: #6b7e85;
+  --lx-border: #dce5e8;
+  --lx-border-soft: #eaf0f2;
   --lx-surface: var(--seed-surface);
   --lx-canvas: var(--seed-bg);
   --lx-danger: #c2414f;
@@ -25,7 +25,7 @@
 
   /* ===== Derived: 图表与状态色 ===== */
   --lx-chart-blue: #3182ce;
-  --lx-chart-slate: #627d98;
+  --lx-chart-slate: #6b7e85;
   --lx-chart-silver: #9fb3c8;
   --lx-status-online-bg: #e6f7f1;
   --lx-status-offline-bg: #f1f5f9;
@@ -61,6 +61,9 @@
   --el-border-color: var(--lx-border);
   --el-border-color-light: var(--lx-border-soft);
   --el-text-color-primary: var(--lx-navy);
+  --el-font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  --el-box-shadow-light: 0 6px 24px rgba(30, 55, 65, .07);
+  --el-dialog-padding-primary: 0;
   --el-text-color-regular: var(--lx-text);
   --el-text-color-secondary: var(--lx-muted);
   --el-fill-color-light: color-mix(in srgb, var(--seed-bg) 60%, var(--seed-surface));
@@ -68,7 +71,7 @@
 }
 
 html { background: var(--lx-canvas); scroll-behavior: smooth; }
-body { color: var(--lx-text); background: var(--lx-canvas); font-size: 14px; }
+body { color: var(--lx-text); background: var(--lx-canvas); font-size: 14px; font-family: var(--el-font-family); }
 button, input, textarea, select { font: inherit; }
 *:focus-visible { outline: 3px solid rgba(15, 118, 110, .22); outline-offset: 2px; }
 
@@ -81,22 +84,19 @@ button, input, textarea, select { font: inherit; }
 .app-container > .el-card:first-child .el-form:first-child {
   padding: 18px 20px 2px;
   margin-bottom: 18px;
-  border: 1px solid var(--lx-border-soft);
+  border: 0;
   border-radius: var(--lx-radius);
-  background: rgba(255, 255, 255, .92);
-  box-shadow: 0 1px 2px rgba(16, 42, 67, .025);
+  background: var(--lx-surface);
+  box-shadow: none;
 }
 .app-container > .el-row { margin-bottom: 14px; }
 
 .el-button {
-  min-height: 34px;
   font-weight: 600;
   border-radius: var(--lx-radius-sm);
-  transition: transform .2s ease, color .2s ease, background-color .2s ease, border-color .2s ease, box-shadow .2s ease;
+  transition: color .16s ease, background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
 }
-.el-button:hover { transform: translateY(-1px); }
-.el-button:active { transform: translateY(0) scale(.98); }
-.el-button--primary { box-shadow: 0 6px 14px rgba(15, 118, 110, .16); }
+.el-button--primary { box-shadow: 0 2px 3px rgba(15, 118, 110, .08); }
 .el-button.is-link, .el-button.is-text { box-shadow: none; }
 
 .el-input__wrapper, .el-select__wrapper, .el-textarea__inner,
@@ -116,18 +116,22 @@ button, input, textarea, select { font: inherit; }
   overflow: hidden;
   color: var(--lx-text);
 }
-.el-table th.el-table__cell { color: #486581; font-weight: 700; letter-spacing: .01em; }
+.el-table th.el-table__cell { color: var(--lx-muted); font-weight: 600; font-size: 12px; letter-spacing: .02em; }
+.el-table td.el-table__cell { padding-block: 12px; }
+.el-table--small td.el-table__cell { padding-block: 6px; }
+.el-table--large td.el-table__cell { padding-block: 16px; }
+.el-table .el-button.is-link { font-size: 12px; font-weight: 550; }
 .el-table .cell { line-height: 1.55; }
 .el-table__inner-wrapper::before { display: none; }
 .el-pagination { justify-content: flex-end; padding: 18px 2px 0; font-variant-numeric: tabular-nums; }
 .pagination-container { margin-top: 0 !important; }
 
-.el-card { border: 1px solid var(--lx-border-soft); border-radius: var(--lx-radius); box-shadow: var(--lx-shadow-sm); }
+.el-card { border: 1px solid var(--lx-border-soft); border-radius: var(--lx-radius); box-shadow: none; }
 .el-card__header { padding: 18px 20px; border-color: var(--lx-border-soft); color: var(--lx-navy); font-weight: 700; }
 .el-dialog { border-radius: var(--lx-radius-lg); box-shadow: var(--lx-shadow-lg); overflow: hidden; }
 .el-dialog__header { padding: 22px 24px 16px; margin: 0; border-bottom: 1px solid var(--lx-border-soft); }
 .el-dialog__title { color: var(--lx-navy); font-size: 17px; font-weight: 700; }
-.el-dialog__body { padding: 22px 24px; }
+.el-dialog__body { padding: 22px 24px; max-height: min(65dvh, 48rem); overflow-y: auto; }
 .el-dialog__footer { padding: 16px 24px 22px; border-top: 1px solid var(--lx-border-soft); }
 .el-drawer__header { padding: 22px 24px; margin: 0; color: var(--lx-navy); font-weight: 700; border-bottom: 1px solid var(--lx-border-soft); }
 .el-dropdown-menu { padding: 7px; border-radius: 10px; box-shadow: var(--lx-shadow-lg); }
@@ -153,4 +157,24 @@ button, input, textarea, select { font: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* 统一管理列表的筛选、工具栏和分页节奏，不影响全屏创作工作台。 */
+.app-main:has(> .workspace-page-heading) > .app-container { min-height: calc(100dvh - 12rem); padding-top: 1.25rem; }
+.app-container > .el-form--inline { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 .75rem; }
+.app-container > .el-form--inline .el-form-item { margin-right: 0; margin-bottom: 1rem; }
+.app-container > .el-form--inline .el-form-item__label { font-size: .8rem; }
+.app-container > .el-row > .el-col { margin-bottom: .5rem; }
+.el-table .el-table__empty-block { min-height: 10rem; }
+.el-table .el-table__empty-text { color: var(--lx-muted); }
+.el-message { border-radius: .75rem; padding: 1rem 1.25rem; box-shadow: var(--lx-shadow-md); }
+.el-tabs__nav-wrap::after { height: 1px; }
+.el-tabs__active-bar { height: 2px; border-radius: 2px; }
+.el-form-item__error { line-height: 1.5; }
+.el-upload-dragger { border-radius: .75rem; background: var(--lx-canvas); }
+.el-descriptions__label { font-weight: 550; }
+.el-tree-node__content { border-radius: .4rem; }
+@media(max-width: 768px) {
+  .app-main:has(> .workspace-page-heading) > .app-container { padding: 1rem; }
+  .el-form--inline .el-form-item { width: 100%; }
 }

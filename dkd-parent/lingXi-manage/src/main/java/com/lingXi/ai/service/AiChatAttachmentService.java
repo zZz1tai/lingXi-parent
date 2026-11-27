@@ -77,6 +77,9 @@ public class AiChatAttachmentService {
     private final FileStorageService fileStorageService;
     private final AgentClient agentClient;
 
+    @Autowired(required = false)
+    private com.lingXi.system.storage.DesktopStorageService desktopStorage;
+
     public AiChatAttachmentService(
             AiChatAttachmentMapper mapper,
             FileStorageService fileStorageService) {
@@ -199,7 +202,7 @@ public class AiChatAttachmentService {
             payload.setTruncated(Boolean.TRUE.equals(attachment.getExtractTruncated()));
             payload.setExtractedText(attachment.getExtractedText());
             if ("IMAGE".equals(attachment.getAttachmentKind())) {
-                payload.setImageUrl(requireSignedUrl(attachment, 600));
+                payload.setImageUrl(modelImage(attachment));
             }
             payloads.add(payload);
         }
@@ -212,6 +215,7 @@ public class AiChatAttachmentService {
             return;
         }
         String imageUrl = signedUrl(attachment, 600);
+        if (desktopStorage != null && imageUrl != null) imageUrl = desktopStorage.modelImage(imageUrl);
         if (imageUrl == null || imageUrl.isBlank()) {
             log.warn("跳过图片 OCR：当前存储平台无法生成临时访问地址");
             return;
@@ -369,6 +373,11 @@ public class AiChatAttachmentService {
             throw new ServiceException("当前OSS平台无法生成图片临时访问地址");
         }
         return url;
+    }
+
+    private String modelImage(AiChatAttachment attachment) {
+        String url = requireSignedUrl(attachment, 600);
+        return desktopStorage == null ? url : desktopStorage.modelImage(url);
     }
 
     private String signedUrl(AiChatAttachment attachment, int expiresSeconds) {

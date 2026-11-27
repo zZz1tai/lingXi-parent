@@ -51,7 +51,7 @@ nbdist/
 !*/build/*.html
 !*/build/*.xml
 
-# 历史规则仍忽略未纳入版本库的 manage 测试，仅开放本次小说回归测试。
+# 历史规则仍忽略未纳入版本库的 manage 测试，按需开放回归测试。
 lingXi-manage/src/test/**
 !lingXi-manage/src/test/java/
 !lingXi-manage/src/test/java/com/
@@ -63,3 +63,10 @@ lingXi-manage/src/test/**
 !lingXi-manage/src/test/java/com/lingXi/aiNovel/util/
 !lingXi-manage/src/test/java/com/lingXi/aiNovel/util/NovelStorySummaryBuilderTest.java
 !lingXi-manage/src/test/java/com/lingXi/aiNovel/util/NovelWordCounterTest.java
+
+# 列表筛选与分页 SQL 的回归测试。
+!lingXi-manage/src/test/java/com/lingXi/manage/
+!lingXi-manage/src/test/java/com/lingXi/manage/mapper/
+!lingXi-manage/src/test/java/com/lingXi/manage/mapper/RegionMapperSqlTest.java
+!lingXi-manage/src/test/java/com/lingXi/mappercontract/
+!lingXi-manage/src/test/java/com/lingXi/mappercontract/FuzzySearchSqlTest.java

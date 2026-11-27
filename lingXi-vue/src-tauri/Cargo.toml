@@ -1,6 +1,6 @@
 [package]
 name = "lingxi-ai-platform"
-version = "3.8.7"
+version = "3.8.8"
 description = "LingXi Intelligent Application Platform"
 authors = ["LingXi"]
 edition = "2021"
