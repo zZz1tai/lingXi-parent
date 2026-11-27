@@ -19,6 +19,8 @@ mvn -f lingXi-admin/pom.xml -DskipTests -Dspring-boot.run.main-class=com.lingXi.
 
 HTTP 默认 `8080`。Agent 默认 `http://localhost:5000`；启用 AI 时两侧必须使用相同的 `AGENT_SERVICE_API_KEY`。模型与 OSS 凭据通过管理界面按需配置，基础登录不需要模型服务。
 
+代码生成模块自带非敏感的 `generator-defaults.properties`，干净构建不再依赖开发机的 `generator.yml`；如有本地 `generator.yml`，仍可覆盖默认值。普通用户无需部署 Java 或数据库的完整桌面安装包及发布流程，见 [根 README](../README.md#windows-完整桌面版无需手工部署)。
+
 ## 模块
 
 | 模块 | 职责 |
