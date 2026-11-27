@@ -84,6 +84,7 @@ jobs:
           args: --config src-tauri/tauri.full.conf.json --bundles nsis
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: '灵犀完整桌面版 v__VERSION__'
+          releaseCommitish: ${{ github.sha }}
           releaseBody: |
             Windows x64 完整桌面安装包，内含前端、Java 业务服务、Python AI 服务、MySQL、Redis 和 WebView2 离线安装器。
             安装后打开即可启动本机服务，无需另行部署数据库或安装开发环境。
@@ -112,7 +113,7 @@ jobs:
           if (!$release.assets.Where({ $_.name -eq 'latest.json' }) -or !$release.assets.Where({ $_.name -like '*.exe' }) -or !$release.assets.Where({ $_.name -like '*.sig' })) {
             throw 'Release 产物不完整，保留草稿，不对用户推送更新。'
           }
-          gh release edit $env:RELEASE_TAG --draft=false --latest
+          gh release edit $env:RELEASE_TAG --draft=false --latest --target $env:GITHUB_SHA
           if ($LASTEXITCODE -ne 0) { throw '发布 Release 失败' }
       - name: Retain Rust lockfile and installer for verification
         if: always()
