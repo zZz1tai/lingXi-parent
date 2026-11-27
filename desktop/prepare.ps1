@@ -82,6 +82,7 @@ try {
     Assert-Exit 'Python 运行依赖打包（打包机必须为 Python 3.12 x64）'
     @('python312.zip', '.', 'Lib/site-packages', '../agent', 'import site') | Set-Content -LiteralPath (Join-Path $runtime 'python/python312._pth') -Encoding ASCII
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'launcher.py') -Destination $runtime
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'logback.xml') -Destination $runtime
     Copy-Item -LiteralPath (Join-Path $repoRoot 'dkd-parent/sql/lingxi_all.sql') -Destination (Join-Path $runtime 'schema.sql')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'runtime-lock.json') -Destination $runtime
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'migrations') -Destination $runtime -Recurse

@@ -268,7 +268,7 @@ class Services:
             "agent.base-url": f'http://127.0.0.1:{PORTS["agent"]}',
             "video.base-url": f'http://127.0.0.1:{PORTS["agent"]}',
             "spring.devtools.restart.enabled": False,
-            "logging.file.name": str(self.data / "logs/business.log"),
+            "logging.config": (self.runtime / "logback.xml").as_uri(),
         }
         # JSON 在命令行属性之后、application.yml 之前生效，覆盖开发机连接地址。
         java_env["SPRING_APPLICATION_JSON"] = json.dumps(config)
