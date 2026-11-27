@@ -62,6 +62,17 @@ try {
         if ($remaining) { throw '关闭桌面窗口后仍存在私有服务监听。' }
     }
     Write-Host '安装包安装、原生桌面首次启动、再次启动和窗口关闭清理验收通过。'
+} catch {
+    # 仅输出临时 runner 的运行日志，不输出 secrets.json、数据库或客户端凭据文件。
+    foreach ($name in @('launcher.log', 'mysql-initialize.log', 'mysql.log', 'agent.log', 'java.log')) {
+        $logPath = Join-Path $data "logs/$name"
+        if ($name -eq 'launcher.log') { $logPath = Join-Path $data $name }
+        if (Test-Path -LiteralPath $logPath) {
+            Write-Host "运行日志：$name"
+            Get-Content -LiteralPath $logPath -Tail 180 | Write-Host
+        }
+    }
+    throw
 } finally {
     if ($process -and !$process.HasExited) { $null = [LingXiDesktopClose]::Close($process.Id); $null = $process.WaitForExit(90000) }
 }

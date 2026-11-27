@@ -1,0 +1,46 @@
+name: Verify Desktop Draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '验证并发布已构建的完整桌面草稿版本'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download complete draft installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content lingXi-vue/package.json -Raw | ConvertFrom-Json).version
+          if ($env:RELEASE_TAG -ne "desktop-v$version") { throw '草稿版本与当前应用版本不一致。' }
+          $release = gh release view $env:RELEASE_TAG --json isDraft,assets | ConvertFrom-Json
+          if (!$release.isDraft) { throw '仅允许验证尚未公开的 Release 草稿。' }
+          $destination = 'lingXi-vue/src-tauri/target/release/bundle/nsis'
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          gh release download $env:RELEASE_TAG --pattern '*-setup.exe' --pattern '*.sig' --pattern latest.json --dir $destination
+          if ($LASTEXITCODE -ne 0) { throw '下载草稿产物失败。' }
+          $manifest = Get-Content "$destination/latest.json" -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $version -or !$manifest.platforms.'windows-x86_64'.signature) { throw '更新清单版本或签名不完整。' }
+      - name: Verify installed native desktop application
+        run: ./desktop/verify-install.ps1
+      - name: Publish verified draft
+        run: |
+          gh release edit $env:RELEASE_TAG --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw '发布 Release 失败。' }
