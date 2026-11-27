@@ -88,6 +88,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot 'dkd-parent/sql/lingxi_all.sql') -Destination (Join-Path $runtime 'schema.sql')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'runtime-lock.json') -Destination $runtime
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'migrations') -Destination $runtime -Recurse
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'notices') -Destination $runtime -Recurse
     & (Join-Path $runtime 'python/python.exe') -X utf8 -c "import fastapi, uvicorn, langchain, langgraph, psycopg; from app.main import app; print('桌面 AI 运行环境检查通过')"
     Assert-Exit '嵌入式 Python 导入检查'
     Write-Host '完整桌面资源已准备完成。'
