@@ -72,6 +72,15 @@ def needs_path_alias(path: Path, encoding: str = "mbcs") -> bool:
         return True
 
 
+def normal_windows_path(value: str) -> str:
+    # Tauri 返回的规范路径可能带 Win32 扩展前缀；JRE 17 无法据此定位 jimage。
+    if value.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + value[8:]
+    if value.startswith("\\\\?\\"):
+        return value[4:]
+    return value
+
+
 def load_secrets(directory: Path) -> dict:
     path = directory / "secrets.json"
     if path.exists():
@@ -109,8 +118,8 @@ def migration_plan(previous_hash: str, target_hash: str, steps: list[dict]) -> l
 
 class Services:
     def __init__(self, runtime: Path, data: Path):
-        self.runtime = runtime.resolve()
-        self.data = data.resolve()
+        self.runtime = Path(normal_windows_path(str(runtime.resolve())))
+        self.data = Path(normal_windows_path(str(data.resolve())))
         self.children: dict[str, subprocess.Popen] = {}
         self.logs = []
         self.stop = threading.Event()

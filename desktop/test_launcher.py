@@ -14,6 +14,11 @@ spec.loader.exec_module(launcher)
 
 
 class DesktopTests(unittest.TestCase):
+    def test_tauri_extended_paths_are_normalized_before_starting_jre(self):
+        self.assertEqual(r"C:\Program Files\LingXi", launcher.normal_windows_path(r"\\?\C:\Program Files\LingXi"))
+        self.assertEqual(r"\\server\share\LingXi", launcher.normal_windows_path(r"\\?\UNC\server\share\LingXi"))
+        self.assertEqual(r"D:\LingXi", launcher.normal_windows_path(r"D:\LingXi"))
+
     def test_user_sid_does_not_depend_on_console_encoding(self):
         identity = '"电脑\\张三","S-1-5-21-123-456-789-1001"'.encode("gbk")
         self.assertEqual("S-1-5-21-123-456-789-1001", launcher.user_sid(identity))
