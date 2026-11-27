@@ -173,13 +173,14 @@ class Services:
             self.status("starting", "首次运行：正在初始化本机数据库…")
             mysql_data.mkdir()
             result = subprocess.run(
-                [str(self.runtime / "mysql/bin/mysqld.exe"), "--no-defaults", "--initialize-insecure",
+                [str(self.runtime / "mysql/bin/mysqld.exe"), "--no-defaults", "--no-monitor", "--initialize-insecure",
                  f"--basedir={basedir}", "--datadir=."],
                 cwd=mysql_data, capture_output=True, timeout=180, creationflags=NO_WINDOW,
             )
             if result.returncode:
                 raise RuntimeError("本机数据库初始化失败，请检查磁盘空间和运行权限；已保留现场数据。")
-        self.start("mysql", [self.runtime / "mysql/bin/mysqld.exe", "--no-defaults",
+        # 由桌面管理器负责生命周期，禁用 Windows MySQL 自带的第二个监控进程。
+        self.start("mysql", [self.runtime / "mysql/bin/mysqld.exe", "--no-defaults", "--no-monitor",
                              f"--basedir={basedir}", "--datadir=.",
                              "--bind-address=127.0.0.1", f"--port={PORTS['mysql']}", "--mysqlx=OFF",
                              "--local-infile=OFF", "--character-set-server=utf8mb4",
@@ -334,11 +335,15 @@ class Services:
                     child.wait(timeout=5)
         mysql = self.children.get("mysql")
         if mysql and mysql.poll() is None:
-            if self.mysql_ready:
-                try:
-                    self.mysql("SHUTDOWN;", timeout=30)
-                except (RuntimeError, subprocess.SubprocessError):
-                    pass
+            try:
+                self.mysql("SHUTDOWN;", timeout=15)
+            except (RuntimeError, subprocess.SubprocessError):
+                # 用户可能在首次初始化完成、设置 root 密码之前关闭窗口。
+                if not self.mysql_ready:
+                    try:
+                        self.mysql("SHUTDOWN;", authenticated=False, timeout=5)
+                    except (RuntimeError, subprocess.SubprocessError):
+                        pass
             try:
                 mysql.wait(timeout=30)
             except subprocess.TimeoutExpired:
