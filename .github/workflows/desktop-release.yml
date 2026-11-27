@@ -93,7 +93,14 @@ jobs:
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
-          uploadUpdaterSignatures: true
+      - name: Upload update signatures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $signatures = Get-ChildItem -LiteralPath lingXi-vue/src-tauri/target/release/bundle/nsis -Filter '*.sig'
+          if (!$signatures) { throw '未生成更新签名，停止发布。' }
+          gh release upload $env:RELEASE_TAG @($signatures.FullName) --clobber
+          if ($LASTEXITCODE -ne 0) { throw '上传更新签名失败。' }
       - name: Verify installed native desktop application
         run: ./desktop/verify-install.ps1
       - name: Publish only after installer and updater manifest exist
