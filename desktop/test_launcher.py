@@ -18,6 +18,11 @@ class DesktopTests(unittest.TestCase):
         identity = '"电脑\\张三","S-1-5-21-123-456-789-1001"'.encode("gbk")
         self.assertEqual("S-1-5-21-123-456-789-1001", launcher.user_sid(identity))
 
+    def test_mysql_path_compatibility_respects_system_code_page(self):
+        self.assertTrue(launcher.needs_path_alias(Path("C:/中文目录"), "cp1252"))
+        self.assertFalse(launcher.needs_path_alias(Path("C:/中文目录"), "gbk"))
+        self.assertFalse(launcher.needs_path_alias(Path("C:/Users/local"), "cp1252"))
+
     def test_secrets_survive_relaunch(self):
         with tempfile.TemporaryDirectory() as root:
             data = Path(root)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -63,6 +64,14 @@ def user_sid(identity: bytes) -> str:
     return match.group().decode("ascii")
 
 
+def needs_path_alias(path: Path, encoding: str = "mbcs") -> bool:
+    try:
+        str(path).encode(encoding)
+        return False
+    except UnicodeEncodeError:
+        return True
+
+
 def load_secrets(directory: Path) -> dict:
     path = directory / "secrets.json"
     if path.exists():
@@ -108,6 +117,45 @@ class Services:
         self.secrets: dict = {}
         self.mysql_ready = False
         self.ready = False
+        self.aliases: list[tuple[str, str]] = []
+        self.mysql_home = self.data
+        self.mysql_root = self.runtime / "mysql"
+
+    def mysql_path(self, path: Path) -> Path:
+        """MySQL 限制路径必须兼容 ANSI 代码页；必要时分配当前登录会话的临时路径。"""
+        if os.name != "nt" or not needs_path_alias(path):
+            return path
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.DefineDosDeviceW.argtypes = (ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_wchar_p)
+        kernel.DefineDosDeviceW.restype = ctypes.c_int
+        kernel.QueryDosDeviceW.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
+        kernel.QueryDosDeviceW.restype = ctypes.c_uint32
+        kernel.GetLogicalDrives.restype = ctypes.c_uint32
+        occupied = kernel.GetLogicalDrives()
+        for code in range(ord("Z"), ord("D") - 1, -1):
+            if occupied & (1 << (code - ord("A"))):
+                continue
+            name = chr(code) + ":"
+            buffer = ctypes.create_unicode_buffer(32768)
+            if kernel.QueryDosDeviceW(name, buffer, len(buffer)):
+                continue
+            target = "\\??\\" + str(path.resolve())
+            # RAW_TARGET_PATH | NO_BROADCAST_SYSTEM；不创建磁盘、服务或系统配置。
+            if kernel.DefineDosDeviceW(0x1 | 0x8, name, target):
+                self.aliases.append((name, target))
+                return Path(name + "\\")
+        raise RuntimeError("当前系统无法为数据库准备兼容中文目录的临时路径，请释放一个未使用的盘符后重试。")
+
+    def release_aliases(self) -> None:
+        if not self.aliases:
+            return
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.DefineDosDeviceW.argtypes = (ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_wchar_p)
+        kernel.DefineDosDeviceW.restype = ctypes.c_int
+        for name, target in reversed(self.aliases):
+            # 精确移除本次创建的映射，绝不移除其它程序的盘符。
+            kernel.DefineDosDeviceW(0x1 | 0x2 | 0x4 | 0x8, name, target)
+        self.aliases.clear()
 
     def status(self, phase: str, message: str) -> None:
         write_json(self.data / "status.json", {"phase": phase, "message": message})
@@ -138,7 +186,7 @@ class Services:
         raise RuntimeError(f"等待 {name} 就绪超时，请查看 {self.data / 'logs'}。")
 
     def mysql(self, sql: str, *, authenticated: bool = True, timeout: int = 120) -> str:
-        args = [str(self.runtime / "mysql/bin/mysql.exe")]
+        args = [str(self.mysql_root / "bin/mysql.exe")]
         if authenticated:
             args.append("--defaults-extra-file=mysql-client.cnf")
         else:
@@ -146,7 +194,7 @@ class Services:
         args += ["--protocol=TCP", "--host=127.0.0.1", f"--port={PORTS['mysql']}",
                  "--default-character-set=utf8mb4", "--batch", "--skip-column-names"]
         result = subprocess.run(args, input=sql.encode("utf-8"), capture_output=True,
-                                cwd=self.data, timeout=timeout, creationflags=NO_WINDOW)
+                                cwd=self.mysql_home, timeout=timeout, creationflags=NO_WINDOW)
         if result.returncode:
             # SQL 错误可能回显含凭据的语句，不能写入日志或 UI。
             raise RuntimeError("本机数据库操作失败；未覆盖已有数据。")
@@ -173,26 +221,28 @@ class Services:
         cfg = self.data / "mysql-client.cnf"
         cfg.write_text(f"[client]\nuser=root\npassword={self.secrets['root']}\n", encoding="utf-8")
         mysql_data = self.data / "mysql"
+        mysql_cwd = self.mysql_home / "mysql"
         try:
-            basedir = os.path.relpath(self.runtime / "mysql", mysql_data)
+            basedir = os.path.relpath(self.mysql_root, mysql_cwd)
         except ValueError:
-            basedir = str(self.runtime / "mysql")
+            basedir = str(self.mysql_root)
         if not mysql_data.exists():
             self.status("starting", "首次运行：正在初始化本机数据库…")
             mysql_data.mkdir()
             result = subprocess.run(
-                [str(self.runtime / "mysql/bin/mysqld.exe"), "--no-defaults", "--no-monitor", "--initialize-insecure",
+                [str(self.mysql_root / "bin/mysqld.exe"), "--no-defaults", "--no-monitor", "--initialize-insecure",
                  f"--basedir={basedir}", "--datadir=."],
-                cwd=mysql_data, capture_output=True, timeout=180, creationflags=NO_WINDOW,
+                cwd=mysql_cwd, capture_output=True, timeout=180, creationflags=NO_WINDOW,
             )
             if result.returncode:
-                raise RuntimeError("本机数据库初始化失败，请检查磁盘空间和运行权限；已保留现场数据。")
+                (self.data / "logs/mysql-initialize.log").write_bytes(result.stdout + result.stderr)
+                raise RuntimeError(f"本机数据库初始化失败（退出码 {result.returncode}），请查看 logs/mysql-initialize.log；已保留现场数据。")
         # 由桌面管理器负责生命周期，禁用 Windows MySQL 自带的第二个监控进程。
-        self.start("mysql", [self.runtime / "mysql/bin/mysqld.exe", "--no-defaults", "--no-monitor",
+        self.start("mysql", [self.mysql_root / "bin/mysqld.exe", "--no-defaults", "--no-monitor",
                              f"--basedir={basedir}", "--datadir=.",
                              "--bind-address=127.0.0.1", f"--port={PORTS['mysql']}", "--mysqlx=OFF",
                              "--local-infile=OFF", "--character-set-server=utf8mb4",
-                             "--collation-server=utf8mb4_unicode_ci", "--console"], cwd=mysql_data)
+                             "--collation-server=utf8mb4_unicode_ci", "--console"], cwd=mysql_cwd)
         self.wait_for("mysql", self.mysql_probe)
         try:
             self.mysql("SELECT 1;")
@@ -216,6 +266,8 @@ class Services:
         self.status("starting", "正在检查本机运行环境…")
         ensure_ports_available()
         self.secrets = load_secrets(self.data)
+        self.mysql_home = self.mysql_path(self.data)
+        self.mysql_root = self.mysql_path(self.runtime / "mysql")
         # Git 在不同 Windows 构建机上可能转换换行符，不应被当作结构迁移。
         schema_text = (self.runtime / "schema.sql").read_text(encoding="utf-8-sig")
         schema_hash = hashlib.sha256(schema_text.encode("utf-8")).hexdigest()
@@ -313,11 +365,11 @@ class Services:
         backup = backup_dir / f"before-upgrade-{time.time_ns()}.sql"
         with backup.open("wb") as output:
             result = subprocess.run(
-                [str(self.runtime / "mysql/bin/mysqldump.exe"),
+                [str(self.mysql_root / "bin/mysqldump.exe"),
                  "--defaults-extra-file=mysql-client.cnf", "--protocol=TCP",
                  "--host=127.0.0.1", f"--port={PORTS['mysql']}", "--single-transaction",
                  "--routines", "--events", "--set-gtid-purged=OFF", "--databases", "dkd"],
-                cwd=self.data, stdout=output, stderr=subprocess.DEVNULL, timeout=600, creationflags=NO_WINDOW,
+                cwd=self.mysql_home, stdout=output, stderr=subprocess.DEVNULL, timeout=600, creationflags=NO_WINDOW,
             )
         if result.returncode or backup.stat().st_size == 0:
             raise RuntimeError("升级前的数据库备份失败，未执行任何迁移。")
@@ -359,6 +411,7 @@ class Services:
                 mysql.wait(timeout=5)
         for log in self.logs:
             log.close()
+        self.release_aliases()
 
 
 def main() -> int:

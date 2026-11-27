@@ -36,18 +36,25 @@ try:
                 time.sleep(1)
             if child.returncode or state["phase"] != "ready":
                 # 不输出数据库凭据和配置文件。业务日志供 CI 排障。
-                for name in ("mysql.log", "agent.log", "java.log"):
+                for name in ("mysql-initialize.log", "mysql.log", "agent.log", "java.log"):
                     log = data / "logs" / name
                     if log.exists():
                         print(log.read_text(encoding="utf-8", errors="replace")[-18000:])
+                for log in (data / "mysql").glob("*.err"):
+                    print(log.read_text(encoding="utf-8", errors="replace")[-12000:])
                 raise RuntimeError(f"第 {attempt + 1} 次桌面启动失败：{state['message']}")
             database = Services(runtime, data)
             database.secrets = load_secrets(data)
-            if attempt == 0:
-                database.mysql("CREATE TABLE dkd.desktop_smoke (value VARCHAR(64)); INSERT INTO dkd.desktop_smoke VALUES ('data-survives-relaunch');")
-            else:
-                assert database.mysql("SELECT value FROM dkd.desktop_smoke;") == "data-survives-relaunch"
-                database.mysql("DROP TABLE dkd.desktop_smoke;")
+            try:
+                database.mysql_home = database.mysql_path(data)
+                database.mysql_root = database.mysql_path(runtime / "mysql")
+                if attempt == 0:
+                    database.mysql("CREATE TABLE dkd.desktop_smoke (value VARCHAR(64)); INSERT INTO dkd.desktop_smoke VALUES ('data-survives-relaunch');")
+                else:
+                    assert database.mysql("SELECT value FROM dkd.desktop_smoke;") == "data-survives-relaunch"
+                    database.mysql("DROP TABLE dkd.desktop_smoke;")
+            finally:
+                database.release_aliases()
         finally:
             if child.poll() is None:
                 child.stdin.close()
