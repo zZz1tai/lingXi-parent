@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import socket
 import subprocess
@@ -45,14 +45,22 @@ def private_directory(directory: Path) -> None:
         directory.chmod(0o700)
         return
     identity = subprocess.check_output(
-        ["whoami", "/user", "/fo", "csv", "/nh"], creationflags=NO_WINDOW, text=True
+        ["whoami", "/user", "/fo", "csv", "/nh"], creationflags=NO_WINDOW
     )
-    sid = next(csv.reader([identity.strip()]))[1]
+    # whoami 使用系统代码页输出用户名；只提取 ASCII SID，兼容中文用户名。
+    sid = user_sid(identity)
     subprocess.run(
         ["icacls", str(directory), "/inheritance:r", "/grant:r",
          f"*{sid}:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, creationflags=NO_WINDOW,
     )
+
+
+def user_sid(identity: bytes) -> str:
+    match = re.search(rb"S-\d+(?:-\d+)+", identity)
+    if not match:
+        raise RuntimeError("无法识别当前 Windows 用户，未创建本机数据库凭据。")
+    return match.group().decode("ascii")
 
 
 def load_secrets(directory: Path) -> dict:

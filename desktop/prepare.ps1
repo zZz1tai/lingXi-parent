@@ -64,7 +64,9 @@ try {
     foreach ($dll in @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'concrt140.dll')) {
         $source = Join-Path $env:WINDIR "System32/$dll"
         if (!(Test-Path -LiteralPath $source)) { throw "打包机缺少微软可再分发运行库 $dll" }
-        Copy-Item -LiteralPath $source -Destination (Join-Path $runtime 'mysql/bin')
+        foreach ($executableDirectory in @('mysql/bin', 'python', 'java/bin')) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $runtime $executableDirectory) -Force
+        }
     }
     if (!$SkipBackendBuild) {
         Push-Location (Join-Path $repoRoot 'dkd-parent')

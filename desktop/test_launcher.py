@@ -14,6 +14,10 @@ spec.loader.exec_module(launcher)
 
 
 class DesktopTests(unittest.TestCase):
+    def test_user_sid_does_not_depend_on_console_encoding(self):
+        identity = '"电脑\\张三","S-1-5-21-123-456-789-1001"'.encode("gbk")
+        self.assertEqual("S-1-5-21-123-456-789-1001", launcher.user_sid(identity))
+
     def test_secrets_survive_relaunch(self):
         with tempfile.TemporaryDirectory() as root:
             data = Path(root)
