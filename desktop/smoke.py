@@ -17,6 +17,8 @@ passed = False
 try:
     data = Path(temporary) / "独立数据目录 with spaces"
     for attempt in range(2):
+        # 不得把上一次退出前留下的 ready 当作这一次已经启动完成。
+        (data / "status.json").unlink(missing_ok=True)
         child = subprocess.Popen(
             [str(runtime / "python/python.exe"), "-X", "utf8", str(runtime / "launcher.py"),
              "--runtime", str(runtime), "--data", str(data)],

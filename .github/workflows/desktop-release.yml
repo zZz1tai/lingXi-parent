@@ -45,6 +45,7 @@ jobs:
         shell: pwsh
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if (!$env:SIGNING_KEY) { throw '请先配置 TAURI_SIGNING_PRIVATE_KEY，禁止发布无法验签的更新。' }
           $version = (Get-Content lingXi-vue/package.json -Raw | ConvertFrom-Json).version
@@ -53,6 +54,9 @@ jobs:
           if ($tauriVersion -ne $version -or $pom.project.version -ne $version) { throw '前端、后端与桌面版本号必须一致。' }
           $tag = "desktop-v$version"
           if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag) { throw '标签与应用版本号不一致。' }
+          $existing = gh release view $tag --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0 -and !($existing | ConvertFrom-Json).isDraft) { throw '该版本已经公开发布，请提升版本号后再发布，禁止覆盖用户正在下载的更新。' }
+          $global:LASTEXITCODE = 0
           "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
       - run: npm ci
         working-directory: lingXi-vue
