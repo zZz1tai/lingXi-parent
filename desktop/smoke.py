@@ -1,6 +1,7 @@
 """安装包资源的端到端自检；两次启动验证数据库不会重复初始化。"""
 
 import json
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -11,11 +12,13 @@ from launcher import Services, load_secrets
 
 
 runtime = Path(sys.argv[1]).resolve()
-with tempfile.TemporaryDirectory(prefix="lingxi-desktop-") as temporary:
+temporary = Path(tempfile.mkdtemp(prefix="lingxi-desktop-")).resolve()
+passed = False
+try:
     data = Path(temporary) / "独立数据目录 with spaces"
     for attempt in range(2):
         child = subprocess.Popen(
-            [str(runtime / "python/python.exe"), str(runtime / "launcher.py"),
+            [str(runtime / "python/python.exe"), "-X", "utf8", str(runtime / "launcher.py"),
              "--runtime", str(runtime), "--data", str(data)],
             stdin=subprocess.PIPE,
         )
@@ -56,3 +59,9 @@ with tempfile.TemporaryDirectory(prefix="lingxi-desktop-") as temporary:
             assert credentials == original
             assert (data / "database.json").read_bytes() == marker
     print("完整桌面资源首次启动、再次启动、中文空格路径和正常关闭检查通过。")
+    passed = True
+finally:
+    if passed and temporary.parent == Path(tempfile.gettempdir()).resolve() and temporary.name.startswith("lingxi-desktop-"):
+        shutil.rmtree(temporary)
+    elif not passed:
+        print(f"启动诊断数据已保留：{temporary}（包含本机凭据，请勿公开上传）。")

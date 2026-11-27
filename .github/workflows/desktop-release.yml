@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHONUTF8: '1'
+
 concurrency:
   group: desktop-release
   cancel-in-progress: false
@@ -86,6 +89,8 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           uploadUpdaterSignatures: true
+      - name: Verify installed native desktop application
+        run: ./desktop/verify-install.ps1
       - name: Publish only after installer and updater manifest exist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

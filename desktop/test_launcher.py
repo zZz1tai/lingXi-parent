@@ -44,6 +44,23 @@ class DesktopTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "已被占用"):
                     launcher.ensure_ports_available()
 
+    def test_migration_plan_follows_exact_versions(self):
+        steps = [{"from": "old", "to": "middle"}, {"from": "middle", "to": "new"}]
+        self.assertEqual(steps, launcher.migration_plan("old", "new", steps))
+
+    def test_unknown_or_ambiguous_migrations_fail_closed(self):
+        for steps in ([], [{"from": "old", "to": "old"}],
+                      [{"from": "old", "to": "new"}, {"from": "old", "to": "other"}]):
+            with self.assertRaisesRegex(RuntimeError, "已保留"):
+                launcher.migration_plan("old", "new", steps)
+
+    def test_migration_outside_resource_directory_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            service = launcher.Services(Path(root), Path(root))
+            (Path(root) / "migrations").mkdir()
+            with self.assertRaisesRegex(RuntimeError, "校验失败"):
+                service.migrate([{"file": "../outside.sql", "sha256": "fake"}], "new")
+
     def test_partial_seed_is_not_imported_again(self):
         with tempfile.TemporaryDirectory() as root:
             service = launcher.Services(Path(root), Path(root))

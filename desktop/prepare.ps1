@@ -78,13 +78,14 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot 'lingXi-agent/app') -Destination (Join-Path $runtime 'agent') -Recurse
     Get-ChildItem -LiteralPath (Join-Path $runtime 'agent') -Filter '*.pyc' -Recurse -File | Remove-Item -Force
     $sitePackages = Join-Path $runtime 'python/Lib/site-packages'
-    & $Python -m pip install --only-binary=:all: --target $sitePackages -r (Join-Path $repoRoot 'lingXi-agent/requirements.txt')
+    & $Python -m pip install --disable-pip-version-check --only-binary=:all: --target $sitePackages -r (Join-Path $PSScriptRoot 'python-requirements.lock') -r (Join-Path $repoRoot 'lingXi-agent/requirements.txt')
     Assert-Exit 'Python 运行依赖打包（打包机必须为 Python 3.12 x64）'
     @('python312.zip', '.', 'Lib/site-packages', '../agent', 'import site') | Set-Content -LiteralPath (Join-Path $runtime 'python/python312._pth') -Encoding ASCII
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'launcher.py') -Destination $runtime
     Copy-Item -LiteralPath (Join-Path $repoRoot 'dkd-parent/sql/lingxi_all.sql') -Destination (Join-Path $runtime 'schema.sql')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'runtime-lock.json') -Destination $runtime
-    & (Join-Path $runtime 'python/python.exe') -c "import fastapi, uvicorn, langchain, langgraph, psycopg; from app.main import app; print('桌面 AI 运行环境检查通过')"
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'migrations') -Destination $runtime -Recurse
+    & (Join-Path $runtime 'python/python.exe') -X utf8 -c "import fastapi, uvicorn, langchain, langgraph, psycopg; from app.main import app; print('桌面 AI 运行环境检查通过')"
     Assert-Exit '嵌入式 Python 导入检查'
     Write-Host '完整桌面资源已准备完成。'
 } finally {

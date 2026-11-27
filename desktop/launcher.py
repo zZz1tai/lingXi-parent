@@ -75,6 +75,21 @@ def verify_schema(previous: dict | None, current_hash: str) -> bool:
     return False
 
 
+def migration_plan(previous_hash: str, target_hash: str, steps: list[dict]) -> list[dict]:
+    """只沿发布包声明的精确结构版本迁移，拒绝未知来源和循环。"""
+    plan = []
+    visited = set()
+    while previous_hash != target_hash:
+        candidates = [step for step in steps if step.get("from") == previous_hash]
+        if previous_hash in visited or len(candidates) != 1:
+            raise RuntimeError("没有适用于本机数据库的唯一迁移路径，已保留原库。")
+        visited.add(previous_hash)
+        step = candidates[0]
+        plan.append(step)
+        previous_hash = step["to"]
+    return plan
+
+
 class Services:
     def __init__(self, runtime: Path, data: Path):
         self.runtime = runtime.resolve()
@@ -105,7 +120,7 @@ class Services:
             if self.stop.is_set():
                 raise RuntimeError("启动已取消。")
             if self.children[name].poll() is not None:
-                raise RuntimeError(f"{name} 服务启动失败，请查看 {self.data / 'logs' / (name + '.log')}。")
+                raise RuntimeError(f"{name} 服务启动失败（退出码 {self.children[name].returncode}），请查看 {self.data / 'logs' / (name + '.log')}。")
             try:
                 if probe():
                     return
@@ -117,13 +132,13 @@ class Services:
     def mysql(self, sql: str, *, authenticated: bool = True, timeout: int = 120) -> str:
         args = [str(self.runtime / "mysql/bin/mysql.exe")]
         if authenticated:
-            args.append(f"--defaults-extra-file={self.data / 'mysql-client.cnf'}")
+            args.append("--defaults-extra-file=mysql-client.cnf")
         else:
             args += ["--no-defaults", "--user=root", "--skip-password"]
         args += ["--protocol=TCP", "--host=127.0.0.1", f"--port={PORTS['mysql']}",
                  "--default-character-set=utf8mb4", "--batch", "--skip-column-names"]
         result = subprocess.run(args, input=sql.encode("utf-8"), capture_output=True,
-                                timeout=timeout, creationflags=NO_WINDOW)
+                                cwd=self.data, timeout=timeout, creationflags=NO_WINDOW)
         if result.returncode:
             # SQL 错误可能回显含凭据的语句，不能写入日志或 UI。
             raise RuntimeError("本机数据库操作失败；未覆盖已有数据。")
@@ -150,20 +165,25 @@ class Services:
         cfg = self.data / "mysql-client.cnf"
         cfg.write_text(f"[client]\nuser=root\npassword={self.secrets['root']}\n", encoding="utf-8")
         mysql_data = self.data / "mysql"
+        try:
+            basedir = os.path.relpath(self.runtime / "mysql", mysql_data)
+        except ValueError:
+            basedir = str(self.runtime / "mysql")
         if not mysql_data.exists():
             self.status("starting", "首次运行：正在初始化本机数据库…")
+            mysql_data.mkdir()
             result = subprocess.run(
                 [str(self.runtime / "mysql/bin/mysqld.exe"), "--no-defaults", "--initialize-insecure",
-                 f"--basedir={self.runtime / 'mysql'}", f"--datadir={mysql_data}"],
-                capture_output=True, timeout=180, creationflags=NO_WINDOW,
+                 f"--basedir={basedir}", "--datadir=."],
+                cwd=mysql_data, capture_output=True, timeout=180, creationflags=NO_WINDOW,
             )
             if result.returncode:
                 raise RuntimeError("本机数据库初始化失败，请检查磁盘空间和运行权限；已保留现场数据。")
         self.start("mysql", [self.runtime / "mysql/bin/mysqld.exe", "--no-defaults",
-                             f"--basedir={self.runtime / 'mysql'}", f"--datadir={mysql_data}",
+                             f"--basedir={basedir}", "--datadir=.",
                              "--bind-address=127.0.0.1", f"--port={PORTS['mysql']}", "--mysqlx=OFF",
                              "--local-infile=OFF", "--character-set-server=utf8mb4",
-                             "--collation-server=utf8mb4_unicode_ci", "--console"])
+                             "--collation-server=utf8mb4_unicode_ci", "--console"], cwd=mysql_data)
         self.wait_for("mysql", self.mysql_probe)
         try:
             self.mysql("SELECT 1;")
@@ -187,11 +207,23 @@ class Services:
         self.status("starting", "正在检查本机运行环境…")
         ensure_ports_available()
         self.secrets = load_secrets(self.data)
-        schema_hash = hashlib.sha256((self.runtime / "schema.sql").read_bytes()).hexdigest()
+        # Git 在不同 Windows 构建机上可能转换换行符，不应被当作结构迁移。
+        schema_text = (self.runtime / "schema.sql").read_text(encoding="utf-8-sig")
+        schema_hash = hashlib.sha256(schema_text.encode("utf-8")).hexdigest()
         marker = self.data / "database.json"
         previous = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else None
-        first = verify_schema(previous, schema_hash)
+        if (self.data / "migration-in-progress.json").exists():
+            raise RuntimeError("上次数据库迁移未完成，请使用 backups 中的备份恢复；为保护数据不会重复执行迁移。")
+        plan = []
+        if previous and previous.get("schema_sha256") != schema_hash:
+            manifest = json.loads((self.runtime / "migrations/manifest.json").read_text(encoding="utf-8-sig"))
+            plan = migration_plan(previous["schema_sha256"], schema_hash, manifest["steps"])
+            first = False
+        else:
+            first = verify_schema(previous, schema_hash)
         self.bootstrap_mysql(schema_hash, first)
+        if plan:
+            self.migrate(plan, schema_hash)
 
         self.status("starting", "正在启动本机缓存服务…")
         redis_data = self.data / "redis"
@@ -199,10 +231,11 @@ class Services:
         redis_config = self.data / "redis.conf"
         redis_config.write_text(
             f'bind 127.0.0.1\nport {PORTS["redis"]}\nprotected-mode yes\n'
-            f'requirepass {self.secrets["redis"]}\ndir "{redis_data.as_posix()}"\n'
+            f'requirepass {self.secrets["redis"]}\ndir "redis"\n'
             'save ""\nappendonly no\n', encoding="utf-8",
         )
-        self.start("redis", [self.runtime / "redis/redis-server.exe", redis_config.as_posix()])
+        # MSYS 版 Redis 使用 POSIX 路径；相对路径同时兼容盘符、空格及中文目录。
+        self.start("redis", [self.runtime / "redis/redis-server.exe", "redis.conf"])
         self.wait_for("redis", self.redis_probe)
 
         self.status("starting", "正在启动 AI 服务…")
@@ -214,7 +247,7 @@ class Services:
         agent_env.update(AGENT_SERVICE_API_KEY=self.secrets["agent"], HOST="127.0.0.1",
                          PORT=str(PORTS["agent"]), DEBUG="false", PYTHONUTF8="1",
                          AGENT_TOOL_BASE_URL=f'http://127.0.0.1:{PORTS["java"]}')
-        self.start("agent", [self.runtime / "python/python.exe", "-m", "app.run"],
+        self.start("agent", [self.runtime / "python/python.exe", "-X", "utf8", "-m", "app.run"],
                    cwd=self.runtime / "agent", env=agent_env)
         self.wait_for("agent", lambda: self.http_ready(PORTS["agent"], "/readyz"), timeout=180)
 
@@ -240,6 +273,7 @@ class Services:
         # JSON 在命令行属性之后、application.yml 之前生效，覆盖开发机连接地址。
         java_env["SPRING_APPLICATION_JSON"] = json.dumps(config)
         self.start("java", [self.runtime / "java/bin/java.exe", "-Xms128m", "-Xmx1024m",
+                            "-Dfile.encoding=UTF-8", "-Dsun.stdout.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8",
                             "-jar", self.runtime / "backend/lingXi-admin.jar"], env=java_env)
         self.wait_for("java", lambda: self.http_ready(PORTS["java"], "/captchaImage", java=True), timeout=240)
         self.ready = True
@@ -255,6 +289,36 @@ class Services:
         with socket.create_connection(("127.0.0.1", PORTS["redis"]), timeout=2) as connection:
             connection.sendall(b"*2\r\n$4\r\nAUTH\r\n$" + str(len(password)).encode() + b"\r\n" + password + b"\r\n")
             return connection.recv(1024).startswith(b"+OK")
+
+    def migrate(self, plan: list[dict], target_hash: str) -> None:
+        root = (self.runtime / "migrations").resolve()
+        scripts = []
+        for step in plan:
+            path = (root / step["file"]).resolve()
+            if not path.is_relative_to(root) or hashlib.sha256(path.read_bytes()).hexdigest() != step["sha256"]:
+                raise RuntimeError("数据库迁移脚本校验失败，已保留原库。")
+            scripts.append(path.read_text(encoding="utf-8-sig"))
+        self.status("starting", "正在备份并升级本机数据库，请勿关闭应用…")
+        backup_dir = self.data / "backups"
+        backup_dir.mkdir(exist_ok=True)
+        backup = backup_dir / f"before-upgrade-{time.time_ns()}.sql"
+        with backup.open("wb") as output:
+            result = subprocess.run(
+                [str(self.runtime / "mysql/bin/mysqldump.exe"),
+                 "--defaults-extra-file=mysql-client.cnf", "--protocol=TCP",
+                 "--host=127.0.0.1", f"--port={PORTS['mysql']}", "--single-transaction",
+                 "--routines", "--events", "--set-gtid-purged=OFF", "--databases", "dkd"],
+                cwd=self.data, stdout=output, stderr=subprocess.DEVNULL, timeout=600, creationflags=NO_WINDOW,
+            )
+        if result.returncode or backup.stat().st_size == 0:
+            raise RuntimeError("升级前的数据库备份失败，未执行任何迁移。")
+        pending = self.data / "migration-in-progress.json"
+        write_json(pending, {"backup": backup.name, "target": target_hash})
+        # MySQL DDL 不能整体回滚。失败时保留备份与标记，禁止自动重试部分执行的脚本。
+        for sql in scripts:
+            self.mysql("USE dkd;\n" + sql, timeout=600)
+        write_json(self.data / "database.json", {"schema_sha256": target_hash})
+        pending.unlink()
 
     def shutdown(self) -> None:
         self.stop.set()
@@ -294,7 +358,8 @@ def main() -> int:
 
     # 桌面进程退出（包括崩溃）会关闭管道，管理器随即清理所有私有服务。
     def watch_parent():
-        sys.stdin.buffer.readline()
+        # 直接读取 OS 管道，避免解释器退出时 daemon 持有 stdin 缓冲锁。
+        os.read(sys.stdin.fileno(), 1)
         services.stop.set()
 
     threading.Thread(target=watch_parent, daemon=True).start()

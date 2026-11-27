@@ -20,7 +20,7 @@ impl LocalServices {
         fs::write(&status, r#"{"phase":"starting","message":"正在准备本机服务…"}"#)?;
         let log = fs::OpenOptions::new().create(true).append(true).open(data.join("launcher.log"))?;
         let mut command = Command::new(runtime.join("python/python.exe"));
-        command.arg(runtime.join("launcher.py")).arg("--runtime").arg(&runtime)
+        command.args(["-X", "utf8"]).arg(runtime.join("launcher.py")).arg("--runtime").arg(&runtime)
             .arg("--data").arg(&data).current_dir(&data).stdin(Stdio::piped())
             .stdout(Stdio::from(log.try_clone()?)).stderr(Stdio::from(log));
         #[cfg(windows)]
